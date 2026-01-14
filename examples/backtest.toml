@@ -1,0 +1,37 @@
+# Ralph Backtest - Example Configuration File
+# Run with: cargo run -- run-config -c examples/backtest.toml
+
+[backtest]
+initial_capital = 100000.0
+position_size = 1.0           # Fraction of equity to use (0.0-1.0)
+allow_short = true
+fractional_shares = true
+# start_date = "2023-01-01"   # Optional date filters
+# end_date = "2023-12-31"
+
+[data]
+path = "data/sample.csv"
+symbol = "SAMPLE"
+
+[strategy]
+name = "sma-crossover"        # Options: sma-crossover, momentum, rsi, macd, breakout, mean-reversion
+
+[strategy.params]
+fast_period = 10
+slow_period = 30
+
+# Trading costs
+[costs]
+commission_flat = 0.0         # Flat fee per trade
+commission_pct = 0.1          # Percentage commission (0.1 = 0.1%)
+slippage_pct = 0.05           # Slippage percentage
+min_commission = 0.0          # Minimum commission per trade
+
+# Risk management
+[risk]
+stop_loss_type = "percentage" # Options: none, percentage, fixed, trailing
+stop_loss_value = 5.0         # 5% stop loss
+take_profit_type = "percentage"
+take_profit_value = 10.0      # 10% take profit
+risk_per_trade_pct = 2.0      # Risk 2% of equity per trade
+# max_drawdown_pct = 20.0     # Halt trading if drawdown exceeds this
