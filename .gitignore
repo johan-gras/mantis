@@ -3,3 +3,13 @@ Cargo.lock
 *.swp
 *.swo
 .DS_Store
+
+# Ralph workflow files
+DONE
+IMPLEMENTATION_PLAN.md
+AGENTS.md
+CLAUDE.md
+PROMPT_plan.md
+PROMPT_build.md
+loop.sh
+specs/
