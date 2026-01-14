@@ -4,7 +4,7 @@
 
 | Metric | Status |
 |--------|--------|
-| **Tests** | 209 passing (179 unit + 2 CLI + 28 integration + 3 doc-tests) |
+| **Tests** | 215 passing (185 unit + 2 CLI + 28 integration + 3 doc-tests) |
 | **Clippy** | 0 errors (PASSING) |
 | **Cargo fmt** | PASSING |
 
@@ -232,40 +232,34 @@ These items significantly improve quality but are not explicit spec violations.
   - `test_calculate_daily_returns_empty_equity_curve_fallback` - verifies fallback behavior
   - `test_calculate_daily_returns_intraday_aggregation` - verifies intraday data handling
 
-### 3.2 Fix Drawdown Analysis Approximations
+### 3.2 Fix Drawdown Analysis Approximations - COMPLETE
 
-**Location:** `src/analytics.rs` lines 228-240
+**Location:** `src/analytics.rs` lines 230-385
 
-**Current state:** Uses rough approximations:
-```rust
-let avg_dd = result.max_drawdown_pct / 2.0;  // Not based on actual data
-let max_dd_duration = num_days / 10;         // Arbitrary estimate
-let ulcer_index = (squared_dd / 2.0).sqrt(); // Simplified
-```
-
-**Implementation tasks:**
-1. Calculate actual average drawdown from equity curve:
-   ```rust
-   fn calculate_drawdowns(equity_curve: &[EquityPoint]) -> DrawdownAnalysis {
-       // Track all drawdown periods
-       // Calculate: avg_drawdown, max_duration, recovery_times
-   }
-   ```
-
-2. Track drawdown periods with start/end timestamps:
-   ```rust
-   pub struct DrawdownPeriod {
-       pub start: DateTime<Utc>,
-       pub trough: DateTime<Utc>,
-       pub end: Option<DateTime<Utc>>,  // None if not recovered
-       pub depth_pct: f64,
-       pub duration_days: i64,
-   }
-   ```
-
-3. Implement proper Ulcer Index: `sqrt(mean(drawdown_pct^2))`
-
-4. Add drawdown analysis to `ResultFormatter::print_report()`
+**Implementation Summary:**
+- Added `DrawdownPeriod` struct tracking: start, trough, end, depth_pct, duration_days
+- Added `DrawdownAnalysis` struct with comprehensive drawdown statistics:
+  - max_drawdown_pct - actual maximum drawdown from equity curve
+  - max_drawdown_duration_days - longest drawdown period
+  - avg_drawdown_pct - average of all drawdown depths
+  - ulcer_index - proper sqrt(mean(drawdown_pct^2)) calculation
+  - periods - all individual drawdown periods
+  - time_underwater_pct - percentage of time in drawdown
+- `DrawdownAnalysis::from_equity_curve()` method processes equity curve to:
+  - Track peaks and detect when equity drops below peak
+  - Identify complete drawdown periods (start to recovery)
+  - Track ongoing drawdowns that haven't recovered
+  - Calculate proper Ulcer Index from all drawdown points
+- Updated `PerformanceMetrics::drawdown_analysis()` and `ulcer_index()` to use actual data
+- Falls back to approximations only when equity curve unavailable
+- Exported `DrawdownAnalysis` and `DrawdownPeriod` in lib.rs for public API
+- Tests added:
+  - `test_drawdown_analysis_single_drawdown` - ongoing drawdown tracking
+  - `test_drawdown_analysis_multiple_drawdowns` - multiple recovered periods
+  - `test_drawdown_analysis_ulcer_index` - proper Ulcer Index calculation
+  - `test_drawdown_analysis_no_drawdown` - steadily increasing equity
+  - `test_drawdown_analysis_empty_curve` - edge case handling
+  - `test_drawdown_analysis_serialization` - JSON round-trip
 
 ### 3.3 Add Market Impact Modeling
 
@@ -554,10 +548,10 @@ All clippy errors fixed and code formatted. Verification passes.
 2. ~~Implement time-series alignment/resampling (2.3)~~ - COMPLETE
 3. ~~Implement missing data handling (2.4)~~ - COMPLETE
 
-### Phase 3: Analytics and Benchmarks
+### Phase 3: Analytics and Benchmarks - COMPLETE
 1. ~~Add benchmark comparison (2.1)~~ - COMPLETE
 2. ~~Fix daily returns calculation (3.1)~~ - COMPLETE
-3. Fix drawdown analysis (3.2)
+3. ~~Fix drawdown analysis (3.2)~~ - COMPLETE
 
 ### Phase 4: Asset Classes and Corporate Actions
 1. Add corporate actions support (2.5)
@@ -608,6 +602,7 @@ The following spec requirements are fully implemented and verified:
 - [x] Missing data handling (gap detection, fill methods, data quality reports)
 - [x] Benchmark comparison metrics (alpha, beta, tracking error, information ratio, correlation, capture ratios)
 - [x] Actual daily returns from equity curve (meaningful volatility calculations)
+- [x] Proper drawdown analysis from equity curve (DrawdownPeriod, DrawdownAnalysis, Ulcer Index)
 
 ---
 

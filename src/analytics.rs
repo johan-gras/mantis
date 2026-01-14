@@ -227,6 +227,160 @@ impl BenchmarkMetrics {
     }
 }
 
+/// Represents a single drawdown period from peak to recovery.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DrawdownPeriod {
+    /// Start of drawdown (when equity dropped below peak)
+    pub start: chrono::DateTime<chrono::Utc>,
+    /// Time of maximum drawdown depth (trough)
+    pub trough: chrono::DateTime<chrono::Utc>,
+    /// End of drawdown (when equity recovered to peak, None if not recovered)
+    pub end: Option<chrono::DateTime<chrono::Utc>>,
+    /// Maximum drawdown depth as percentage
+    pub depth_pct: f64,
+    /// Duration from start to end (or current if not recovered) in days
+    pub duration_days: i64,
+}
+
+/// Comprehensive drawdown analysis results.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DrawdownAnalysis {
+    /// Maximum drawdown percentage
+    pub max_drawdown_pct: f64,
+    /// Duration of the maximum drawdown period in days
+    pub max_drawdown_duration_days: i64,
+    /// Average of all drawdown depths
+    pub avg_drawdown_pct: f64,
+    /// Ulcer Index - sqrt(mean(drawdown_pct^2))
+    pub ulcer_index: f64,
+    /// All drawdown periods
+    pub periods: Vec<DrawdownPeriod>,
+    /// Time underwater as percentage of total time
+    pub time_underwater_pct: f64,
+}
+
+impl DrawdownAnalysis {
+    /// Calculate comprehensive drawdown analysis from an equity curve.
+    /// This provides actual drawdown statistics rather than approximations.
+    pub fn from_equity_curve(equity_curve: &[crate::types::EquityPoint]) -> Self {
+        if equity_curve.len() < 2 {
+            return Self::empty();
+        }
+
+        let mut peak = equity_curve[0].equity;
+        let mut peak_time = equity_curve[0].timestamp;
+        let mut periods: Vec<DrawdownPeriod> = Vec::new();
+        let mut current_period: Option<DrawdownPeriod> = None;
+        let mut drawdown_pcts: Vec<f64> = Vec::with_capacity(equity_curve.len());
+
+        for point in equity_curve.iter() {
+            if point.equity >= peak {
+                // New peak - drawdown is 0%, close any existing drawdown period
+                drawdown_pcts.push(0.0);
+                if let Some(mut period) = current_period.take() {
+                    period.end = Some(point.timestamp);
+                    period.duration_days = (point.timestamp - period.start).num_days();
+                    periods.push(period);
+                }
+                peak = point.equity;
+                peak_time = point.timestamp;
+            } else {
+                // In drawdown - calculate percentage below peak
+                let drawdown_pct = if peak > 0.0 {
+                    ((peak - point.equity) / peak) * 100.0
+                } else {
+                    0.0
+                };
+                drawdown_pcts.push(drawdown_pct);
+
+                // Track drawdown period
+                match &mut current_period {
+                    None => {
+                        // Start new drawdown period
+                        current_period = Some(DrawdownPeriod {
+                            start: peak_time,
+                            trough: point.timestamp,
+                            end: None,
+                            depth_pct: drawdown_pct,
+                            duration_days: (point.timestamp - peak_time).num_days(),
+                        });
+                    }
+                    Some(period) => {
+                        // Update existing period if deeper
+                        if drawdown_pct > period.depth_pct {
+                            period.trough = point.timestamp;
+                            period.depth_pct = drawdown_pct;
+                        }
+                        period.duration_days = (point.timestamp - period.start).num_days();
+                    }
+                }
+            }
+        }
+
+        // Handle ongoing drawdown at end of data
+        if let Some(period) = current_period {
+            periods.push(period);
+        }
+
+        // Calculate statistics
+        let max_drawdown_pct = periods
+            .iter()
+            .map(|p| p.depth_pct)
+            .fold(0.0_f64, |a, b| a.max(b));
+
+        let max_drawdown_duration_days = periods.iter().map(|p| p.duration_days).max().unwrap_or(0);
+
+        let avg_drawdown_pct = if !periods.is_empty() {
+            periods.iter().map(|p| p.depth_pct).sum::<f64>() / periods.len() as f64
+        } else {
+            0.0
+        };
+
+        // Ulcer Index: sqrt(mean(drawdown_pct^2))
+        let ulcer_index = if !drawdown_pcts.is_empty() {
+            let sum_squared: f64 = drawdown_pcts.iter().map(|d| d.powi(2)).sum();
+            (sum_squared / drawdown_pcts.len() as f64).sqrt()
+        } else {
+            0.0
+        };
+
+        // Time underwater percentage
+        let total_days = if equity_curve.len() >= 2 {
+            (equity_curve.last().unwrap().timestamp - equity_curve.first().unwrap().timestamp)
+                .num_days()
+        } else {
+            0
+        };
+        let underwater_days: i64 = periods.iter().map(|p| p.duration_days).sum();
+        let time_underwater_pct = if total_days > 0 {
+            (underwater_days as f64 / total_days as f64) * 100.0
+        } else {
+            0.0
+        };
+
+        Self {
+            max_drawdown_pct,
+            max_drawdown_duration_days,
+            avg_drawdown_pct,
+            ulcer_index,
+            periods,
+            time_underwater_pct,
+        }
+    }
+
+    /// Create an empty analysis for when equity curve is unavailable.
+    pub fn empty() -> Self {
+        Self {
+            max_drawdown_pct: 0.0,
+            max_drawdown_duration_days: 0,
+            avg_drawdown_pct: 0.0,
+            ulcer_index: 0.0,
+            periods: Vec::new(),
+            time_underwater_pct: 0.0,
+        }
+    }
+}
+
 /// Comprehensive performance metrics.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PerformanceMetrics {
@@ -478,18 +632,34 @@ impl PerformanceMetrics {
         variance.sqrt() * 252.0_f64.sqrt() * 100.0
     }
 
+    /// Calculate drawdown analysis from the equity curve.
+    /// Returns (max_drawdown_duration_days, average_drawdown_pct)
     fn drawdown_analysis(result: &BacktestResult) -> (i64, f64) {
-        // Simplified drawdown analysis
-        let avg_dd = result.max_drawdown_pct / 2.0; // Rough approximation
-        let max_dd_duration = (result.end_time - result.start_time).num_days() / 10; // Rough estimate
-        (max_dd_duration.max(0), avg_dd)
+        if result.equity_curve.len() >= 2 {
+            let analysis = DrawdownAnalysis::from_equity_curve(&result.equity_curve);
+            (
+                analysis.max_drawdown_duration_days,
+                analysis.avg_drawdown_pct,
+            )
+        } else {
+            // Fallback to approximations when equity curve unavailable
+            let avg_dd = result.max_drawdown_pct / 2.0;
+            let max_dd_duration = (result.end_time - result.start_time).num_days() / 10;
+            (max_dd_duration.max(0), avg_dd)
+        }
     }
 
+    /// Calculate Ulcer Index from the equity curve.
+    /// Ulcer Index = sqrt(mean(drawdown_pct^2)) - measures downside volatility
     fn ulcer_index(result: &BacktestResult) -> f64 {
-        // Ulcer Index = sqrt(sum(drawdown^2) / n)
-        // Using simplified calculation
-        let squared_dd = result.max_drawdown_pct.powi(2);
-        (squared_dd / 2.0).sqrt() // Approximation
+        if result.equity_curve.len() >= 2 {
+            let analysis = DrawdownAnalysis::from_equity_curve(&result.equity_curve);
+            analysis.ulcer_index
+        } else {
+            // Fallback approximation when equity curve unavailable
+            let squared_dd = result.max_drawdown_pct.powi(2);
+            (squared_dd / 2.0).sqrt()
+        }
     }
 
     fn omega_ratio(returns: &[f64], threshold: f64) -> f64 {
@@ -1438,5 +1608,295 @@ mod tests {
             "Second return should be ~0.98%: {}",
             returns[1]
         );
+    }
+
+    #[test]
+    fn test_drawdown_analysis_single_drawdown() {
+        use crate::types::EquityPoint;
+
+        // Equity curve: 100 -> 110 -> 90 -> 105
+        // Peak at 110, trough at 90 (18.18% drawdown), then partial recovery
+        let equity_curve = vec![
+            EquityPoint {
+                timestamp: Utc.with_ymd_and_hms(2024, 1, 1, 16, 0, 0).unwrap(),
+                equity: 100000.0,
+                cash: 100000.0,
+                positions_value: 0.0,
+                drawdown: 0.0,
+                drawdown_pct: 0.0,
+            },
+            EquityPoint {
+                timestamp: Utc.with_ymd_and_hms(2024, 1, 2, 16, 0, 0).unwrap(),
+                equity: 110000.0, // New peak
+                cash: 0.0,
+                positions_value: 110000.0,
+                drawdown: 0.0,
+                drawdown_pct: 0.0,
+            },
+            EquityPoint {
+                timestamp: Utc.with_ymd_and_hms(2024, 1, 3, 16, 0, 0).unwrap(),
+                equity: 90000.0, // Trough - 18.18% drawdown
+                cash: 0.0,
+                positions_value: 90000.0,
+                drawdown: 20000.0,
+                drawdown_pct: 18.18,
+            },
+            EquityPoint {
+                timestamp: Utc.with_ymd_and_hms(2024, 1, 4, 16, 0, 0).unwrap(),
+                equity: 105000.0, // Partial recovery, still in drawdown
+                cash: 0.0,
+                positions_value: 105000.0,
+                drawdown: 5000.0,
+                drawdown_pct: 4.55,
+            },
+        ];
+
+        let analysis = DrawdownAnalysis::from_equity_curve(&equity_curve);
+
+        // Max drawdown should be ~18.18% ((110000-90000)/110000 * 100)
+        assert!(
+            (analysis.max_drawdown_pct - 18.18).abs() < 0.1,
+            "Max drawdown should be ~18.18%: {}",
+            analysis.max_drawdown_pct
+        );
+
+        // Should have 1 ongoing drawdown period
+        assert_eq!(analysis.periods.len(), 1, "Should have 1 drawdown period");
+
+        // Period should not be recovered (end is None)
+        assert!(
+            analysis.periods[0].end.is_none(),
+            "Drawdown period should not be recovered"
+        );
+    }
+
+    #[test]
+    fn test_drawdown_analysis_multiple_drawdowns() {
+        use crate::types::EquityPoint;
+
+        // Equity curve with two separate drawdown periods
+        // 100 -> 120 -> 100 -> 130 -> 100 -> 150
+        let equity_curve = vec![
+            EquityPoint {
+                timestamp: Utc.with_ymd_and_hms(2024, 1, 1, 16, 0, 0).unwrap(),
+                equity: 100000.0,
+                cash: 100000.0,
+                positions_value: 0.0,
+                drawdown: 0.0,
+                drawdown_pct: 0.0,
+            },
+            EquityPoint {
+                timestamp: Utc.with_ymd_and_hms(2024, 1, 5, 16, 0, 0).unwrap(),
+                equity: 120000.0, // First peak
+                cash: 0.0,
+                positions_value: 120000.0,
+                drawdown: 0.0,
+                drawdown_pct: 0.0,
+            },
+            EquityPoint {
+                timestamp: Utc.with_ymd_and_hms(2024, 1, 10, 16, 0, 0).unwrap(),
+                equity: 100000.0, // First drawdown ~16.67%
+                cash: 0.0,
+                positions_value: 100000.0,
+                drawdown: 20000.0,
+                drawdown_pct: 16.67,
+            },
+            EquityPoint {
+                timestamp: Utc.with_ymd_and_hms(2024, 1, 15, 16, 0, 0).unwrap(),
+                equity: 130000.0, // New peak, first drawdown recovered
+                cash: 0.0,
+                positions_value: 130000.0,
+                drawdown: 0.0,
+                drawdown_pct: 0.0,
+            },
+            EquityPoint {
+                timestamp: Utc.with_ymd_and_hms(2024, 1, 20, 16, 0, 0).unwrap(),
+                equity: 100000.0, // Second drawdown ~23.08%
+                cash: 0.0,
+                positions_value: 100000.0,
+                drawdown: 30000.0,
+                drawdown_pct: 23.08,
+            },
+            EquityPoint {
+                timestamp: Utc.with_ymd_and_hms(2024, 1, 25, 16, 0, 0).unwrap(),
+                equity: 150000.0, // New peak, second drawdown recovered
+                cash: 0.0,
+                positions_value: 150000.0,
+                drawdown: 0.0,
+                drawdown_pct: 0.0,
+            },
+        ];
+
+        let analysis = DrawdownAnalysis::from_equity_curve(&equity_curve);
+
+        // Max drawdown should be ~23.08%
+        assert!(
+            (analysis.max_drawdown_pct - 23.08).abs() < 0.1,
+            "Max drawdown should be ~23.08%: {}",
+            analysis.max_drawdown_pct
+        );
+
+        // Should have 2 drawdown periods
+        assert_eq!(analysis.periods.len(), 2, "Should have 2 drawdown periods");
+
+        // Both periods should be recovered
+        assert!(
+            analysis.periods[0].end.is_some(),
+            "First period should be recovered"
+        );
+        assert!(
+            analysis.periods[1].end.is_some(),
+            "Second period should be recovered"
+        );
+
+        // Average drawdown should be average of ~16.67% and ~23.08%
+        let expected_avg = (16.666666 + 23.076923) / 2.0;
+        assert!(
+            (analysis.avg_drawdown_pct - expected_avg).abs() < 0.1,
+            "Avg drawdown should be ~{:.2}%: {}",
+            expected_avg,
+            analysis.avg_drawdown_pct
+        );
+    }
+
+    #[test]
+    fn test_drawdown_analysis_ulcer_index() {
+        use crate::types::EquityPoint;
+
+        // Simple case: constant 10% drawdown
+        // Ulcer Index = sqrt(mean(10^2)) = sqrt(100) = 10
+        let equity_curve = vec![
+            EquityPoint {
+                timestamp: Utc.with_ymd_and_hms(2024, 1, 1, 16, 0, 0).unwrap(),
+                equity: 100000.0,
+                cash: 100000.0,
+                positions_value: 0.0,
+                drawdown: 0.0,
+                drawdown_pct: 0.0,
+            },
+            EquityPoint {
+                timestamp: Utc.with_ymd_and_hms(2024, 1, 2, 16, 0, 0).unwrap(),
+                equity: 90000.0, // 10% drawdown
+                cash: 0.0,
+                positions_value: 90000.0,
+                drawdown: 10000.0,
+                drawdown_pct: 10.0,
+            },
+            EquityPoint {
+                timestamp: Utc.with_ymd_and_hms(2024, 1, 3, 16, 0, 0).unwrap(),
+                equity: 90000.0, // Still 10% drawdown
+                cash: 0.0,
+                positions_value: 90000.0,
+                drawdown: 10000.0,
+                drawdown_pct: 10.0,
+            },
+        ];
+
+        let analysis = DrawdownAnalysis::from_equity_curve(&equity_curve);
+
+        // Ulcer index calculation:
+        // Point 0: drawdown = 0%
+        // Point 1: drawdown = 10%
+        // Point 2: drawdown = 10%
+        // Ulcer = sqrt((0^2 + 10^2 + 10^2) / 3) = sqrt(200/3) = 8.165
+        assert!(
+            (analysis.ulcer_index - 8.165).abs() < 0.1,
+            "Ulcer index should be ~8.165: {}",
+            analysis.ulcer_index
+        );
+    }
+
+    #[test]
+    fn test_drawdown_analysis_no_drawdown() {
+        use crate::types::EquityPoint;
+
+        // Steadily increasing equity - no drawdowns
+        let equity_curve = vec![
+            EquityPoint {
+                timestamp: Utc.with_ymd_and_hms(2024, 1, 1, 16, 0, 0).unwrap(),
+                equity: 100000.0,
+                cash: 100000.0,
+                positions_value: 0.0,
+                drawdown: 0.0,
+                drawdown_pct: 0.0,
+            },
+            EquityPoint {
+                timestamp: Utc.with_ymd_and_hms(2024, 1, 2, 16, 0, 0).unwrap(),
+                equity: 110000.0,
+                cash: 0.0,
+                positions_value: 110000.0,
+                drawdown: 0.0,
+                drawdown_pct: 0.0,
+            },
+            EquityPoint {
+                timestamp: Utc.with_ymd_and_hms(2024, 1, 3, 16, 0, 0).unwrap(),
+                equity: 120000.0,
+                cash: 0.0,
+                positions_value: 120000.0,
+                drawdown: 0.0,
+                drawdown_pct: 0.0,
+            },
+        ];
+
+        let analysis = DrawdownAnalysis::from_equity_curve(&equity_curve);
+
+        assert!(
+            analysis.max_drawdown_pct.abs() < 0.0001,
+            "Max drawdown should be 0%"
+        );
+        assert!(
+            analysis.periods.is_empty(),
+            "Should have no drawdown periods"
+        );
+        assert!(
+            analysis.ulcer_index.abs() < 0.0001,
+            "Ulcer index should be 0, got: {}",
+            analysis.ulcer_index
+        );
+    }
+
+    #[test]
+    fn test_drawdown_analysis_empty_curve() {
+        let analysis = DrawdownAnalysis::from_equity_curve(&[]);
+
+        assert_eq!(analysis.max_drawdown_pct, 0.0);
+        assert_eq!(analysis.avg_drawdown_pct, 0.0);
+        assert_eq!(analysis.ulcer_index, 0.0);
+        assert!(analysis.periods.is_empty());
+    }
+
+    #[test]
+    fn test_drawdown_analysis_serialization() {
+        use crate::types::EquityPoint;
+
+        let equity_curve = vec![
+            EquityPoint {
+                timestamp: Utc.with_ymd_and_hms(2024, 1, 1, 16, 0, 0).unwrap(),
+                equity: 100000.0,
+                cash: 100000.0,
+                positions_value: 0.0,
+                drawdown: 0.0,
+                drawdown_pct: 0.0,
+            },
+            EquityPoint {
+                timestamp: Utc.with_ymd_and_hms(2024, 1, 2, 16, 0, 0).unwrap(),
+                equity: 95000.0,
+                cash: 0.0,
+                positions_value: 95000.0,
+                drawdown: 5000.0,
+                drawdown_pct: 5.0,
+            },
+        ];
+
+        let analysis = DrawdownAnalysis::from_equity_curve(&equity_curve);
+
+        // Test JSON serialization
+        let json = serde_json::to_string(&analysis).unwrap();
+        assert!(json.contains("max_drawdown_pct"));
+        assert!(json.contains("ulcer_index"));
+
+        // Test deserialization
+        let deserialized: DrawdownAnalysis = serde_json::from_str(&json).unwrap();
+        assert!((deserialized.max_drawdown_pct - analysis.max_drawdown_pct).abs() < 0.0001);
     }
 }

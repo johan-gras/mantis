@@ -115,7 +115,9 @@ pub mod types;
 pub mod walkforward;
 
 // Re-exports for convenience
-pub use analytics::{BenchmarkMetrics, PerformanceMetrics, ResultFormatter};
+pub use analytics::{
+    BenchmarkMetrics, DrawdownAnalysis, DrawdownPeriod, PerformanceMetrics, ResultFormatter,
+};
 pub use engine::{BacktestConfig, BacktestResult, Engine};
 pub use error::{BacktestError, Result};
 pub use strategy::Strategy;
