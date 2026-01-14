@@ -10,12 +10,12 @@
 //!
 //! Run with: cargo run --example walkforward
 
+use chrono::{TimeZone, Utc};
 use mantis::data::{load_csv, DataConfig};
 use mantis::engine::BacktestConfig;
 use mantis::strategies::SmaCrossover;
 use mantis::types::Bar;
 use mantis::walkforward::{WalkForwardAnalyzer, WalkForwardConfig, WalkForwardMetric};
-use chrono::{TimeZone, Utc};
 
 /// Generate synthetic data with varying trends.
 fn generate_synthetic_data(days: usize) -> Vec<Bar> {
@@ -41,8 +41,7 @@ fn generate_synthetic_data(days: usize) -> Vec<Bar> {
 
         let volatility = 1.0 + (noise.abs() * 0.3);
         bars.push(Bar::new(
-            Utc.with_ymd_and_hms(2020, 1, 1, 0, 0, 0).unwrap()
-                + chrono::Duration::days(i as i64),
+            Utc.with_ymd_and_hms(2020, 1, 1, 0, 0, 0).unwrap() + chrono::Duration::days(i as i64),
             price - volatility * 0.3,
             price + volatility,
             price - volatility,
@@ -60,8 +59,7 @@ fn main() {
     // 1. Load data
     println!("1. Loading data...");
     let bars = if std::path::Path::new("data/sample.csv").exists() {
-        load_csv("data/sample.csv", &DataConfig::default())
-            .expect("Failed to load data")
+        load_csv("data/sample.csv", &DataConfig::default()).expect("Failed to load data")
     } else {
         println!("   Using synthetic data");
         generate_synthetic_data(1000)
@@ -71,14 +69,24 @@ fn main() {
     // 2. Configure walk-forward analysis
     println!("2. Configuring walk-forward analysis...");
     let wf_config = WalkForwardConfig {
-        num_windows: 5,         // 5 walk-forward windows
-        in_sample_ratio: 0.7,   // 70% in-sample, 30% out-of-sample
-        anchored: false,        // Rolling windows (not expanding)
+        num_windows: 5,       // 5 walk-forward windows
+        in_sample_ratio: 0.7, // 70% in-sample, 30% out-of-sample
+        anchored: false,      // Rolling windows (not expanding)
         min_bars_per_window: 50,
     };
     println!("   Windows: {}", wf_config.num_windows);
-    println!("   In-sample ratio: {:.0}%", wf_config.in_sample_ratio * 100.0);
-    println!("   Mode: {}\n", if wf_config.anchored { "Anchored" } else { "Rolling" });
+    println!(
+        "   In-sample ratio: {:.0}%",
+        wf_config.in_sample_ratio * 100.0
+    );
+    println!(
+        "   Mode: {}\n",
+        if wf_config.anchored {
+            "Anchored"
+        } else {
+            "Rolling"
+        }
+    );
 
     // 3. Define parameter space for optimization
     println!("3. Defining parameter space...");
@@ -131,18 +139,13 @@ fn main() {
         println!("\nWindow {} of {}:", i + 1, result.windows.len());
         println!(
             "  In-Sample:     {:>8.2}% return, {:.2} Sharpe",
-            window.in_sample_result.total_return_pct,
-            window.in_sample_result.sharpe_ratio
+            window.in_sample_result.total_return_pct, window.in_sample_result.sharpe_ratio
         );
         println!(
             "  Out-of-Sample: {:>8.2}% return, {:.2} Sharpe",
-            window.out_of_sample_result.total_return_pct,
-            window.out_of_sample_result.sharpe_ratio
+            window.out_of_sample_result.total_return_pct, window.out_of_sample_result.sharpe_ratio
         );
-        println!(
-            "  Efficiency:    {:>8.2}%",
-            window.efficiency_ratio * 100.0
-        );
+        println!("  Efficiency:    {:>8.2}%", window.efficiency_ratio * 100.0);
     }
 
     println!("\n{}", "=".repeat(70));
@@ -152,10 +155,16 @@ fn main() {
     println!("\n6. Robustness Check:");
     if result.is_robust(0.5) {
         println!("   PASSED: Strategy shows robust out-of-sample performance");
-        println!("   Walk-forward efficiency: {:.1}%", result.walk_forward_efficiency * 100.0);
+        println!(
+            "   Walk-forward efficiency: {:.1}%",
+            result.walk_forward_efficiency * 100.0
+        );
     } else {
         println!("   FAILED: Strategy may be overfit");
-        println!("   Walk-forward efficiency: {:.1}%", result.walk_forward_efficiency * 100.0);
+        println!(
+            "   Walk-forward efficiency: {:.1}%",
+            result.walk_forward_efficiency * 100.0
+        );
         println!("\n   Suggestions:");
         println!("   - Use simpler strategy");
         println!("   - Reduce number of parameters");
@@ -181,11 +190,7 @@ fn main() {
         },
     );
 
-    let anchored_params: Vec<(usize, usize)> = vec![
-        (5, 20),
-        (10, 30),
-        (15, 45),
-    ];
+    let anchored_params: Vec<(usize, usize)> = vec![(5, 20), (10, 30), (15, 45)];
 
     if let Ok(anchored_result) = anchored_analyzer.run(
         &bars,
@@ -194,8 +199,14 @@ fn main() {
         |params: &(usize, usize)| Box::new(SmaCrossover::new(params.0, params.1)),
         WalkForwardMetric::Sharpe,
     ) {
-        println!("   Anchored WF Efficiency: {:.1}%", anchored_result.walk_forward_efficiency * 100.0);
-        println!("   Anchored Avg OOS Return: {:.2}%", anchored_result.avg_oos_return);
+        println!(
+            "   Anchored WF Efficiency: {:.1}%",
+            anchored_result.walk_forward_efficiency * 100.0
+        );
+        println!(
+            "   Anchored Avg OOS Return: {:.2}%",
+            anchored_result.avg_oos_return
+        );
     }
 
     println!("\n=== Analysis Complete ===");

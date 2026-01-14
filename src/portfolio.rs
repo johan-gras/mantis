@@ -226,7 +226,10 @@ impl Portfolio {
                     }
                 }
             }
-            OrderType::StopLimit { ref stop, ref limit } => {
+            OrderType::StopLimit {
+                ref stop,
+                ref limit,
+            } => {
                 // First check if stop is triggered, then check limit
                 let triggered = match order.side {
                     Side::Buy => bar.high >= stop.0,
@@ -320,9 +323,9 @@ impl Portfolio {
                     } else {
                         // Adding to long position
                         let new_qty = pos.quantity + order.quantity;
-                        let new_avg =
-                            (pos.avg_entry_price * pos.quantity + exec_price * order.quantity)
-                                / new_qty;
+                        let new_avg = (pos.avg_entry_price * pos.quantity
+                            + exec_price * order.quantity)
+                            / new_qty;
                         pos.quantity = new_qty;
                         pos.avg_entry_price = new_avg;
                         self.positions.insert(order.symbol.clone(), pos);
@@ -417,9 +420,9 @@ impl Portfolio {
                     } else {
                         // Adding to short position
                         let new_qty = pos.quantity + order.quantity;
-                        let new_avg =
-                            (pos.avg_entry_price * pos.quantity + exec_price * order.quantity)
-                                / new_qty;
+                        let new_avg = (pos.avg_entry_price * pos.quantity
+                            + exec_price * order.quantity)
+                            / new_qty;
                         pos.quantity = new_qty;
                         pos.avg_entry_price = new_avg;
                         self.positions.insert(order.symbol.clone(), pos);
@@ -488,12 +491,7 @@ impl Portfolio {
     }
 
     /// Calculate position size based on risk.
-    pub fn calculate_position_size(
-        &self,
-        price: f64,
-        risk_pct: f64,
-        stop_loss_pct: f64,
-    ) -> f64 {
+    pub fn calculate_position_size(&self, price: f64, risk_pct: f64, stop_loss_pct: f64) -> f64 {
         let risk_amount = self.cash * risk_pct;
         let risk_per_share = price * stop_loss_pct;
         let shares = risk_amount / risk_per_share;
@@ -511,8 +509,14 @@ impl Portfolio {
         let total_return = (equity - self.initial_capital) / self.initial_capital * 100.0;
 
         let closed = self.closed_trades();
-        let winning: Vec<_> = closed.iter().filter(|t| t.net_pnl().unwrap_or(0.0) > 0.0).collect();
-        let losing: Vec<_> = closed.iter().filter(|t| t.net_pnl().unwrap_or(0.0) < 0.0).collect();
+        let winning: Vec<_> = closed
+            .iter()
+            .filter(|t| t.net_pnl().unwrap_or(0.0) > 0.0)
+            .collect();
+        let losing: Vec<_> = closed
+            .iter()
+            .filter(|t| t.net_pnl().unwrap_or(0.0) < 0.0)
+            .collect();
 
         let win_rate = if !closed.is_empty() {
             winning.len() as f64 / closed.len() as f64 * 100.0
@@ -650,7 +654,10 @@ mod tests {
         let order = Order::market("AAPL", Side::Buy, 100.0, bar.timestamp); // Need 10000
 
         let result = portfolio.execute_order(&order, &bar);
-        assert!(matches!(result, Err(BacktestError::InsufficientFunds { .. })));
+        assert!(matches!(
+            result,
+            Err(BacktestError::InsufficientFunds { .. })
+        ));
     }
 
     #[test]

@@ -65,14 +65,10 @@ impl Strategy for MomentumStrategy {
             if momentum > self.threshold {
                 return Signal::Long;
             }
-        } else if ctx.is_long() {
-            if momentum < -self.threshold {
-                return Signal::Exit;
-            }
-        } else if ctx.is_short() {
-            if momentum > self.threshold {
-                return Signal::Exit;
-            }
+        } else if (ctx.is_long() && momentum < -self.threshold)
+            || (ctx.is_short() && momentum > self.threshold)
+        {
+            return Signal::Exit;
         }
 
         Signal::Hold
@@ -147,8 +143,14 @@ impl Strategy for RocStrategy {
     fn parameters(&self) -> Vec<(String, String)> {
         vec![
             ("period".to_string(), self.period.to_string()),
-            ("entry_threshold".to_string(), format!("{:.2}%", self.entry_threshold)),
-            ("exit_threshold".to_string(), format!("{:.2}%", self.exit_threshold)),
+            (
+                "entry_threshold".to_string(),
+                format!("{:.2}%", self.entry_threshold),
+            ),
+            (
+                "exit_threshold".to_string(),
+                format!("{:.2}%", self.exit_threshold),
+            ),
         ]
     }
 }
@@ -161,11 +163,46 @@ mod tests {
 
     fn create_test_bars() -> Vec<Bar> {
         vec![
-            Bar::new(Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap(), 100.0, 102.0, 99.0, 101.0, 1000.0),
-            Bar::new(Utc.with_ymd_and_hms(2024, 1, 2, 0, 0, 0).unwrap(), 101.0, 103.0, 100.0, 102.0, 1000.0),
-            Bar::new(Utc.with_ymd_and_hms(2024, 1, 3, 0, 0, 0).unwrap(), 102.0, 105.0, 101.0, 104.0, 1000.0),
-            Bar::new(Utc.with_ymd_and_hms(2024, 1, 4, 0, 0, 0).unwrap(), 104.0, 108.0, 103.0, 107.0, 1000.0),
-            Bar::new(Utc.with_ymd_and_hms(2024, 1, 5, 0, 0, 0).unwrap(), 107.0, 112.0, 106.0, 110.0, 1000.0),
+            Bar::new(
+                Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap(),
+                100.0,
+                102.0,
+                99.0,
+                101.0,
+                1000.0,
+            ),
+            Bar::new(
+                Utc.with_ymd_and_hms(2024, 1, 2, 0, 0, 0).unwrap(),
+                101.0,
+                103.0,
+                100.0,
+                102.0,
+                1000.0,
+            ),
+            Bar::new(
+                Utc.with_ymd_and_hms(2024, 1, 3, 0, 0, 0).unwrap(),
+                102.0,
+                105.0,
+                101.0,
+                104.0,
+                1000.0,
+            ),
+            Bar::new(
+                Utc.with_ymd_and_hms(2024, 1, 4, 0, 0, 0).unwrap(),
+                104.0,
+                108.0,
+                103.0,
+                107.0,
+                1000.0,
+            ),
+            Bar::new(
+                Utc.with_ymd_and_hms(2024, 1, 5, 0, 0, 0).unwrap(),
+                107.0,
+                112.0,
+                106.0,
+                110.0,
+                1000.0,
+            ),
         ]
     }
 

@@ -24,25 +24,21 @@
 //! - [`TimestampedSignalStrategy`]: Signals indexed by timestamp
 //! - [`EnsembleSignalStrategy`]: Combine multiple model predictions
 
-mod sma_crossover;
-mod momentum;
-mod mean_reversion;
-mod rsi_strategy;
 mod breakout;
 mod macd_strategy;
+mod mean_reversion;
 mod ml_strategy;
+mod momentum;
+mod rsi_strategy;
+mod sma_crossover;
 
-pub use sma_crossover::SmaCrossover;
-pub use momentum::{MomentumStrategy, RocStrategy};
-pub use mean_reversion::{MeanReversion, BollingerBounce};
-pub use rsi_strategy::{RsiStrategy, RsiDivergence};
-pub use breakout::{BreakoutStrategy, RangeBreakout, AtrBreakout};
+pub use breakout::{AtrBreakout, BreakoutStrategy, RangeBreakout};
 pub use macd_strategy::{MacdStrategy, MacdTrendStrategy};
+pub use mean_reversion::{BollingerBounce, MeanReversion};
 pub use ml_strategy::{
-    ExternalSignalStrategy,
-    ClassificationStrategy,
-    ConfidenceWeightedStrategy,
-    TimestampedSignalStrategy,
-    EnsembleSignalStrategy,
-    AggregationMethod,
+    AggregationMethod, ClassificationStrategy, ConfidenceWeightedStrategy, EnsembleSignalStrategy,
+    ExternalSignalStrategy, TimestampedSignalStrategy,
 };
+pub use momentum::{MomentumStrategy, RocStrategy};
+pub use rsi_strategy::{RsiDivergence, RsiStrategy};
+pub use sma_crossover::SmaCrossover;

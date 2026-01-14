@@ -196,9 +196,7 @@ impl WalkForwardAnalyzer {
                 oos_bars: window_end - is_end_idx,
             };
 
-            if window.is_bars >= self.config.min_bars_per_window
-                && window.oos_bars >= 10
-            {
+            if window.is_bars >= self.config.min_bars_per_window && window.oos_bars >= 10 {
                 windows.push(window);
             } else {
                 warn!("Window {} skipped due to insufficient bars", i);
@@ -228,7 +226,10 @@ impl WalkForwardAnalyzer {
         F: Fn(&P) -> Box<dyn Strategy> + Send + Sync,
     {
         let windows = self.calculate_windows(bars)?;
-        info!("Running walk-forward analysis with {} windows", windows.len());
+        info!(
+            "Running walk-forward analysis with {} windows",
+            windows.len()
+        );
 
         let mut window_results = Vec::with_capacity(windows.len());
 
@@ -348,19 +349,13 @@ impl WalkForwardAnalyzer {
             / window_results.len() as f64;
 
         // Calculate combined OOS return (compound the returns)
-        let combined_oos_return: f64 = window_results
-            .iter()
-            .fold(1.0, |acc, w| {
-                acc * (1.0 + w.out_of_sample_result.total_return_pct / 100.0)
-            })
-            - 1.0;
+        let combined_oos_return: f64 = window_results.iter().fold(1.0, |acc, w| {
+            acc * (1.0 + w.out_of_sample_result.total_return_pct / 100.0)
+        }) - 1.0;
 
-        let total_is_return: f64 = window_results
-            .iter()
-            .fold(1.0, |acc, w| {
-                acc * (1.0 + w.in_sample_result.total_return_pct / 100.0)
-            })
-            - 1.0;
+        let total_is_return: f64 = window_results.iter().fold(1.0, |acc, w| {
+            acc * (1.0 + w.in_sample_result.total_return_pct / 100.0)
+        }) - 1.0;
 
         let walk_forward_efficiency = if total_is_return.abs() > 0.001 {
             combined_oos_return / total_is_return

@@ -2,13 +2,13 @@
 //!
 //! Run with: cargo bench
 
-use criterion::{black_box, criterion_group, criterion_main, Criterion, BenchmarkId};
+use chrono::{TimeZone, Utc};
+use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
 use mantis::data::{atr, bollinger_bands, ema, macd, rsi, sma};
 use mantis::engine::{BacktestConfig, Engine};
 use mantis::features::{FeatureConfig, FeatureExtractor};
-use mantis::strategies::{SmaCrossover, MacdStrategy, RsiStrategy, MomentumStrategy};
+use mantis::strategies::{MacdStrategy, MomentumStrategy, RsiStrategy, SmaCrossover};
 use mantis::types::Bar;
-use chrono::{TimeZone, Utc};
 
 /// Generate synthetic bars for benchmarking.
 fn generate_bars(count: usize) -> Vec<Bar> {
@@ -40,26 +40,20 @@ fn bench_indicators(c: &mut Criterion) {
 
     // SMA benchmarks
     for period in [10, 20, 50, 100].iter() {
-        group.bench_with_input(
-            BenchmarkId::new("sma", period),
-            period,
-            |b, &period| b.iter(|| sma(black_box(&bars), period)),
-        );
+        group.bench_with_input(BenchmarkId::new("sma", period), period, |b, &period| {
+            b.iter(|| sma(black_box(&bars), period))
+        });
     }
 
     // EMA benchmarks
     for period in [10, 20, 50].iter() {
-        group.bench_with_input(
-            BenchmarkId::new("ema", period),
-            period,
-            |b, &period| b.iter(|| ema(black_box(&bars), period)),
-        );
+        group.bench_with_input(BenchmarkId::new("ema", period), period, |b, &period| {
+            b.iter(|| ema(black_box(&bars), period))
+        });
     }
 
     // RSI benchmark
-    group.bench_function("rsi_14", |b| {
-        b.iter(|| rsi(black_box(&bars), 14))
-    });
+    group.bench_function("rsi_14", |b| b.iter(|| rsi(black_box(&bars), 14)));
 
     // MACD benchmark
     group.bench_function("macd_12_26_9", |b| {
@@ -67,9 +61,7 @@ fn bench_indicators(c: &mut Criterion) {
     });
 
     // ATR benchmark
-    group.bench_function("atr_14", |b| {
-        b.iter(|| atr(black_box(&bars), 14))
-    });
+    group.bench_function("atr_14", |b| b.iter(|| atr(black_box(&bars), 14)));
 
     // Bollinger Bands benchmark
     group.bench_function("bbands_20_2", |b| {
@@ -87,23 +79,19 @@ fn bench_backtest(c: &mut Criterion) {
     for size in [252, 500, 1000, 2000].iter() {
         let bars = generate_bars(*size);
 
-        group.bench_with_input(
-            BenchmarkId::new("sma_crossover", size),
-            &bars,
-            |b, bars| {
-                b.iter(|| {
-                    let config = BacktestConfig {
-                        initial_capital: 100_000.0,
-                        show_progress: false,
-                        ..Default::default()
-                    };
-                    let mut engine = Engine::new(config);
-                    engine.add_data("TEST".to_string(), bars.clone());
-                    let mut strategy = SmaCrossover::new(10, 30);
-                    engine.run(black_box(&mut strategy), "TEST")
-                })
-            },
-        );
+        group.bench_with_input(BenchmarkId::new("sma_crossover", size), &bars, |b, bars| {
+            b.iter(|| {
+                let config = BacktestConfig {
+                    initial_capital: 100_000.0,
+                    show_progress: false,
+                    ..Default::default()
+                };
+                let mut engine = Engine::new(config);
+                engine.add_data("TEST".to_string(), bars.clone());
+                let mut strategy = SmaCrossover::new(10, 30);
+                engine.run(black_box(&mut strategy), "TEST")
+            })
+        });
     }
 
     // Different strategies with 1000 bars
@@ -214,9 +202,15 @@ fn bench_optimization(c: &mut Criterion) {
             engine.add_data("TEST".to_string(), bars.clone());
 
             let params: Vec<(usize, usize)> = vec![
-                (5, 20), (5, 30), (5, 40),
-                (10, 30), (10, 40), (10, 50),
-                (15, 40), (15, 50), (15, 60),
+                (5, 20),
+                (5, 30),
+                (5, 40),
+                (10, 30),
+                (10, 40),
+                (10, 50),
+                (15, 40),
+                (15, 50),
+                (15, 60),
             ];
 
             engine.optimize("TEST", params, |&(fast, slow)| {
@@ -230,7 +224,7 @@ fn bench_optimization(c: &mut Criterion) {
 
 /// Benchmark streaming indicators.
 fn bench_streaming_indicators(c: &mut Criterion) {
-    use mantis::streaming::{StreamingSMA, StreamingEMA, StreamingRSI, StreamingIndicator};
+    use mantis::streaming::{StreamingEMA, StreamingIndicator, StreamingRSI, StreamingSMA};
 
     let bars = generate_bars(1000);
 
@@ -280,9 +274,7 @@ fn bench_monte_carlo(c: &mut Criterion) {
     group.sample_size(10); // Fewer samples for slow benchmarks
 
     // Create some test returns
-    let returns: Vec<f64> = (0..100)
-        .map(|i| (i as f64 * 0.1).sin() * 5.0)
-        .collect();
+    let returns: Vec<f64> = (0..100).map(|i| (i as f64 * 0.1).sin() * 5.0).collect();
 
     // Monte Carlo with 100 simulations
     group.bench_function("mc_100_sims", |b| {
@@ -327,15 +319,11 @@ fn bench_regime_detection(c: &mut Criterion) {
     for size in [252, 500, 1000].iter() {
         let bars = generate_bars(*size);
 
-        group.bench_with_input(
-            BenchmarkId::new("detect", size),
-            &bars,
-            |b, bars| {
-                let config = RegimeConfig::default();
-                let detector = RegimeDetector::new(config);
-                b.iter(|| detector.detect(black_box(bars)))
-            },
-        );
+        group.bench_with_input(BenchmarkId::new("detect", size), &bars, |b, bars| {
+            let config = RegimeConfig::default();
+            let detector = RegimeDetector::new(config);
+            b.iter(|| detector.detect(black_box(bars)))
+        });
     }
 
     group.finish();
@@ -367,9 +355,7 @@ fn bench_parquet_export(c: &mut Criterion) {
         let temp_dir = TempDir::new().unwrap();
         let path = temp_dir.path().join("features.parquet");
 
-        b.iter(|| {
-            export_features_parquet(black_box(&features), &columns, &path).unwrap()
-        })
+        b.iter(|| export_features_parquet(black_box(&features), &columns, &path).unwrap())
     });
 
     group.finish();

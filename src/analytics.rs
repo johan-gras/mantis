@@ -115,8 +115,8 @@ impl PerformanceMetrics {
         };
 
         // Expectancy
-        let expectancy =
-            (result.win_rate / 100.0) * result.avg_win - (1.0 - result.win_rate / 100.0) * result.avg_loss.abs();
+        let expectancy = (result.win_rate / 100.0) * result.avg_win
+            - (1.0 - result.win_rate / 100.0) * result.avg_loss.abs();
         let expectancy_ratio = if result.avg_loss.abs() > 0.0 {
             expectancy / result.avg_loss.abs()
         } else {
@@ -127,7 +127,9 @@ impl PerformanceMetrics {
         let monthly_returns = Self::monthly_returns(result);
         let winning_months = monthly_returns.iter().filter(|&&r| r > 0.0).count();
         let losing_months = monthly_returns.iter().filter(|&&r| r < 0.0).count();
-        let best_month_pct = monthly_returns.iter().fold(f64::NEG_INFINITY, |a, &b| a.max(b));
+        let best_month_pct = monthly_returns
+            .iter()
+            .fold(f64::NEG_INFINITY, |a, &b| a.max(b));
         let worst_month_pct = monthly_returns.iter().fold(f64::INFINITY, |a, &b| a.min(b));
         let monthly_return_avg = if !monthly_returns.is_empty() {
             monthly_returns.iter().sum::<f64>() / monthly_returns.len() as f64
@@ -244,8 +246,16 @@ impl PerformanceMetrics {
             return 1.0;
         }
 
-        let gains: f64 = returns.iter().filter(|&&r| r > threshold).map(|r| r - threshold).sum();
-        let losses: f64 = returns.iter().filter(|&&r| r < threshold).map(|r| threshold - r).sum();
+        let gains: f64 = returns
+            .iter()
+            .filter(|&&r| r > threshold)
+            .map(|r| r - threshold)
+            .sum();
+        let losses: f64 = returns
+            .iter()
+            .filter(|&&r| r < threshold)
+            .map(|r| threshold - r)
+            .sum();
 
         if losses == 0.0 {
             if gains > 0.0 {
@@ -288,53 +298,33 @@ impl ResultFormatter {
         println!("{}", "Overview".bold().underline());
         println!("  Strategy:        {}", result.strategy_name);
         println!("  Symbol(s):       {}", result.symbols.join(", "));
-        println!("  Period:          {} to {}", result.start_time.format("%Y-%m-%d"), result.end_time.format("%Y-%m-%d"));
+        println!(
+            "  Period:          {} to {}",
+            result.start_time.format("%Y-%m-%d"),
+            result.end_time.format("%Y-%m-%d")
+        );
         println!("  Trading Days:    {}", result.trading_days);
         println!();
 
         // Performance
         println!("{}", "Performance".bold().underline());
-        println!(
-            "  Initial Capital: ${:>12.2}",
-            result.initial_capital
-        );
+        println!("  Initial Capital: ${:>12.2}", result.initial_capital);
         println!(
             "  Final Equity:    ${:>12.2}  {}",
             result.final_equity,
             Self::format_pct_change(result.total_return_pct)
         );
-        println!(
-            "  Total Return:    {:>12.2}%",
-            result.total_return_pct
-        );
-        println!(
-            "  Annual Return:   {:>12.2}%",
-            result.annual_return_pct
-        );
+        println!("  Total Return:    {:>12.2}%", result.total_return_pct);
+        println!("  Annual Return:   {:>12.2}%", result.annual_return_pct);
         println!();
 
         // Risk Metrics
         println!("{}", "Risk Metrics".bold().underline());
-        println!(
-            "  Max Drawdown:    {:>12.2}%",
-            -result.max_drawdown_pct
-        );
-        println!(
-            "  Volatility:      {:>12.2}%",
-            metrics.volatility_annual
-        );
-        println!(
-            "  Sharpe Ratio:    {:>12.2}",
-            result.sharpe_ratio
-        );
-        println!(
-            "  Sortino Ratio:   {:>12.2}",
-            result.sortino_ratio
-        );
-        println!(
-            "  Calmar Ratio:    {:>12.2}",
-            result.calmar_ratio
-        );
+        println!("  Max Drawdown:    {:>12.2}%", -result.max_drawdown_pct);
+        println!("  Volatility:      {:>12.2}%", metrics.volatility_annual);
+        println!("  Sharpe Ratio:    {:>12.2}", result.sharpe_ratio);
+        println!("  Sortino Ratio:   {:>12.2}", result.sortino_ratio);
+        println!("  Calmar Ratio:    {:>12.2}", result.calmar_ratio);
         println!();
 
         // Trade Statistics
@@ -349,33 +339,15 @@ impl ResultFormatter {
             result.losing_trades,
             100.0 - result.win_rate
         );
-        println!(
-            "  Profit Factor:   {:>12.2}",
-            result.profit_factor
-        );
+        println!("  Profit Factor:   {:>12.2}", result.profit_factor);
         println!();
 
         println!("{}", "Trade P&L".bold().underline());
-        println!(
-            "  Average Win:     ${:>11.2}",
-            result.avg_win
-        );
-        println!(
-            "  Average Loss:    ${:>11.2}",
-            result.avg_loss
-        );
-        println!(
-            "  Largest Win:     ${:>11.2}",
-            metrics.largest_win
-        );
-        println!(
-            "  Largest Loss:    ${:>11.2}",
-            metrics.largest_loss
-        );
-        println!(
-            "  Expectancy:      ${:>11.2}",
-            metrics.expectancy
-        );
+        println!("  Average Win:     ${:>11.2}", result.avg_win);
+        println!("  Average Loss:    ${:>11.2}", result.avg_loss);
+        println!("  Largest Win:     ${:>11.2}", metrics.largest_win);
+        println!("  Largest Loss:    ${:>11.2}", metrics.largest_loss);
+        println!("  Expectancy:      ${:>11.2}", metrics.expectancy);
         println!();
 
         println!("{}", "═".repeat(60).blue());
@@ -394,13 +366,7 @@ impl ResultFormatter {
     pub fn print_table(results: &[BacktestResult]) {
         let mut builder = Builder::new();
         builder.push_record([
-            "Strategy",
-            "Return %",
-            "Annual %",
-            "Max DD %",
-            "Sharpe",
-            "Trades",
-            "Win Rate",
+            "Strategy", "Return %", "Annual %", "Max DD %", "Sharpe", "Trades", "Win Rate",
         ]);
 
         for result in results {
@@ -468,7 +434,9 @@ impl TradeReport {
         };
 
         let mut builder = Builder::new();
-        builder.push_record(["#", "Symbol", "Side", "Qty", "Entry", "Exit", "P&L", "Return %"]);
+        builder.push_record([
+            "#", "Symbol", "Side", "Qty", "Entry", "Exit", "P&L", "Return %",
+        ]);
 
         for (i, trade) in display_trades.iter().enumerate() {
             let pnl = trade.net_pnl().unwrap_or(0.0);

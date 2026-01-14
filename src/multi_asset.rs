@@ -111,7 +111,7 @@ impl<'a> PortfolioContext<'a> {
 
     /// Check if we have a position in a symbol.
     pub fn has_position(&self, symbol: &str) -> bool {
-        self.positions.get(symbol).map_or(false, |&q| q.abs() > 0.0)
+        self.positions.get(symbol).is_some_and(|&q| q.abs() > 0.0)
     }
 
     /// Calculate correlation between two symbols over a lookback period.
@@ -240,10 +240,7 @@ impl MultiAssetEngine {
     }
 
     /// Run multi-asset backtest.
-    pub fn run(
-        &self,
-        strategy: &mut dyn PortfolioStrategy,
-    ) -> Result<MultiAssetResult> {
+    pub fn run(&self, strategy: &mut dyn PortfolioStrategy) -> Result<MultiAssetResult> {
         let symbols: Vec<String> = self.data.symbols().iter().map(|s| s.to_string()).collect();
 
         if symbols.is_empty() {
@@ -262,10 +259,8 @@ impl MultiAssetEngine {
 
         strategy.init();
 
-        let mut portfolio = Portfolio::with_cost_model(
-            self.config.initial_capital,
-            self.config.cost_model.clone(),
-        );
+        let mut portfolio =
+            Portfolio::with_cost_model(self.config.initial_capital, self.config.cost_model.clone());
         portfolio.allow_short = self.config.allow_short;
         portfolio.fractional_shares = self.config.fractional_shares;
 
@@ -321,7 +316,14 @@ impl MultiAssetEngine {
                         .position(s)
                         .map(|p| p.quantity * prices.get(s).unwrap_or(&0.0))
                         .unwrap_or(0.0);
-                    (s.clone(), if equity > 0.0 { pos_value / equity } else { 0.0 })
+                    (
+                        s.clone(),
+                        if equity > 0.0 {
+                            pos_value / equity
+                        } else {
+                            0.0
+                        },
+                    )
                 })
                 .collect();
 
@@ -359,7 +361,7 @@ impl MultiAssetEngine {
                     self.execute_rebalance(&mut portfolio, &target_weights, &prices, equity)?;
                 }
                 AllocationSignal::ExitAll => {
-                    self.exit_all_positions(&mut portfolio, &current_bars)?;
+                    self.exit_all_positions(&mut portfolio, current_bars)?;
                 }
                 AllocationSignal::Hold => {}
             }
@@ -472,7 +474,7 @@ impl MultiAssetEngine {
                 for bar in bars {
                     aligned
                         .entry(bar.timestamp)
-                        .or_insert_with(HashMap::new)
+                        .or_default()
                         .insert(symbol.clone(), bar.clone());
                 }
             }
@@ -567,9 +569,10 @@ impl MultiAssetEngine {
                 continue;
             }
 
-            let bar = current_bars.get(&symbol).cloned().unwrap_or_else(|| {
-                Bar::new(Utc::now(), 100.0, 100.0, 100.0, 100.0, 0.0)
-            });
+            let bar = current_bars
+                .get(&symbol)
+                .cloned()
+                .unwrap_or_else(|| Bar::new(Utc::now(), 100.0, 100.0, 100.0, 100.0, 0.0));
 
             let side = if qty > 0.0 { Side::Sell } else { Side::Buy };
             let order = Order::market(&symbol, side, qty.abs(), Utc::now());
@@ -642,11 +645,8 @@ impl PortfolioStrategy for EqualWeightStrategy {
         self.last_rebalance = ctx.bar_index;
 
         let weight = 1.0 / ctx.symbols.len() as f64;
-        let weights: HashMap<String, f64> = ctx
-            .symbols
-            .iter()
-            .map(|s| (s.clone(), weight))
-            .collect();
+        let weights: HashMap<String, f64> =
+            ctx.symbols.iter().map(|s| (s.clone(), weight)).collect();
 
         AllocationSignal::Rebalance(weights)
     }

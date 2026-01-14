@@ -161,8 +161,8 @@ impl Engine {
             .filter(|b| {
                 self.config
                     .start_date
-                    .map_or(true, |start| b.timestamp >= start)
-                    && self.config.end_date.map_or(true, |end| b.timestamp <= end)
+                    .is_none_or(|start| b.timestamp >= start)
+                    && self.config.end_date.is_none_or(|end| b.timestamp <= end)
             })
             .cloned()
             .collect();
@@ -184,10 +184,8 @@ impl Engine {
         strategy.init();
 
         // Create portfolio
-        let mut portfolio = Portfolio::with_cost_model(
-            self.config.initial_capital,
-            self.config.cost_model.clone(),
-        );
+        let mut portfolio =
+            Portfolio::with_cost_model(self.config.initial_capital, self.config.cost_model.clone());
         portfolio.allow_short = self.config.allow_short;
         portfolio.fractional_shares = self.config.fractional_shares;
 
@@ -271,20 +269,16 @@ impl Engine {
                             Side::Sell => Side::Buy,
                         };
 
-                        let exit_order = Order::market(
-                            symbol,
-                            exit_side,
-                            position.quantity,
-                            bar.timestamp,
-                        );
+                        let exit_order =
+                            Order::market(symbol, exit_side, position.quantity, bar.timestamp);
 
-                        match portfolio.execute_order(&exit_order, bar) {
-                            Ok(Some(_)) => {
-                                debug!("Position closed due to {}: {} @ {:.2}", exit_reason, symbol, current_price);
-                                entry_prices.remove(symbol);
-                                trailing_stops.remove(symbol);
-                            }
-                            Ok(None) | Err(_) => {}
+                        if let Ok(Some(_)) = portfolio.execute_order(&exit_order, bar) {
+                            debug!(
+                                "Position closed due to {}: {} @ {:.2}",
+                                exit_reason, symbol, current_price
+                            );
+                            entry_prices.remove(symbol);
+                            trailing_stops.remove(symbol);
                         }
 
                         if let Some(ref pb) = progress {
@@ -326,8 +320,11 @@ impl Engine {
                                 entry_prices.insert(symbol.to_string(), trade.entry_price);
 
                                 // Setup trailing stop if configured
-                                if let StopLoss::Trailing(trail_pct) = self.config.risk_config.stop_loss {
-                                    let ts = TrailingStop::new(trade.entry_price, trade.side, trail_pct);
+                                if let StopLoss::Trailing(trail_pct) =
+                                    self.config.risk_config.stop_loss
+                                {
+                                    let ts =
+                                        TrailingStop::new(trade.entry_price, trade.side, trail_pct);
                                     trailing_stops.insert(symbol.to_string(), ts);
                                 }
                             } else if matches!(signal, Signal::Exit) {
@@ -398,12 +395,7 @@ impl Engine {
 
                     let total_qty = close_qty + long_qty;
                     if total_qty > 0.0 {
-                        return Some(Order::market(
-                            symbol,
-                            Side::Buy,
-                            total_qty,
-                            bar.timestamp,
-                        ));
+                        return Some(Order::market(symbol, Side::Buy, total_qty, bar.timestamp));
                     }
                 }
             }
@@ -420,12 +412,7 @@ impl Engine {
 
                     let total_qty = close_qty + short_qty;
                     if total_qty > 0.0 {
-                        return Some(Order::market(
-                            symbol,
-                            Side::Sell,
-                            total_qty,
-                            bar.timestamp,
-                        ));
+                        return Some(Order::market(symbol, Side::Sell, total_qty, bar.timestamp));
                     }
                 }
             }
@@ -464,8 +451,12 @@ impl Engine {
         let trades = portfolio.trades();
         let closed_trades: Vec<_> = trades.iter().filter(|t| t.is_closed()).collect();
 
-        let final_equity = equity_curve.last().map(|e| e.equity).unwrap_or(self.config.initial_capital);
-        let total_return_pct = (final_equity - self.config.initial_capital) / self.config.initial_capital * 100.0;
+        let final_equity = equity_curve
+            .last()
+            .map(|e| e.equity)
+            .unwrap_or(self.config.initial_capital);
+        let total_return_pct =
+            (final_equity - self.config.initial_capital) / self.config.initial_capital * 100.0;
 
         // Calculate time period
         let start_time = bars.first().map(|b| b.timestamp).unwrap_or_else(Utc::now);
@@ -481,8 +472,14 @@ impl Engine {
         };
 
         // Win/loss statistics
-        let winning: Vec<_> = closed_trades.iter().filter(|t| t.net_pnl().unwrap_or(0.0) > 0.0).collect();
-        let losing: Vec<_> = closed_trades.iter().filter(|t| t.net_pnl().unwrap_or(0.0) < 0.0).collect();
+        let winning: Vec<_> = closed_trades
+            .iter()
+            .filter(|t| t.net_pnl().unwrap_or(0.0) > 0.0)
+            .collect();
+        let losing: Vec<_> = closed_trades
+            .iter()
+            .filter(|t| t.net_pnl().unwrap_or(0.0) < 0.0)
+            .collect();
 
         let win_rate = if !closed_trades.is_empty() {
             winning.len() as f64 / closed_trades.len() as f64 * 100.0
@@ -503,7 +500,11 @@ impl Engine {
         };
 
         let gross_wins: f64 = winning.iter().filter_map(|t| t.net_pnl()).sum();
-        let gross_losses: f64 = losing.iter().filter_map(|t| t.net_pnl()).map(|p| p.abs()).sum();
+        let gross_losses: f64 = losing
+            .iter()
+            .filter_map(|t| t.net_pnl())
+            .map(|p| p.abs())
+            .sum();
         let profit_factor = if gross_losses > 0.0 {
             gross_wins / gross_losses
         } else if gross_wins > 0.0 {
@@ -615,7 +616,8 @@ fn calculate_sharpe(returns: &[f64], annualization_factor: f64) -> f64 {
     }
 
     let mean: f64 = returns.iter().sum::<f64>() / returns.len() as f64;
-    let variance: f64 = returns.iter().map(|r| (r - mean).powi(2)).sum::<f64>() / returns.len() as f64;
+    let variance: f64 =
+        returns.iter().map(|r| (r - mean).powi(2)).sum::<f64>() / returns.len() as f64;
     let std_dev = variance.sqrt();
 
     if std_dev == 0.0 {

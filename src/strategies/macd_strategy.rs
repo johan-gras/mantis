@@ -31,7 +31,10 @@ pub struct MacdStrategy {
 impl MacdStrategy {
     /// Create a new MACD strategy with custom parameters.
     pub fn new(fast_period: usize, slow_period: usize, signal_period: usize) -> Self {
-        assert!(fast_period < slow_period, "Fast period must be less than slow period");
+        assert!(
+            fast_period < slow_period,
+            "Fast period must be less than slow period"
+        );
         assert!(signal_period > 0, "Signal period must be positive");
 
         Self {
@@ -68,7 +71,12 @@ impl Strategy for MacdStrategy {
 
     fn on_bar(&mut self, ctx: &StrategyContext) -> Signal {
         let history = ctx.history();
-        let (macd_line, signal_line, histogram) = match macd(history, self.fast_period, self.slow_period, self.signal_period) {
+        let (macd_line, signal_line, histogram) = match macd(
+            history,
+            self.fast_period,
+            self.slow_period,
+            self.signal_period,
+        ) {
             Some(values) => values,
             None => return Signal::Hold,
         };
@@ -148,7 +156,14 @@ impl Strategy for MacdStrategy {
             ("fast_period".to_string(), self.fast_period.to_string()),
             ("slow_period".to_string(), self.slow_period.to_string()),
             ("signal_period".to_string(), self.signal_period.to_string()),
-            ("mode".to_string(), if self.use_histogram_zero { "histogram".to_string() } else { "crossover".to_string() }),
+            (
+                "mode".to_string(),
+                if self.use_histogram_zero {
+                    "histogram".to_string()
+                } else {
+                    "crossover".to_string()
+                },
+            ),
         ]
     }
 }
@@ -192,7 +207,12 @@ impl Strategy for MacdTrendStrategy {
 
     fn on_bar(&mut self, ctx: &StrategyContext) -> Signal {
         let history = ctx.history();
-        let (macd_line, signal_line, _histogram) = match macd(history, self.fast_period, self.slow_period, self.signal_period) {
+        let (macd_line, signal_line, _histogram) = match macd(
+            history,
+            self.fast_period,
+            self.slow_period,
+            self.signal_period,
+        ) {
             Some(values) => values,
             None => return Signal::Hold,
         };

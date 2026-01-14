@@ -200,8 +200,10 @@ impl StreamingIndicator for StreamingRSI {
                 }
             } else {
                 // Smoothed average (Wilder's method)
-                self.avg_gain = (self.avg_gain * (self.period - 1) as f64 + gain) / self.period as f64;
-                self.avg_loss = (self.avg_loss * (self.period - 1) as f64 + loss) / self.period as f64;
+                self.avg_gain =
+                    (self.avg_gain * (self.period - 1) as f64 + gain) / self.period as f64;
+                self.avg_loss =
+                    (self.avg_loss * (self.period - 1) as f64 + loss) / self.period as f64;
             }
         }
 
@@ -499,7 +501,8 @@ impl StreamingIndicator for StreamingATR {
                     self.atr = Some(self.initial_trs.iter().sum::<f64>() / self.period as f64);
                 }
             } else if let Some(prev_atr) = self.atr {
-                self.atr = Some((prev_atr * (self.period - 1) as f64 + change) / self.period as f64);
+                self.atr =
+                    Some((prev_atr * (self.period - 1) as f64 + change) / self.period as f64);
             }
         }
 
@@ -697,7 +700,8 @@ impl StreamingIndicatorSet {
 
     /// Get warmup period (max of all indicators).
     pub fn warmup_period(&self) -> usize {
-        self.sma_long.warmup_period()
+        self.sma_long
+            .warmup_period()
             .max(self.rsi.warmup_period())
             .max(self.macd.warmup_period())
             .max(self.bollinger.warmup_period())

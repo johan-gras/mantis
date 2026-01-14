@@ -153,8 +153,14 @@ impl Strategy for ExternalSignalStrategy {
 
     fn parameters(&self) -> Vec<(String, String)> {
         vec![
-            ("long_threshold".to_string(), format!("{:.4}", self.long_threshold)),
-            ("short_threshold".to_string(), format!("{:.4}", self.short_threshold)),
+            (
+                "long_threshold".to_string(),
+                format!("{:.4}", self.long_threshold),
+            ),
+            (
+                "short_threshold".to_string(),
+                format!("{:.4}", self.short_threshold),
+            ),
             ("signals_count".to_string(), self.signals.len().to_string()),
         ]
     }
@@ -231,20 +237,16 @@ impl Strategy for ClassificationStrategy {
         match pred {
             1 => {
                 // Long signal
-                if ctx.is_flat() {
-                    Signal::Long
-                } else if ctx.is_short() && self.allow_reversals {
-                    Signal::Long // Will close short and go long
+                if ctx.is_flat() || (ctx.is_short() && self.allow_reversals) {
+                    Signal::Long // Will close short and go long if reversing
                 } else {
                     Signal::Hold
                 }
             }
             -1 => {
                 // Short signal
-                if ctx.is_flat() {
-                    Signal::Short
-                } else if ctx.is_long() && self.allow_reversals {
-                    Signal::Short // Will close long and go short
+                if ctx.is_flat() || (ctx.is_long() && self.allow_reversals) {
+                    Signal::Short // Will close long and go short if reversing
                 } else {
                     Signal::Hold
                 }
@@ -267,8 +269,14 @@ impl Strategy for ClassificationStrategy {
 
     fn parameters(&self) -> Vec<(String, String)> {
         vec![
-            ("predictions_count".to_string(), self.predictions.len().to_string()),
-            ("allow_reversals".to_string(), self.allow_reversals.to_string()),
+            (
+                "predictions_count".to_string(),
+                self.predictions.len().to_string(),
+            ),
+            (
+                "allow_reversals".to_string(),
+                self.allow_reversals.to_string(),
+            ),
         ]
     }
 }
@@ -306,7 +314,11 @@ impl ConfidenceWeightedStrategy {
         signal_threshold: f64,
         confidence_threshold: f64,
     ) -> Self {
-        assert_eq!(signals.len(), confidences.len(), "Signals and confidences must have same length");
+        assert_eq!(
+            signals.len(),
+            confidences.len(),
+            "Signals and confidences must have same length"
+        );
 
         Self {
             signals,
@@ -373,14 +385,12 @@ impl Strategy for ConfidenceWeightedStrategy {
             } else if signal < -self.signal_threshold {
                 return Signal::Short;
             }
-        } else if ctx.is_long() {
-            if signal < -self.signal_threshold || confidence < self.confidence_threshold {
-                return Signal::Exit;
-            }
-        } else if ctx.is_short() {
-            if signal > self.signal_threshold || confidence < self.confidence_threshold {
-                return Signal::Exit;
-            }
+        } else if (ctx.is_long()
+            && (signal < -self.signal_threshold || confidence < self.confidence_threshold))
+            || (ctx.is_short()
+                && (signal > self.signal_threshold || confidence < self.confidence_threshold))
+        {
+            return Signal::Exit;
         }
 
         Signal::Hold
@@ -392,8 +402,14 @@ impl Strategy for ConfidenceWeightedStrategy {
 
     fn parameters(&self) -> Vec<(String, String)> {
         vec![
-            ("signal_threshold".to_string(), format!("{:.4}", self.signal_threshold)),
-            ("confidence_threshold".to_string(), format!("{:.4}", self.confidence_threshold)),
+            (
+                "signal_threshold".to_string(),
+                format!("{:.4}", self.signal_threshold),
+            ),
+            (
+                "confidence_threshold".to_string(),
+                format!("{:.4}", self.confidence_threshold),
+            ),
             ("signals_count".to_string(), self.signals.len().to_string()),
         ]
     }
@@ -426,10 +442,7 @@ impl TimestampedSignalStrategy {
     pub fn new(timestamps: Vec<i64>, values: Vec<f64>, threshold: f64) -> Self {
         assert_eq!(timestamps.len(), values.len());
 
-        let signals: HashMap<i64, f64> = timestamps
-            .into_iter()
-            .zip(values.into_iter())
-            .collect();
+        let signals: HashMap<i64, f64> = timestamps.into_iter().zip(values).collect();
 
         Self {
             signals,
@@ -497,9 +510,9 @@ impl Strategy for TimestampedSignalStrategy {
             } else if signal_value < -self.threshold {
                 return Signal::Short;
             }
-        } else if ctx.is_long() && signal_value < -self.threshold {
-            return Signal::Exit;
-        } else if ctx.is_short() && signal_value > self.threshold {
+        } else if (ctx.is_long() && signal_value < -self.threshold)
+            || (ctx.is_short() && signal_value > self.threshold)
+        {
             return Signal::Exit;
         }
 
@@ -580,7 +593,8 @@ impl EnsembleSignalStrategy {
 
     /// Aggregate signals at a given index.
     fn aggregate_signal(&self, idx: usize) -> Option<f64> {
-        let signals: Vec<f64> = self.model_signals
+        let signals: Vec<f64> = self
+            .model_signals
             .iter()
             .filter_map(|s| s.get(idx).copied())
             .collect();
@@ -590,11 +604,10 @@ impl EnsembleSignalStrategy {
         }
 
         match self.aggregation {
-            AggregationMethod::Mean => {
-                Some(signals.iter().sum::<f64>() / signals.len() as f64)
-            }
+            AggregationMethod::Mean => Some(signals.iter().sum::<f64>() / signals.len() as f64),
             AggregationMethod::WeightedMean => {
-                let weighted_sum: f64 = signals.iter()
+                let weighted_sum: f64 = signals
+                    .iter()
                     .zip(self.weights.iter())
                     .map(|(s, w)| s * w)
                     .sum();
@@ -605,7 +618,7 @@ impl EnsembleSignalStrategy {
                 let mut sorted = signals.clone();
                 sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
                 let mid = sorted.len() / 2;
-                if sorted.len() % 2 == 0 {
+                if sorted.len().is_multiple_of(2) {
                     Some((sorted[mid - 1] + sorted[mid]) / 2.0)
                 } else {
                     Some(sorted[mid])
@@ -648,9 +661,9 @@ impl Strategy for EnsembleSignalStrategy {
             } else if signal < -self.threshold {
                 return Signal::Short;
             }
-        } else if ctx.is_long() && signal < -self.threshold {
-            return Signal::Exit;
-        } else if ctx.is_short() && signal > self.threshold {
+        } else if (ctx.is_long() && signal < -self.threshold)
+            || (ctx.is_short() && signal > self.threshold)
+        {
             return Signal::Exit;
         }
 
@@ -727,8 +740,7 @@ mod tests {
     #[test]
     fn test_external_signal_with_exit_threshold() {
         let signals = vec![0.6, 0.3, 0.1];
-        let mut strategy = ExternalSignalStrategy::new(signals, 0.5)
-            .with_exit_threshold(0.2);
+        let mut strategy = ExternalSignalStrategy::new(signals, 0.5).with_exit_threshold(0.2);
 
         let bars = create_test_bars(3);
 

@@ -146,10 +146,19 @@ impl RegimeLabel {
     pub fn to_features(&self) -> HashMap<String, f64> {
         let mut features = HashMap::new();
         features.insert("regime_trend".to_string(), self.trend.to_numeric());
-        features.insert("regime_volatility".to_string(), self.volatility.to_numeric());
+        features.insert(
+            "regime_volatility".to_string(),
+            self.volatility.to_numeric(),
+        );
         features.insert("regime_volume".to_string(), self.volume.to_numeric());
-        features.insert("regime_is_bullish".to_string(), if self.trend.is_bullish() { 1.0 } else { 0.0 });
-        features.insert("regime_is_trending".to_string(), if self.trend.is_trending() { 1.0 } else { 0.0 });
+        features.insert(
+            "regime_is_bullish".to_string(),
+            if self.trend.is_bullish() { 1.0 } else { 0.0 },
+        );
+        features.insert(
+            "regime_is_trending".to_string(),
+            if self.trend.is_trending() { 1.0 } else { 0.0 },
+        );
         if let Some(adx) = self.adx {
             features.insert("regime_adx".to_string(), adx);
         }
@@ -225,12 +234,7 @@ impl RegimeDetector {
         let mut regimes = Vec::with_capacity(bars.len());
 
         for i in 0..bars.len() {
-            let trend = self.detect_trend(
-                i,
-                &ema_short,
-                &ema_long,
-                &adx_values,
-            );
+            let trend = self.detect_trend(i, &ema_short, &ema_long, &adx_values);
 
             let volatility = self.detect_volatility(i, &atr_values, bars);
             let volume = self.detect_volume(i, bars, &volume_sma);
@@ -249,13 +253,7 @@ impl RegimeDetector {
     }
 
     /// Detect trend regime for a specific bar.
-    fn detect_trend(
-        &self,
-        idx: usize,
-        ema_short: &[f64],
-        ema_long: &[f64],
-        adx: &[f64],
-    ) -> Regime {
+    fn detect_trend(&self, idx: usize, ema_short: &[f64], ema_long: &[f64], adx: &[f64]) -> Regime {
         if idx >= ema_short.len() || idx >= ema_long.len() {
             return Regime::Ranging;
         }
@@ -315,11 +313,8 @@ impl RegimeDetector {
 
         historical.sort_by(|a, b| a.partial_cmp(b).unwrap());
 
-        let percentile = historical
-            .iter()
-            .filter(|&&v| v <= norm_atr)
-            .count() as f64
-            / historical.len() as f64;
+        let percentile =
+            historical.iter().filter(|&&v| v <= norm_atr).count() as f64 / historical.len() as f64;
 
         if percentile > 0.9 {
             VolatilityRegime::VeryHigh
@@ -383,8 +378,8 @@ impl RegimeDetector {
 
             // Subsequent values use Wilder's smoothing
             for i in period..bars.len() {
-                atr_values[i] = (atr_values[i - 1] * (period - 1) as f64 + true_ranges[i])
-                    / period as f64;
+                atr_values[i] =
+                    (atr_values[i - 1] * (period - 1) as f64 + true_ranges[i]) / period as f64;
             }
         }
 
@@ -493,8 +488,8 @@ impl RegimeDetector {
         }
 
         // Divide by period to get average
-        for i in period..data.len() {
-            result[i] /= period as f64;
+        for val in result.iter_mut().skip(period) {
+            *val /= period as f64;
         }
 
         result
@@ -599,7 +594,7 @@ impl RegimeStats {
                 if let Some(prev) = current_regime {
                     regime_durations
                         .entry(format!("{:?}", prev))
-                        .or_insert_with(Vec::new)
+                        .or_default()
                         .push(current_duration);
                 }
                 current_regime = Some(regime.trend);
@@ -611,7 +606,7 @@ impl RegimeStats {
         if let Some(prev) = current_regime {
             regime_durations
                 .entry(format!("{:?}", prev))
-                .or_insert_with(Vec::new)
+                .or_default()
                 .push(current_duration);
         }
 
@@ -691,11 +686,8 @@ impl HMMRegimeDetector {
         }
 
         // Assign states based on volatility percentiles
-        let mut sorted_vols: Vec<f64> = volatilities
-            .iter()
-            .filter(|&&v| v > 0.0)
-            .copied()
-            .collect();
+        let mut sorted_vols: Vec<f64> =
+            volatilities.iter().filter(|&&v| v > 0.0).copied().collect();
         sorted_vols.sort_by(|a, b| a.partial_cmp(b).unwrap());
 
         if sorted_vols.is_empty() {

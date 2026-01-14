@@ -13,7 +13,7 @@ use std::path::Path;
 use tracing::info;
 
 /// Complete backtest configuration loaded from a file.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct BacktestFileConfig {
     /// General backtest settings.
     #[serde(default)]
@@ -30,18 +30,6 @@ pub struct BacktestFileConfig {
     /// Risk management settings.
     #[serde(default)]
     pub risk: RiskSettings,
-}
-
-impl Default for BacktestFileConfig {
-    fn default() -> Self {
-        Self {
-            backtest: BacktestSettings::default(),
-            data: DataSettings::default(),
-            strategy: StrategySettings::default(),
-            costs: CostSettings::default(),
-            risk: RiskSettings::default(),
-        }
-    }
 }
 
 /// General backtest settings.
@@ -67,9 +55,15 @@ pub struct BacktestSettings {
     pub end_date: Option<String>,
 }
 
-fn default_capital() -> f64 { 100_000.0 }
-fn default_position_size() -> f64 { 1.0 }
-fn default_true() -> bool { true }
+fn default_capital() -> f64 {
+    100_000.0
+}
+fn default_position_size() -> f64 {
+    1.0
+}
+fn default_true() -> bool {
+    true
+}
 
 impl Default for BacktestSettings {
     fn default() -> Self {
@@ -99,8 +93,12 @@ pub struct DataSettings {
     pub delimiter: char,
 }
 
-fn default_symbol() -> String { "SYMBOL".to_string() }
-fn default_delimiter() -> char { ',' }
+fn default_symbol() -> String {
+    "SYMBOL".to_string()
+}
+fn default_delimiter() -> char {
+    ','
+}
 
 impl Default for DataSettings {
     fn default() -> Self {
@@ -124,7 +122,9 @@ pub struct StrategySettings {
     pub params: StrategyParams,
 }
 
-fn default_strategy() -> String { "sma-crossover".to_string() }
+fn default_strategy() -> String {
+    "sma-crossover".to_string()
+}
 
 impl Default for StrategySettings {
     fn default() -> Self {
@@ -181,8 +181,12 @@ pub struct CostSettings {
     pub min_commission: f64,
 }
 
-fn default_commission_pct() -> f64 { 0.1 }
-fn default_slippage_pct() -> f64 { 0.05 }
+fn default_commission_pct() -> f64 {
+    0.1
+}
+fn default_slippage_pct() -> f64 {
+    0.05
+}
 
 impl Default for CostSettings {
     fn default() -> Self {
@@ -217,8 +221,12 @@ pub struct RiskSettings {
     pub max_drawdown_pct: Option<f64>,
 }
 
-fn default_stop_type() -> String { "none".to_string() }
-fn default_risk_per_trade() -> f64 { 2.0 }
+fn default_stop_type() -> String {
+    "none".to_string()
+}
+fn default_risk_per_trade() -> f64 {
+    2.0
+}
 
 impl Default for RiskSettings {
     fn default() -> Self {
@@ -246,8 +254,8 @@ impl BacktestFileConfig {
 
     /// Save configuration to a TOML file.
     pub fn save(&self, path: impl AsRef<Path>) -> Result<()> {
-        let content = toml::to_string_pretty(self)
-            .map_err(|e| BacktestError::ConfigError(e.to_string()))?;
+        let content =
+            toml::to_string_pretty(self).map_err(|e| BacktestError::ConfigError(e.to_string()))?;
         fs::write(path, content)?;
         Ok(())
     }
@@ -286,17 +294,17 @@ impl BacktestFileConfig {
             ..Default::default()
         };
 
-        let start_date = self.backtest.start_date.as_ref().map(|s| {
+        let start_date = self.backtest.start_date.as_ref().and_then(|s| {
             NaiveDate::parse_from_str(s, "%Y-%m-%d")
                 .map(|d| Utc.from_utc_datetime(&d.and_hms_opt(0, 0, 0).unwrap()))
                 .ok()
-        }).flatten();
+        });
 
-        let end_date = self.backtest.end_date.as_ref().map(|s| {
+        let end_date = self.backtest.end_date.as_ref().and_then(|s| {
             NaiveDate::parse_from_str(s, "%Y-%m-%d")
                 .map(|d| Utc.from_utc_datetime(&d.and_hms_opt(0, 0, 0).unwrap()))
                 .ok()
-        }).flatten();
+        });
 
         Ok(BacktestConfig {
             initial_capital: self.backtest.initial_capital,
@@ -365,7 +373,8 @@ take_profit_type = "percentage"
 take_profit_value = 10.0  # 10% take profit
 risk_per_trade_pct = 2.0
 # max_drawdown_pct = 20.0
-"#.to_string()
+"#
+        .to_string()
     }
 }
 
@@ -458,7 +467,10 @@ stop_loss_value = 3.0
 
         // Verify we can load it back
         let loaded = BacktestFileConfig::load(file.path()).unwrap();
-        assert_eq!(loaded.backtest.initial_capital, config.backtest.initial_capital);
+        assert_eq!(
+            loaded.backtest.initial_capital,
+            config.backtest.initial_capital
+        );
     }
 
     #[test]

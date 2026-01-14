@@ -1,18 +1,17 @@
 //! Integration tests for the backtest engine.
 
+use chrono::{TimeZone, Utc};
 use mantis::data::{load_csv, DataConfig};
 use mantis::engine::{BacktestConfig, Engine};
 use mantis::features::{FeatureConfig, FeatureExtractor, SequenceBuilder, TimeSeriesSplitter};
 use mantis::portfolio::CostModel;
 use mantis::risk::{RiskConfig, StopLoss, TakeProfit};
 use mantis::strategies::{
+    BreakoutStrategy, ClassificationStrategy, EnsembleSignalStrategy, ExternalSignalStrategy,
     MacdStrategy, MomentumStrategy, RsiStrategy, SmaCrossover,
-    ExternalSignalStrategy, ClassificationStrategy, EnsembleSignalStrategy,
-    BreakoutStrategy,
 };
 use mantis::types::Bar;
 use mantis::walkforward::{WalkForwardAnalyzer, WalkForwardConfig, WalkForwardMetric};
-use chrono::{TimeZone, Utc};
 
 /// Create synthetic test data with a trend and some noise.
 fn create_synthetic_data(days: usize, initial_price: f64, daily_return: f64) -> Vec<Bar> {
@@ -32,8 +31,7 @@ fn create_synthetic_data(days: usize, initial_price: f64, daily_return: f64) -> 
         let volume = 1_000_000.0 + (noise * 100000.0);
 
         bars.push(Bar::new(
-            Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap()
-                + chrono::Duration::days(i as i64),
+            Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap() + chrono::Duration::days(i as i64),
             open,
             high.max(open).max(close),
             low.min(open).min(close),
@@ -202,15 +200,13 @@ fn test_optimization() {
     engine.add_data("OPT_TEST".to_string(), bars);
 
     // Optimize SMA crossover
-    let params: Vec<(usize, usize)> = vec![
-        (5, 20),
-        (10, 30),
-        (15, 40),
-    ];
+    let params: Vec<(usize, usize)> = vec![(5, 20), (10, 30), (15, 40)];
 
-    let results = engine.optimize("OPT_TEST", params, |&(fast, slow)| {
-        Box::new(SmaCrossover::new(fast, slow))
-    }).unwrap();
+    let results = engine
+        .optimize("OPT_TEST", params, |&(fast, slow)| {
+            Box::new(SmaCrossover::new(fast, slow))
+        })
+        .unwrap();
 
     assert_eq!(results.len(), 3);
 
@@ -231,7 +227,7 @@ fn test_load_sample_data() {
 
         // Verify data integrity
         for i in 1..bars.len() {
-            assert!(bars[i].timestamp > bars[i-1].timestamp);
+            assert!(bars[i].timestamp > bars[i - 1].timestamp);
             assert!(bars[i].high >= bars[i].low);
             assert!(bars[i].high >= bars[i].open);
             assert!(bars[i].high >= bars[i].close);
@@ -299,7 +295,11 @@ fn test_external_signal_strategy_backtest() {
     let signals: Vec<f64> = (0..num_signals)
         .map(|i| {
             // Alternating signals
-            if i % 20 < 10 { 0.6 } else { -0.6 }
+            if i % 20 < 10 {
+                0.6
+            } else {
+                -0.6
+            }
         })
         .collect();
 
@@ -329,8 +329,8 @@ fn test_classification_strategy_backtest() {
     // Create class predictions (1=long, 0=hold/exit, -1=short)
     let predictions: Vec<i8> = (0..bars.len())
         .map(|i| match i % 30 {
-            0..=9 => 1,   // Go long
-            10..=14 => 0, // Hold/exit
+            0..=9 => 1,    // Go long
+            10..=14 => 0,  // Hold/exit
             15..=24 => -1, // Go short
             _ => 0,
         })
@@ -345,8 +345,7 @@ fn test_classification_strategy_backtest() {
     let mut engine = Engine::new(config);
     engine.add_data("CLASS_TEST".to_string(), bars);
 
-    let mut strategy = ClassificationStrategy::new(predictions)
-        .with_name("Classification Model");
+    let mut strategy = ClassificationStrategy::new(predictions).with_name("Classification Model");
 
     let result = engine.run(&mut strategy, "CLASS_TEST").unwrap();
 
@@ -359,11 +358,15 @@ fn test_ensemble_strategy_backtest() {
     let bars = create_synthetic_data(100, 100.0, 0.001);
 
     // Create multiple model predictions
-    let model1: Vec<f64> = (0..bars.len()).map(|i| (i as f64 * 0.1).sin() * 0.6).collect();
-    let model2: Vec<f64> = (0..bars.len()).map(|i| (i as f64 * 0.15).cos() * 0.5).collect();
-    let model3: Vec<f64> = (0..bars.len()).map(|i| {
-        if i % 20 < 10 { 0.4 } else { -0.3 }
-    }).collect();
+    let model1: Vec<f64> = (0..bars.len())
+        .map(|i| (i as f64 * 0.1).sin() * 0.6)
+        .collect();
+    let model2: Vec<f64> = (0..bars.len())
+        .map(|i| (i as f64 * 0.15).cos() * 0.5)
+        .collect();
+    let model3: Vec<f64> = (0..bars.len())
+        .map(|i| if i % 20 < 10 { 0.4 } else { -0.3 })
+        .collect();
 
     let config = BacktestConfig {
         initial_capital: 100_000.0,
@@ -503,18 +506,17 @@ fn test_walk_forward_analysis() {
 
     let analyzer = WalkForwardAnalyzer::new(wf_config, backtest_config);
 
-    let params: Vec<(usize, usize)> = vec![
-        (5, 20),
-        (10, 30),
-    ];
+    let params: Vec<(usize, usize)> = vec![(5, 20), (10, 30)];
 
-    let result = analyzer.run(
-        &bars,
-        "TEST",
-        params,
-        |&(fast, slow)| Box::new(SmaCrossover::new(fast, slow)),
-        WalkForwardMetric::Sharpe,
-    ).unwrap();
+    let result = analyzer
+        .run(
+            &bars,
+            "TEST",
+            params,
+            |&(fast, slow)| Box::new(SmaCrossover::new(fast, slow)),
+            WalkForwardMetric::Sharpe,
+        )
+        .unwrap();
 
     assert!(!result.windows.is_empty());
     assert!(result.avg_is_return.is_finite());
@@ -687,8 +689,7 @@ fn test_regime_detection() {
         price *= 0.99; // -1% daily returns
         let noise = ((i as f64 * 0.7).sin()) * 0.5;
         downtrend_bars.push(Bar::new(
-            Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap()
-                + chrono::Duration::days(i as i64),
+            Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap() + chrono::Duration::days(i as i64),
             price - 0.5 + noise,
             price + 2.0,
             price - 2.0,
@@ -704,23 +705,33 @@ fn test_regime_detection() {
     let downtrend_regimes = detector.detect(&downtrend_bars);
 
     // After warmup, uptrend should show bullish regimes
-    let bullish_count = uptrend_regimes.iter()
+    let bullish_count = uptrend_regimes
+        .iter()
         .skip(50) // Skip warmup
         .filter(|r| r.trend.is_bullish())
         .count();
-    assert!(bullish_count > 20, "Expected mostly bullish regimes in uptrend");
+    assert!(
+        bullish_count > 20,
+        "Expected mostly bullish regimes in uptrend"
+    );
 
     // After warmup, downtrend should show bearish regimes
-    let bearish_count = downtrend_regimes.iter()
+    let bearish_count = downtrend_regimes
+        .iter()
         .skip(50) // Skip warmup
         .filter(|r| !r.trend.is_bullish())
         .count();
-    assert!(bearish_count > 20, "Expected mostly bearish regimes in downtrend");
+    assert!(
+        bearish_count > 20,
+        "Expected mostly bearish regimes in downtrend"
+    );
 }
 
 #[test]
 fn test_parquet_export() {
-    use mantis::export::{export_features_parquet, export_equity_curve_parquet, export_trades_parquet};
+    use mantis::export::{
+        export_equity_curve_parquet, export_features_parquet, export_trades_parquet,
+    };
     use tempfile::TempDir;
 
     let bars = create_synthetic_data(100, 100.0, 0.001);
@@ -767,7 +778,7 @@ fn test_parquet_export() {
 
 #[test]
 fn test_streaming_indicators() {
-    use mantis::streaming::{StreamingSMA, StreamingRSI, StreamingIndicator};
+    use mantis::streaming::{StreamingIndicator, StreamingRSI, StreamingSMA};
 
     let bars = create_synthetic_data(100, 100.0, 0.001);
 

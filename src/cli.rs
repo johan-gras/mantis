@@ -4,15 +4,17 @@ use mantis::analytics::ResultFormatter;
 use mantis::config::BacktestFileConfig;
 use mantis::data::{load_csv, DataConfig};
 use mantis::engine::{BacktestConfig, Engine};
+use mantis::error::Result;
 use mantis::features::{FeatureConfig, FeatureExtractor, TimeSeriesSplitter};
 use mantis::portfolio::CostModel;
-use mantis::strategies::{BreakoutStrategy, MacdStrategy, MeanReversion, MomentumStrategy, RsiStrategy, SmaCrossover};
+use mantis::strategies::{
+    BreakoutStrategy, MacdStrategy, MeanReversion, MomentumStrategy, RsiStrategy, SmaCrossover,
+};
 use mantis::strategy::Strategy;
-use mantis::error::Result;
 
 use clap::{Parser, Subcommand, ValueEnum};
-use std::path::PathBuf;
 use std::fs;
+use std::path::PathBuf;
 use tracing::{info, Level};
 use tracing_subscriber::FmtSubscriber;
 
@@ -235,23 +237,21 @@ pub fn run() -> Result<()> {
             slow_period,
             rsi_period,
             lookback,
-        } => {
-            run_backtest(
-                data,
-                symbol,
-                *strategy,
-                *capital,
-                *position_size,
-                *commission,
-                *slippage,
-                *allow_short,
-                *fast_period,
-                *slow_period,
-                *rsi_period,
-                *lookback,
-                cli.output,
-            )
-        }
+        } => run_backtest(
+            data,
+            symbol,
+            *strategy,
+            *capital,
+            *position_size,
+            *commission,
+            *slippage,
+            *allow_short,
+            *fast_period,
+            *slow_period,
+            *rsi_period,
+            *lookback,
+            cli.output,
+        ),
 
         Commands::Optimize {
             data,
@@ -290,6 +290,7 @@ pub fn run() -> Result<()> {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn run_backtest(
     data_path: &PathBuf,
     symbol: &str,
@@ -384,21 +385,33 @@ fn run_optimization(
                 }
             }
 
-            engine.optimize(symbol, params, |&(fast, slow)| {
-                Box::new(SmaCrossover::new(fast, slow))
-            })?.into_iter().map(|(_, r)| r).collect()
+            engine
+                .optimize(symbol, params, |&(fast, slow)| {
+                    Box::new(SmaCrossover::new(fast, slow))
+                })?
+                .into_iter()
+                .map(|(_, r)| r)
+                .collect()
         }
         StrategyType::Momentum => {
             let params: Vec<usize> = (5..=30).step_by(5).collect();
-            engine.optimize(symbol, params, |&lookback| {
-                Box::new(MomentumStrategy::new(lookback, 0.0))
-            })?.into_iter().map(|(_, r)| r).collect()
+            engine
+                .optimize(symbol, params, |&lookback| {
+                    Box::new(MomentumStrategy::new(lookback, 0.0))
+                })?
+                .into_iter()
+                .map(|(_, r)| r)
+                .collect()
         }
         StrategyType::Rsi => {
             let params: Vec<usize> = (7..=21).step_by(7).collect();
-            engine.optimize(symbol, params, |&period| {
-                Box::new(RsiStrategy::new(period, 30.0, 70.0))
-            })?.into_iter().map(|(_, r)| r).collect()
+            engine
+                .optimize(symbol, params, |&period| {
+                    Box::new(RsiStrategy::new(period, 30.0, 70.0))
+                })?
+                .into_iter()
+                .map(|(_, r)| r)
+                .collect()
         }
         StrategyType::Macd => {
             // Optimize MACD with different fast/slow period combinations
@@ -410,9 +423,13 @@ fn run_optimization(
                     }
                 }
             }
-            engine.optimize(symbol, params, |&(fast, slow, signal)| {
-                Box::new(MacdStrategy::new(fast, slow, signal))
-            })?.into_iter().map(|(_, r)| r).collect()
+            engine
+                .optimize(symbol, params, |&(fast, slow, signal)| {
+                    Box::new(MacdStrategy::new(fast, slow, signal))
+                })?
+                .into_iter()
+                .map(|(_, r)| r)
+                .collect()
         }
         _ => {
             println!("Optimization not implemented for this strategy");
@@ -557,9 +574,7 @@ fn run_from_config(config_path: &PathBuf, output: OutputFormat) -> Result<()> {
             let threshold = params.momentum_threshold.unwrap_or(0.0);
             Box::new(MomentumStrategy::new(lookback, threshold))
         }
-        "mean-reversion" | "mean_reversion" => {
-            Box::new(MeanReversion::default_params())
-        }
+        "mean-reversion" | "mean_reversion" => Box::new(MeanReversion::default_params()),
         "rsi" => {
             let period = params.rsi_period.unwrap_or(14);
             let oversold = params.rsi_oversold.unwrap_or(30.0);
@@ -578,9 +593,10 @@ fn run_from_config(config_path: &PathBuf, output: OutputFormat) -> Result<()> {
             Box::new(MacdStrategy::new(fast, slow, signal))
         }
         other => {
-            return Err(mantis::BacktestError::ConfigError(
-                format!("Unknown strategy: {}", other)
-            ));
+            return Err(mantis::BacktestError::ConfigError(format!(
+                "Unknown strategy: {}",
+                other
+            )));
         }
     };
 
@@ -639,7 +655,11 @@ fn extract_features(
     let train_csv = extractor.to_csv(&train_bars, Some(target_horizon));
     let train_path = output_dir.join("train.csv");
     fs::write(&train_path, &train_csv)?;
-    println!("  Saved: {} ({} bytes)", train_path.display(), train_csv.len());
+    println!(
+        "  Saved: {} ({} bytes)",
+        train_path.display(),
+        train_csv.len()
+    );
 
     let val_csv = extractor.to_csv(&val_bars, Some(target_horizon));
     let val_path = output_dir.join("validation.csv");
@@ -649,7 +669,11 @@ fn extract_features(
     let test_csv = extractor.to_csv(&test_bars, Some(target_horizon));
     let test_path = output_dir.join("test.csv");
     fs::write(&test_path, &test_csv)?;
-    println!("  Saved: {} ({} bytes)", test_path.display(), test_csv.len());
+    println!(
+        "  Saved: {} ({} bytes)",
+        test_path.display(),
+        test_csv.len()
+    );
 
     // Export metadata
     let (_, feature_names) = extractor.extract_matrix(&train_bars);
@@ -673,7 +697,10 @@ fn extract_features(
     println!("Output directory: {}", output_dir.display());
     println!("\nTo use with Python:");
     println!("  import pandas as pd");
-    println!("  train_df = pd.read_csv('{}/train.csv')", output_dir.display());
+    println!(
+        "  train_df = pd.read_csv('{}/train.csv')",
+        output_dir.display()
+    );
 
     Ok(())
 }
@@ -716,9 +743,12 @@ mod tests {
         let cli = Cli::try_parse_from([
             "mantis",
             "run",
-            "-d", "test.csv",
-            "-s", "TEST",
-            "-S", "sma-crossover",
+            "-d",
+            "test.csv",
+            "-s",
+            "TEST",
+            "-S",
+            "sma-crossover",
         ]);
         assert!(cli.is_ok());
     }

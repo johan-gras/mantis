@@ -28,7 +28,10 @@ pub struct SmaCrossover {
 impl SmaCrossover {
     /// Create a new SMA Crossover strategy.
     pub fn new(fast_period: usize, slow_period: usize) -> Self {
-        assert!(fast_period < slow_period, "Fast period must be less than slow period");
+        assert!(
+            fast_period < slow_period,
+            "Fast period must be less than slow period"
+        );
 
         Self {
             fast_period,

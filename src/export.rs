@@ -81,7 +81,10 @@ impl Exporter {
         let mut writer = BufWriter::new(file);
 
         if self.config.include_headers {
-            writeln!(writer, "timestamp,equity,cash,positions_value,drawdown,drawdown_pct")?;
+            writeln!(
+                writer,
+                "timestamp,equity,cash,positions_value,drawdown,drawdown_pct"
+            )?;
         }
 
         let prec = self.config.precision;
@@ -158,7 +161,12 @@ impl Exporter {
     /// Export trades to JSON.
     pub fn export_trades_json(&self, path: impl AsRef<Path>) -> Result<()> {
         let file = File::create(path)?;
-        let closed_trades: Vec<_> = self.result.trades.iter().filter(|t| t.is_closed()).collect();
+        let closed_trades: Vec<_> = self
+            .result
+            .trades
+            .iter()
+            .filter(|t| t.is_closed())
+            .collect();
         serde_json::to_writer_pretty(file, &closed_trades)?;
         Ok(())
     }
@@ -335,10 +343,7 @@ impl PerformanceSummary {
 }
 
 /// Export equity curve data to CSV.
-pub fn export_equity_curve_csv(
-    equity_curve: &[EquityPoint],
-    path: impl AsRef<Path>,
-) -> Result<()> {
+pub fn export_equity_curve_csv(equity_curve: &[EquityPoint], path: impl AsRef<Path>) -> Result<()> {
     let file = File::create(path)?;
     let mut writer = BufWriter::new(file);
 
@@ -393,7 +398,9 @@ pub fn export_comparison_csv(
 /// Generate numpy-compatible binary export of feature matrix.
 pub fn export_features_npy(features: &[Vec<f64>], path: impl AsRef<Path>) -> Result<()> {
     if features.is_empty() {
-        return Err(BacktestError::DataError("No features to export".to_string()));
+        return Err(BacktestError::DataError(
+            "No features to export".to_string(),
+        ));
     }
 
     let file = File::create(path)?;
@@ -468,7 +475,9 @@ pub fn export_features_parquet(
     use std::sync::Arc;
 
     if features.is_empty() {
-        return Err(BacktestError::DataError("No features to export".to_string()));
+        return Err(BacktestError::DataError(
+            "No features to export".to_string(),
+        ));
     }
 
     let num_cols = features[0].len();
@@ -586,10 +595,7 @@ pub fn export_equity_curve_parquet(
 }
 
 /// Export trades to Parquet format.
-pub fn export_trades_parquet(
-    trades: &[crate::types::Trade],
-    path: impl AsRef<Path>,
-) -> Result<()> {
+pub fn export_trades_parquet(trades: &[crate::types::Trade], path: impl AsRef<Path>) -> Result<()> {
     use arrow::array::{Float64Array, Int64Array, StringBuilder, TimestampMillisecondArray};
     use arrow::datatypes::{DataType, Field, Schema, TimeUnit};
     use arrow::record_batch::RecordBatch;
@@ -647,19 +653,11 @@ pub fn export_trades_parquet(
         entry_prices.push(trade.entry_price);
         entry_times.push(trade.entry_time.timestamp_millis());
         exit_prices.push(trade.exit_price.unwrap_or(0.0));
-        exit_times.push(
-            trade
-                .exit_time
-                .map(|t| t.timestamp_millis())
-                .unwrap_or(0),
-        );
+        exit_times.push(trade.exit_time.map(|t| t.timestamp_millis()).unwrap_or(0));
         pnls.push(trade.net_pnl().unwrap_or(0.0));
         pnl_pcts.push(trade.return_pct().unwrap_or(0.0));
         commissions.push(trade.commission);
-        let duration_hours = trade
-            .holding_period()
-            .map(|d| d.num_hours())
-            .unwrap_or(0);
+        let duration_hours = trade.holding_period().map(|d| d.num_hours()).unwrap_or(0);
         durations.push(duration_hours);
     }
 
@@ -734,7 +732,13 @@ impl MultiAssetExporter {
             write!(writer, "{}", timestamp.format(&self.config.date_format))?;
             for symbol in &self.result.symbols {
                 let weight = weights.get(symbol).copied().unwrap_or(0.0);
-                write!(writer, "{}{:.prec$}", self.config.delimiter, weight, prec = self.config.precision)?;
+                write!(
+                    writer,
+                    "{}{:.prec$}",
+                    self.config.delimiter,
+                    weight,
+                    prec = self.config.precision
+                )?;
             }
             writeln!(writer)?;
         }
@@ -796,11 +800,7 @@ impl MultiAssetExporter {
             "| Max Drawdown | {:.2}% |",
             self.result.max_drawdown_pct
         )?;
-        writeln!(
-            writer,
-            "| Sharpe Ratio | {:.2} |",
-            self.result.sharpe_ratio
-        )?;
+        writeln!(writer, "| Sharpe Ratio | {:.2} |", self.result.sharpe_ratio)?;
         writeln!(
             writer,
             "| Sortino Ratio | {:.2} |",
@@ -814,7 +814,12 @@ impl MultiAssetExporter {
         writeln!(writer, "| Symbol | Trades |")?;
         writeln!(writer, "|--------|--------|")?;
         for symbol in &self.result.symbols {
-            let trades = self.result.trades_by_symbol.get(symbol).copied().unwrap_or(0);
+            let trades = self
+                .result
+                .trades_by_symbol
+                .get(symbol)
+                .copied()
+                .unwrap_or(0);
             writeln!(writer, "| {} | {} |", symbol, trades)?;
         }
 
@@ -840,10 +845,14 @@ mod tests {
             100.0,
             100.0,
             Utc.with_ymd_and_hms(2024, 1, 1, 10, 0, 0).unwrap(),
-            1.0,  // commission
-            0.0,  // slippage
+            1.0, // commission
+            0.0, // slippage
         );
-        trade.close(110.0, Utc.with_ymd_and_hms(2024, 1, 5, 15, 0, 0).unwrap(), 1.0);
+        trade.close(
+            110.0,
+            Utc.with_ymd_and_hms(2024, 1, 5, 15, 0, 0).unwrap(),
+            1.0,
+        );
         trades.push(trade);
 
         BacktestResult {

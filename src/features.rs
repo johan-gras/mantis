@@ -137,14 +137,26 @@ impl FeatureExtractor {
     /// Get the minimum warmup period needed.
     pub fn warmup_period(&self) -> usize {
         let max_ma = self.config.ma_periods.iter().max().copied().unwrap_or(50);
-        let max_return = self.config.return_periods.iter().max().copied().unwrap_or(20);
-        let macd_warmup = self.config.macd_params.1 + self.config.macd_params.2;
-
-        [max_ma, max_return, macd_warmup, self.config.atr_period, self.config.bb_params.0]
+        let max_return = self
+            .config
+            .return_periods
             .iter()
             .max()
             .copied()
-            .unwrap_or(50)
+            .unwrap_or(20);
+        let macd_warmup = self.config.macd_params.1 + self.config.macd_params.2;
+
+        [
+            max_ma,
+            max_return,
+            macd_warmup,
+            self.config.atr_period,
+            self.config.bb_params.0,
+        ]
+        .iter()
+        .max()
+        .copied()
+        .unwrap_or(50)
     }
 
     /// Extract features from a slice of bars.
@@ -194,11 +206,7 @@ impl FeatureExtractor {
     }
 
     /// Extract features with target variable (future returns).
-    pub fn extract_with_target(
-        &self,
-        bars: &[Bar],
-        target_horizon: usize,
-    ) -> Vec<FeatureRow> {
+    pub fn extract_with_target(&self, bars: &[Bar], target_horizon: usize) -> Vec<FeatureRow> {
         let mut rows = self.extract(bars);
 
         // Add target variable (forward return)
@@ -267,10 +275,7 @@ impl FeatureExtractor {
 
         // Build data rows
         for row in &rows {
-            let mut values: Vec<String> = vec![
-                row.index.to_string(),
-                row.timestamp.to_string(),
-            ];
+            let mut values: Vec<String> = vec![row.index.to_string(), row.timestamp.to_string()];
 
             for name in &feature_names {
                 let value = row.features.get(name).copied().unwrap_or(f64::NAN);
@@ -316,19 +321,24 @@ impl FeatureExtractor {
         // OHLC ratios
         features.insert("hl_ratio".to_string(), (bar.high - bar.low) / close);
         features.insert("oc_ratio".to_string(), (bar.close - bar.open) / close);
-        features.insert("upper_shadow".to_string(), (bar.high - bar.close.max(bar.open)) / close);
-        features.insert("lower_shadow".to_string(), (bar.close.min(bar.open) - bar.low) / close);
+        features.insert(
+            "upper_shadow".to_string(),
+            (bar.high - bar.close.max(bar.open)) / close,
+        );
+        features.insert(
+            "lower_shadow".to_string(),
+            (bar.close.min(bar.open) - bar.low) / close,
+        );
 
         // Body direction
-        features.insert("body_direction".to_string(), if bar.is_bullish() { 1.0 } else { -1.0 });
+        features.insert(
+            "body_direction".to_string(),
+            if bar.is_bullish() { 1.0 } else { -1.0 },
+        );
     }
 
     /// Extract technical indicator features.
-    fn extract_technical_features(
-        &self,
-        features: &mut HashMap<String, f64>,
-        history: &[Bar],
-    ) {
+    fn extract_technical_features(&self, features: &mut HashMap<String, f64>, history: &[Bar]) {
         let close = history.last().map(|b| b.close).unwrap_or(0.0);
 
         // Moving averages
@@ -354,7 +364,9 @@ impl FeatureExtractor {
             let short_period = self.config.ma_periods[0];
             let long_period = self.config.ma_periods[1];
 
-            if let (Some(short_ma), Some(long_ma)) = (sma(history, short_period), sma(history, long_period)) {
+            if let (Some(short_ma), Some(long_ma)) =
+                (sma(history, short_period), sma(history, long_period))
+            {
                 if long_ma > 0.0 {
                     features.insert("ma_crossover_ratio".to_string(), short_ma / long_ma);
                 }
@@ -364,7 +376,8 @@ impl FeatureExtractor {
         // RSI
         if let Some(rsi_val) = rsi(history, self.config.rsi_period) {
             features.insert("rsi".to_string(), rsi_val);
-            features.insert("rsi_normalized".to_string(), (rsi_val - 50.0) / 50.0); // Normalized to [-1, 1]
+            features.insert("rsi_normalized".to_string(), (rsi_val - 50.0) / 50.0);
+            // Normalized to [-1, 1]
         }
 
         // MACD
@@ -450,7 +463,10 @@ impl FeatureExtractor {
         if history.len() >= 2 {
             let prev_bar = &history[history.len() - 2];
             let price_change = bar.close - prev_bar.close;
-            features.insert("volume_price_trend".to_string(), price_change.signum() * volume);
+            features.insert(
+                "volume_price_trend".to_string(),
+                price_change.signum() * volume,
+            );
         }
     }
 
@@ -463,34 +479,64 @@ impl FeatureExtractor {
         // Day of week (0-6, with cyclical encoding)
         let dow = dt.weekday().num_days_from_monday() as f64;
         features.insert("day_of_week".to_string(), dow);
-        features.insert("day_of_week_sin".to_string(), (2.0 * std::f64::consts::PI * dow / 7.0).sin());
-        features.insert("day_of_week_cos".to_string(), (2.0 * std::f64::consts::PI * dow / 7.0).cos());
+        features.insert(
+            "day_of_week_sin".to_string(),
+            (2.0 * std::f64::consts::PI * dow / 7.0).sin(),
+        );
+        features.insert(
+            "day_of_week_cos".to_string(),
+            (2.0 * std::f64::consts::PI * dow / 7.0).cos(),
+        );
 
         // Month (1-12, with cyclical encoding)
         let month = dt.month() as f64;
         features.insert("month".to_string(), month);
-        features.insert("month_sin".to_string(), (2.0 * std::f64::consts::PI * month / 12.0).sin());
-        features.insert("month_cos".to_string(), (2.0 * std::f64::consts::PI * month / 12.0).cos());
+        features.insert(
+            "month_sin".to_string(),
+            (2.0 * std::f64::consts::PI * month / 12.0).sin(),
+        );
+        features.insert(
+            "month_cos".to_string(),
+            (2.0 * std::f64::consts::PI * month / 12.0).cos(),
+        );
 
         // Day of month (1-31)
         let day = dt.day() as f64;
         features.insert("day_of_month".to_string(), day);
-        features.insert("day_of_month_sin".to_string(), (2.0 * std::f64::consts::PI * day / 31.0).sin());
-        features.insert("day_of_month_cos".to_string(), (2.0 * std::f64::consts::PI * day / 31.0).cos());
+        features.insert(
+            "day_of_month_sin".to_string(),
+            (2.0 * std::f64::consts::PI * day / 31.0).sin(),
+        );
+        features.insert(
+            "day_of_month_cos".to_string(),
+            (2.0 * std::f64::consts::PI * day / 31.0).cos(),
+        );
 
         // Hour of day (for intraday data)
         let hour = dt.hour() as f64;
         features.insert("hour".to_string(), hour);
-        features.insert("hour_sin".to_string(), (2.0 * std::f64::consts::PI * hour / 24.0).sin());
-        features.insert("hour_cos".to_string(), (2.0 * std::f64::consts::PI * hour / 24.0).cos());
+        features.insert(
+            "hour_sin".to_string(),
+            (2.0 * std::f64::consts::PI * hour / 24.0).sin(),
+        );
+        features.insert(
+            "hour_cos".to_string(),
+            (2.0 * std::f64::consts::PI * hour / 24.0).cos(),
+        );
 
         // Quarter
         let quarter = ((month - 1.0) / 3.0).floor() + 1.0;
         features.insert("quarter".to_string(), quarter);
 
         // Is start/end of month
-        features.insert("is_month_start".to_string(), if day <= 5.0 { 1.0 } else { 0.0 });
-        features.insert("is_month_end".to_string(), if day >= 25.0 { 1.0 } else { 0.0 });
+        features.insert(
+            "is_month_start".to_string(),
+            if day <= 5.0 { 1.0 } else { 0.0 },
+        );
+        features.insert(
+            "is_month_end".to_string(),
+            if day >= 25.0 { 1.0 } else { 0.0 },
+        );
 
         // Year progress
         let day_of_year = dt.ordinal() as f64;
@@ -515,7 +561,8 @@ impl FeatureExtractor {
         // Calculate mean and std of closes for normalization
         let closes: Vec<f64> = window_bars.iter().map(|b| b.close).collect();
         let mean: f64 = closes.iter().sum::<f64>() / closes.len() as f64;
-        let variance: f64 = closes.iter().map(|c| (c - mean).powi(2)).sum::<f64>() / closes.len() as f64;
+        let variance: f64 =
+            closes.iter().map(|c| (c - mean).powi(2)).sum::<f64>() / closes.len() as f64;
         let std = variance.sqrt();
 
         if std > 0.0 {
@@ -532,7 +579,8 @@ impl FeatureExtractor {
                 .collect();
 
             for key in keys_to_normalize {
-                if key.starts_with("atr") || key.ends_with("_ratio") || key.ends_with("_normalized") {
+                if key.starts_with("atr") || key.ends_with("_ratio") || key.ends_with("_normalized")
+                {
                     continue; // Already relative
                 }
 

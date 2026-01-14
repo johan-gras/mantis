@@ -29,8 +29,14 @@ impl RsiStrategy {
     /// Create a new RSI strategy.
     pub fn new(period: usize, oversold: f64, overbought: f64) -> Self {
         assert!(period > 0, "Period must be positive");
-        assert!(oversold < overbought, "Oversold must be less than overbought");
-        assert!(oversold >= 0.0 && overbought <= 100.0, "Thresholds must be between 0-100");
+        assert!(
+            oversold < overbought,
+            "Oversold must be less than overbought"
+        );
+        assert!(
+            oversold >= 0.0 && overbought <= 100.0,
+            "Thresholds must be between 0-100"
+        );
 
         Self {
             period,
@@ -187,9 +193,7 @@ impl Strategy for RsiDivergence {
             }
         } else {
             // Simple exit on RSI extremes
-            if ctx.is_long() && current_rsi > 70.0 {
-                Signal::Exit
-            } else if ctx.is_short() && current_rsi < 30.0 {
+            if (ctx.is_long() && current_rsi > 70.0) || (ctx.is_short() && current_rsi < 30.0) {
                 Signal::Exit
             } else {
                 Signal::Hold
@@ -227,8 +231,7 @@ mod tests {
             let phase = (i as f64 * 0.5).sin();
             let base = 100.0 + phase * 10.0;
             bars.push(Bar::new(
-                Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap()
-                    + chrono::Duration::days(i),
+                Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap() + chrono::Duration::days(i),
                 base - 1.0,
                 base + 2.0,
                 base - 2.0,

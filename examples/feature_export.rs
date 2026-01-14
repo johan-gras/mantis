@@ -11,10 +11,10 @@
 //!
 //! Run with: cargo run --example feature_export
 
+use chrono::{TimeZone, Utc};
 use mantis::data::{load_csv, DataConfig};
 use mantis::features::{FeatureConfig, FeatureExtractor, SequenceBuilder, TimeSeriesSplitter};
 use mantis::types::Bar;
-use chrono::{TimeZone, Utc};
 use std::fs;
 
 /// Generate synthetic data for demonstration.
@@ -37,8 +37,7 @@ fn generate_synthetic_data(days: usize) -> Vec<Bar> {
         let volume = 1_000_000.0 + (noise.abs() * 500000.0);
 
         bars.push(Bar::new(
-            Utc.with_ymd_and_hms(2022, 1, 1, 0, 0, 0).unwrap()
-                + chrono::Duration::days(i as i64),
+            Utc.with_ymd_and_hms(2022, 1, 1, 0, 0, 0).unwrap() + chrono::Duration::days(i as i64),
             open,
             high.max(open).max(close),
             low.min(open).min(close),
@@ -60,8 +59,7 @@ fn main() {
     // 1. Load data
     println!("1. Loading data...");
     let bars = if std::path::Path::new("data/sample.csv").exists() {
-        load_csv("data/sample.csv", &DataConfig::default())
-            .expect("Failed to load data")
+        load_csv("data/sample.csv", &DataConfig::default()).expect("Failed to load data")
     } else {
         println!("   Using synthetic data");
         generate_synthetic_data(1000)

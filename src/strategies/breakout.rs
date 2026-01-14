@@ -158,7 +158,10 @@ impl RangeBreakout {
         let start = ctx.bar_index - self.lookback;
         let bars = &ctx.bars[start..=ctx.bar_index];
 
-        let high = bars.iter().map(|b| b.high).fold(f64::NEG_INFINITY, f64::max);
+        let high = bars
+            .iter()
+            .map(|b| b.high)
+            .fold(f64::NEG_INFINITY, f64::max);
         let low = bars.iter().map(|b| b.low).fold(f64::INFINITY, f64::min);
 
         let range_pct = (high - low) / low * 100.0;
@@ -211,7 +214,10 @@ impl Strategy for RangeBreakout {
     fn parameters(&self) -> Vec<(String, String)> {
         vec![
             ("lookback".to_string(), self.lookback.to_string()),
-            ("threshold_pct".to_string(), format!("{:.1}%", self.threshold_pct)),
+            (
+                "threshold_pct".to_string(),
+                format!("{:.1}%", self.threshold_pct),
+            ),
         ]
     }
 }
@@ -273,12 +279,10 @@ impl Strategy for AtrBreakout {
                     } else {
                         Signal::Hold
                     }
+                } else if current.close > prev + threshold {
+                    Signal::Exit
                 } else {
-                    if current.close > prev + threshold {
-                        Signal::Exit
-                    } else {
-                        Signal::Hold
-                    }
+                    Signal::Hold
                 }
             }
             None => Signal::Hold,
@@ -311,8 +315,7 @@ mod tests {
             .map(|i| {
                 let base = 100.0 + i as f64 * 0.5;
                 Bar::new(
-                    Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap()
-                        + chrono::Duration::days(i),
+                    Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap() + chrono::Duration::days(i),
                     base - 1.0,
                     base + 2.0,
                     base - 2.0,
@@ -328,8 +331,7 @@ mod tests {
             .map(|i| {
                 // Consolidation phase
                 Bar::new(
-                    Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap()
-                        + chrono::Duration::days(i),
+                    Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap() + chrono::Duration::days(i),
                     99.0,
                     101.0,
                     99.0,

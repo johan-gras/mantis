@@ -9,13 +9,13 @@
 //!
 //! Run with: cargo run --example ml_backtest
 
+use chrono::{TimeZone, Utc};
+use mantis::analytics::ResultFormatter;
 use mantis::data::{load_csv, DataConfig};
 use mantis::engine::{BacktestConfig, Engine};
 use mantis::features::{FeatureConfig, FeatureExtractor, TimeSeriesSplitter};
 use mantis::strategies::ExternalSignalStrategy;
-use mantis::analytics::ResultFormatter;
 use mantis::types::Bar;
-use chrono::{TimeZone, Utc};
 
 /// Generate synthetic data for demonstration.
 fn generate_synthetic_data(days: usize) -> Vec<Bar> {
@@ -38,8 +38,7 @@ fn generate_synthetic_data(days: usize) -> Vec<Bar> {
         let volume = 1_000_000.0 + (noise.abs() * 500000.0);
 
         bars.push(Bar::new(
-            Utc.with_ymd_and_hms(2022, 1, 1, 0, 0, 0).unwrap()
-                + chrono::Duration::days(i as i64),
+            Utc.with_ymd_and_hms(2022, 1, 1, 0, 0, 0).unwrap() + chrono::Duration::days(i as i64),
             open,
             high.max(open).max(close),
             low.min(open).min(close),
@@ -80,8 +79,7 @@ fn main() {
     // 1. Load or generate data
     println!("1. Loading data...");
     let bars = if std::path::Path::new("data/sample.csv").exists() {
-        load_csv("data/sample.csv", &DataConfig::default())
-            .expect("Failed to load data")
+        load_csv("data/sample.csv", &DataConfig::default()).expect("Failed to load data")
     } else {
         println!("   Using synthetic data (data/sample.csv not found)");
         generate_synthetic_data(500)
@@ -105,7 +103,10 @@ fn main() {
     let train_features = extractor.extract_with_target(&train_bars, 5);
     let (train_matrix, feature_names) = extractor.extract_matrix(&train_bars);
     println!("   Features extracted: {}", feature_names.len());
-    println!("   Feature names: {:?}\n", &feature_names[..5.min(feature_names.len())]);
+    println!(
+        "   Feature names: {:?}\n",
+        &feature_names[..5.min(feature_names.len())]
+    );
 
     // 4. "Train" model (simulated)
     println!("4. Training model (simulated)...");

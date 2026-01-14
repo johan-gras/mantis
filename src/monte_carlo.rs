@@ -210,7 +210,11 @@ Verdict: {}"#,
             self.sharpe_ci.1,
             self.prob_positive_sharpe * 100.0,
             self.robustness_score(),
-            if self.is_robust() { "ROBUST" } else { "NOT ROBUST" }
+            if self.is_robust() {
+                "ROBUST"
+            } else {
+                "NOT ROBUST"
+            }
         )
     }
 }
@@ -238,7 +242,10 @@ impl MonteCarloSimulator {
     /// Simple LCG random number generator for reproducibility.
     fn next_random(&mut self) -> f64 {
         // Linear congruential generator
-        self.rng_state = self.rng_state.wrapping_mul(6364136223846793005).wrapping_add(1);
+        self.rng_state = self
+            .rng_state
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1);
         (self.rng_state >> 33) as f64 / (1u64 << 31) as f64
     }
 
@@ -272,7 +279,11 @@ impl MonteCarloSimulator {
     }
 
     /// Run Monte Carlo simulation from trade returns.
-    pub fn simulate_from_returns(&mut self, returns: &[f64], initial_capital: f64) -> MonteCarloResult {
+    pub fn simulate_from_returns(
+        &mut self,
+        returns: &[f64],
+        initial_capital: f64,
+    ) -> MonteCarloResult {
         if returns.is_empty() {
             return self.empty_result();
         }
@@ -313,7 +324,8 @@ impl MonteCarloSimulator {
         all_sharpes.sort_by(|a, b| a.partial_cmp(b).unwrap());
 
         // Calculate statistics
-        let mean_return = all_total_returns.iter().sum::<f64>() / self.config.num_simulations as f64;
+        let mean_return =
+            all_total_returns.iter().sum::<f64>() / self.config.num_simulations as f64;
         let median_return = self.percentile(&all_total_returns, 0.5);
         let return_std = self.std_dev(&all_total_returns);
         let alpha = (1.0 - self.config.confidence_level) / 2.0;
@@ -322,9 +334,8 @@ impl MonteCarloSimulator {
             self.percentile(&all_total_returns, 1.0 - alpha),
         );
 
-        let prob_positive_return =
-            all_total_returns.iter().filter(|&&r| r > 0.0).count() as f64
-                / self.config.num_simulations as f64;
+        let prob_positive_return = all_total_returns.iter().filter(|&&r| r > 0.0).count() as f64
+            / self.config.num_simulations as f64;
 
         let mean_max_drawdown =
             all_max_drawdowns.iter().sum::<f64>() / self.config.num_simulations as f64;
@@ -341,9 +352,8 @@ impl MonteCarloSimulator {
             self.percentile(&all_sharpes, alpha),
             self.percentile(&all_sharpes, 1.0 - alpha),
         );
-        let prob_positive_sharpe =
-            all_sharpes.iter().filter(|&&s| s > 0.0).count() as f64
-                / self.config.num_simulations as f64;
+        let prob_positive_sharpe = all_sharpes.iter().filter(|&&s| s > 0.0).count() as f64
+            / self.config.num_simulations as f64;
 
         // VaR and CVaR
         let var = -self.percentile(&all_total_returns, alpha);
@@ -421,8 +431,8 @@ impl MonteCarloSimulator {
 
         // Calculate Sharpe (simplified using returns directly)
         let mean_ret: f64 = returns.iter().sum::<f64>() / returns.len() as f64;
-        let variance: f64 = returns.iter().map(|r| (r - mean_ret).powi(2)).sum::<f64>()
-            / returns.len() as f64;
+        let variance: f64 =
+            returns.iter().map(|r| (r - mean_ret).powi(2)).sum::<f64>() / returns.len() as f64;
         let std_dev = variance.sqrt();
         let sharpe = if std_dev > 0.0 {
             (mean_ret / std_dev) * (252.0_f64).sqrt()
@@ -448,7 +458,8 @@ impl MonteCarloSimulator {
             return 0.0;
         }
         let mean: f64 = data.iter().sum::<f64>() / data.len() as f64;
-        let variance: f64 = data.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / data.len() as f64;
+        let variance: f64 =
+            data.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / data.len() as f64;
         variance.sqrt()
     }
 
@@ -560,11 +571,13 @@ mod tests {
     fn test_monte_carlo_simulation() {
         // Create synthetic trade returns
         let returns: Vec<f64> = vec![
-            2.0, -1.0, 3.0, -0.5, 1.5, -2.0, 4.0, -1.5, 2.5, 0.5,
-            1.0, -0.8, 2.2, -1.2, 3.5, -0.3, 1.8, -1.0, 2.0, 1.0,
+            2.0, -1.0, 3.0, -0.5, 1.5, -2.0, 4.0, -1.5, 2.5, 0.5, 1.0, -0.8, 2.2, -1.2, 3.5, -0.3,
+            1.8, -1.0, 2.0, 1.0,
         ];
 
-        let config = MonteCarloConfig::default().with_seed(42).with_simulations(500);
+        let config = MonteCarloConfig::default()
+            .with_seed(42)
+            .with_simulations(500);
         let mut simulator = MonteCarloSimulator::new(config);
 
         let result = simulator.simulate_from_returns(&returns, 100_000.0);
@@ -583,7 +596,9 @@ mod tests {
     fn test_monte_carlo_reproducibility() {
         let returns: Vec<f64> = vec![1.0, -0.5, 2.0, -1.0, 1.5];
 
-        let config = MonteCarloConfig::default().with_seed(12345).with_simulations(100);
+        let config = MonteCarloConfig::default()
+            .with_seed(12345)
+            .with_simulations(100);
 
         let mut sim1 = MonteCarloSimulator::new(config.clone());
         let result1 = sim1.simulate_from_returns(&returns, 100_000.0);
@@ -601,7 +616,9 @@ mod tests {
         // All positive returns should give high probability of positive outcome
         let returns: Vec<f64> = vec![1.0, 2.0, 1.5, 3.0, 2.5, 1.8, 2.2];
 
-        let config = MonteCarloConfig::default().with_seed(42).with_simulations(500);
+        let config = MonteCarloConfig::default()
+            .with_seed(42)
+            .with_simulations(500);
         let mut simulator = MonteCarloSimulator::new(config);
 
         let result = simulator.simulate_from_returns(&returns, 100_000.0);
@@ -616,7 +633,9 @@ mod tests {
         // All negative returns should give low probability of positive outcome
         let returns: Vec<f64> = vec![-1.0, -2.0, -1.5, -3.0, -2.5, -1.8, -2.2];
 
-        let config = MonteCarloConfig::default().with_seed(42).with_simulations(500);
+        let config = MonteCarloConfig::default()
+            .with_seed(42)
+            .with_simulations(500);
         let mut simulator = MonteCarloSimulator::new(config);
 
         let result = simulator.simulate_from_returns(&returns, 100_000.0);
@@ -628,11 +647,11 @@ mod tests {
 
     #[test]
     fn test_confidence_intervals() {
-        let returns: Vec<f64> = vec![
-            2.0, -1.0, 3.0, -0.5, 1.5, -2.0, 4.0, -1.5, 2.5, 0.5,
-        ];
+        let returns: Vec<f64> = vec![2.0, -1.0, 3.0, -0.5, 1.5, -2.0, 4.0, -1.5, 2.5, 0.5];
 
-        let config = MonteCarloConfig::default().with_seed(42).with_simulations(1000);
+        let config = MonteCarloConfig::default()
+            .with_seed(42)
+            .with_simulations(1000);
         let mut simulator = MonteCarloSimulator::new(config);
 
         let result = simulator.simulate_from_returns(&returns, 100_000.0);
@@ -660,7 +679,9 @@ mod tests {
     fn test_summary_report() {
         let returns: Vec<f64> = vec![1.0, -0.5, 2.0, -1.0, 1.5];
 
-        let config = MonteCarloConfig::default().with_seed(42).with_simulations(100);
+        let config = MonteCarloConfig::default()
+            .with_seed(42)
+            .with_simulations(100);
         let mut simulator = MonteCarloSimulator::new(config);
 
         let result = simulator.simulate_from_returns(&returns, 100_000.0);
@@ -676,7 +697,9 @@ mod tests {
     fn test_robustness_score() {
         let returns: Vec<f64> = vec![2.0, 1.0, 3.0, 1.5, 2.5, 1.8, 2.2];
 
-        let config = MonteCarloConfig::default().with_seed(42).with_simulations(500);
+        let config = MonteCarloConfig::default()
+            .with_seed(42)
+            .with_simulations(500);
         let mut simulator = MonteCarloSimulator::new(config);
 
         let result = simulator.simulate_from_returns(&returns, 100_000.0);

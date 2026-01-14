@@ -32,7 +32,10 @@ impl MeanReversion {
     pub fn new(period: usize, num_std: f64, entry_std: f64, exit_std: f64) -> Self {
         assert!(period > 0, "Period must be positive");
         assert!(num_std > 0.0, "Number of std devs must be positive");
-        assert!(entry_std > exit_std, "Entry threshold must be greater than exit");
+        assert!(
+            entry_std > exit_std,
+            "Entry threshold must be greater than exit"
+        );
 
         Self {
             period,
@@ -158,14 +161,9 @@ impl Strategy for BollingerBounce {
             } else if test_high >= upper {
                 return Signal::Short; // Bounce off upper band
             }
-        } else if ctx.is_long() {
-            if bar.close >= middle {
-                return Signal::Exit; // Take profit at middle band
-            }
-        } else if ctx.is_short() {
-            if bar.close <= middle {
-                return Signal::Exit; // Take profit at middle band
-            }
+        } else if (ctx.is_long() && bar.close >= middle) || (ctx.is_short() && bar.close <= middle)
+        {
+            return Signal::Exit; // Take profit at middle band
         }
 
         Signal::Hold
@@ -192,18 +190,95 @@ mod tests {
     fn create_mean_reverting_bars() -> Vec<Bar> {
         // Create bars that oscillate around 100
         vec![
-            Bar::new(Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap(), 100.0, 102.0, 98.0, 100.0, 1000.0),
-            Bar::new(Utc.with_ymd_and_hms(2024, 1, 2, 0, 0, 0).unwrap(), 100.0, 103.0, 99.0, 101.0, 1000.0),
-            Bar::new(Utc.with_ymd_and_hms(2024, 1, 3, 0, 0, 0).unwrap(), 101.0, 102.0, 98.0, 99.0, 1000.0),
-            Bar::new(Utc.with_ymd_and_hms(2024, 1, 4, 0, 0, 0).unwrap(), 99.0, 101.0, 97.0, 100.0, 1000.0),
-            Bar::new(Utc.with_ymd_and_hms(2024, 1, 5, 0, 0, 0).unwrap(), 100.0, 102.0, 99.0, 101.0, 1000.0),
-            Bar::new(Utc.with_ymd_and_hms(2024, 1, 6, 0, 0, 0).unwrap(), 101.0, 103.0, 100.0, 102.0, 1000.0),
-            Bar::new(Utc.with_ymd_and_hms(2024, 1, 7, 0, 0, 0).unwrap(), 102.0, 104.0, 101.0, 103.0, 1000.0),
-            Bar::new(Utc.with_ymd_and_hms(2024, 1, 8, 0, 0, 0).unwrap(), 103.0, 105.0, 102.0, 104.0, 1000.0),
-            Bar::new(Utc.with_ymd_and_hms(2024, 1, 9, 0, 0, 0).unwrap(), 104.0, 106.0, 103.0, 105.0, 1000.0),
-            Bar::new(Utc.with_ymd_and_hms(2024, 1, 10, 0, 0, 0).unwrap(), 105.0, 108.0, 104.0, 107.0, 1000.0),
+            Bar::new(
+                Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap(),
+                100.0,
+                102.0,
+                98.0,
+                100.0,
+                1000.0,
+            ),
+            Bar::new(
+                Utc.with_ymd_and_hms(2024, 1, 2, 0, 0, 0).unwrap(),
+                100.0,
+                103.0,
+                99.0,
+                101.0,
+                1000.0,
+            ),
+            Bar::new(
+                Utc.with_ymd_and_hms(2024, 1, 3, 0, 0, 0).unwrap(),
+                101.0,
+                102.0,
+                98.0,
+                99.0,
+                1000.0,
+            ),
+            Bar::new(
+                Utc.with_ymd_and_hms(2024, 1, 4, 0, 0, 0).unwrap(),
+                99.0,
+                101.0,
+                97.0,
+                100.0,
+                1000.0,
+            ),
+            Bar::new(
+                Utc.with_ymd_and_hms(2024, 1, 5, 0, 0, 0).unwrap(),
+                100.0,
+                102.0,
+                99.0,
+                101.0,
+                1000.0,
+            ),
+            Bar::new(
+                Utc.with_ymd_and_hms(2024, 1, 6, 0, 0, 0).unwrap(),
+                101.0,
+                103.0,
+                100.0,
+                102.0,
+                1000.0,
+            ),
+            Bar::new(
+                Utc.with_ymd_and_hms(2024, 1, 7, 0, 0, 0).unwrap(),
+                102.0,
+                104.0,
+                101.0,
+                103.0,
+                1000.0,
+            ),
+            Bar::new(
+                Utc.with_ymd_and_hms(2024, 1, 8, 0, 0, 0).unwrap(),
+                103.0,
+                105.0,
+                102.0,
+                104.0,
+                1000.0,
+            ),
+            Bar::new(
+                Utc.with_ymd_and_hms(2024, 1, 9, 0, 0, 0).unwrap(),
+                104.0,
+                106.0,
+                103.0,
+                105.0,
+                1000.0,
+            ),
+            Bar::new(
+                Utc.with_ymd_and_hms(2024, 1, 10, 0, 0, 0).unwrap(),
+                105.0,
+                108.0,
+                104.0,
+                107.0,
+                1000.0,
+            ),
             // Now a sharp drop
-            Bar::new(Utc.with_ymd_and_hms(2024, 1, 11, 0, 0, 0).unwrap(), 107.0, 107.0, 90.0, 92.0, 1000.0),
+            Bar::new(
+                Utc.with_ymd_and_hms(2024, 1, 11, 0, 0, 0).unwrap(),
+                107.0,
+                107.0,
+                90.0,
+                92.0,
+                1000.0,
+            ),
         ]
     }
 

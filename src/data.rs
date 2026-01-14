@@ -12,7 +12,15 @@ use tracing::{debug, info, warn};
 /// Raw CSV row with flexible date parsing.
 #[derive(Debug, Deserialize)]
 struct CsvRow {
-    #[serde(alias = "Date", alias = "date", alias = "Timestamp", alias = "timestamp", alias = "Time", alias = "time", alias = "datetime")]
+    #[serde(
+        alias = "Date",
+        alias = "date",
+        alias = "Timestamp",
+        alias = "timestamp",
+        alias = "Time",
+        alias = "time",
+        alias = "datetime"
+    )]
     date: String,
     #[serde(alias = "Open", alias = "open", alias = "o")]
     open: f64,
@@ -61,8 +69,7 @@ fn parse_datetime(s: &str, format: Option<&str>) -> Result<DateTime<Utc>> {
             return Ok(Utc.from_utc_datetime(&dt));
         }
         if let Ok(d) = NaiveDate::parse_from_str(s, fmt) {
-            return Ok(Utc
-                .from_utc_datetime(&d.and_hms_opt(0, 0, 0).unwrap()));
+            return Ok(Utc.from_utc_datetime(&d.and_hms_opt(0, 0, 0).unwrap()));
         }
     }
 
@@ -86,18 +93,11 @@ fn parse_datetime(s: &str, format: Option<&str>) -> Result<DateTime<Utc>> {
     }
 
     // Try date-only formats
-    let date_formats = [
-        "%Y-%m-%d",
-        "%Y/%m/%d",
-        "%d-%m-%Y",
-        "%d/%m/%Y",
-        "%m/%d/%Y",
-    ];
+    let date_formats = ["%Y-%m-%d", "%Y/%m/%d", "%d-%m-%Y", "%d/%m/%Y", "%m/%d/%Y"];
 
     for fmt in &date_formats {
         if let Ok(d) = NaiveDate::parse_from_str(s, fmt) {
-            return Ok(Utc
-                .from_utc_datetime(&d.and_hms_opt(0, 0, 0).unwrap()));
+            return Ok(Utc.from_utc_datetime(&d.and_hms_opt(0, 0, 0).unwrap()));
         }
     }
 
@@ -157,7 +157,9 @@ pub fn load_csv(path: impl AsRef<Path>, config: &DataConfig) -> Result<Vec<Bar>>
             }
         };
 
-        let bar = Bar::new(timestamp, row.open, row.high, row.low, row.close, row.volume);
+        let bar = Bar::new(
+            timestamp, row.open, row.high, row.low, row.close, row.volume,
+        );
 
         if config.validate_bars && !bar.validate() {
             if config.skip_invalid {
@@ -189,17 +191,18 @@ pub fn load_csv(path: impl AsRef<Path>, config: &DataConfig) -> Result<Vec<Bar>>
     let original_len = bars.len();
     bars.dedup_by_key(|b| b.timestamp);
     if bars.len() < original_len {
-        warn!(
-            "Removed {} duplicate timestamps",
-            original_len - bars.len()
-        );
+        warn!("Removed {} duplicate timestamps", original_len - bars.len());
     }
 
     info!(
         "Loaded {} bars from {} to {}",
         bars.len(),
-        bars.first().map(|b| b.timestamp.to_string()).unwrap_or_default(),
-        bars.last().map(|b| b.timestamp.to_string()).unwrap_or_default()
+        bars.first()
+            .map(|b| b.timestamp.to_string())
+            .unwrap_or_default(),
+        bars.last()
+            .map(|b| b.timestamp.to_string())
+            .unwrap_or_default()
     );
 
     if bars.is_empty() {
@@ -394,7 +397,12 @@ pub fn bollinger_bands(bars: &[Bar], period: usize, num_std: f64) -> Option<(f64
 
 /// Calculate MACD (Moving Average Convergence Divergence).
 /// Returns (macd_line, signal_line, histogram).
-pub fn macd(bars: &[Bar], fast_period: usize, slow_period: usize, signal_period: usize) -> Option<(f64, f64, f64)> {
+pub fn macd(
+    bars: &[Bar],
+    fast_period: usize,
+    slow_period: usize,
+    signal_period: usize,
+) -> Option<(f64, f64, f64)> {
     if bars.len() < slow_period + signal_period {
         return None;
     }
@@ -439,7 +447,10 @@ pub fn williams_r(bars: &[Bar], period: usize) -> Option<f64> {
     }
 
     let recent = &bars[bars.len() - period..];
-    let highest_high = recent.iter().map(|b| b.high).fold(f64::NEG_INFINITY, f64::max);
+    let highest_high = recent
+        .iter()
+        .map(|b| b.high)
+        .fold(f64::NEG_INFINITY, f64::max);
     let lowest_low = recent.iter().map(|b| b.low).fold(f64::INFINITY, f64::min);
     let close = bars.last()?.close;
 
@@ -462,7 +473,10 @@ pub fn stochastic(bars: &[Bar], k_period: usize, d_period: usize) -> Option<(f64
     for i in (bars.len() - d_period)..bars.len() {
         if i >= k_period {
             let slice = &bars[i + 1 - k_period..=i];
-            let highest_high = slice.iter().map(|b| b.high).fold(f64::NEG_INFINITY, f64::max);
+            let highest_high = slice
+                .iter()
+                .map(|b| b.high)
+                .fold(f64::NEG_INFINITY, f64::max);
             let lowest_low = slice.iter().map(|b| b.low).fold(f64::INFINITY, f64::min);
             let close = slice.last()?.close;
 
@@ -535,7 +549,11 @@ pub fn cci(bars: &[Bar], period: usize) -> Option<f64> {
     let mean_tp: f64 = typical_prices.iter().sum::<f64>() / period as f64;
 
     // Calculate mean deviation
-    let mean_deviation: f64 = typical_prices.iter().map(|tp| (tp - mean_tp).abs()).sum::<f64>() / period as f64;
+    let mean_deviation: f64 = typical_prices
+        .iter()
+        .map(|tp| (tp - mean_tp).abs())
+        .sum::<f64>()
+        / period as f64;
 
     if mean_deviation.abs() < f64::EPSILON {
         return Some(0.0);
@@ -565,11 +583,46 @@ mod tests {
 
     fn create_test_bars() -> Vec<Bar> {
         vec![
-            Bar::new(Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap(), 100.0, 105.0, 98.0, 102.0, 1000.0),
-            Bar::new(Utc.with_ymd_and_hms(2024, 1, 2, 0, 0, 0).unwrap(), 102.0, 108.0, 101.0, 107.0, 1200.0),
-            Bar::new(Utc.with_ymd_and_hms(2024, 1, 3, 0, 0, 0).unwrap(), 107.0, 110.0, 105.0, 108.0, 1100.0),
-            Bar::new(Utc.with_ymd_and_hms(2024, 1, 4, 0, 0, 0).unwrap(), 108.0, 109.0, 103.0, 104.0, 900.0),
-            Bar::new(Utc.with_ymd_and_hms(2024, 1, 5, 0, 0, 0).unwrap(), 104.0, 106.0, 100.0, 105.0, 1000.0),
+            Bar::new(
+                Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap(),
+                100.0,
+                105.0,
+                98.0,
+                102.0,
+                1000.0,
+            ),
+            Bar::new(
+                Utc.with_ymd_and_hms(2024, 1, 2, 0, 0, 0).unwrap(),
+                102.0,
+                108.0,
+                101.0,
+                107.0,
+                1200.0,
+            ),
+            Bar::new(
+                Utc.with_ymd_and_hms(2024, 1, 3, 0, 0, 0).unwrap(),
+                107.0,
+                110.0,
+                105.0,
+                108.0,
+                1100.0,
+            ),
+            Bar::new(
+                Utc.with_ymd_and_hms(2024, 1, 4, 0, 0, 0).unwrap(),
+                108.0,
+                109.0,
+                103.0,
+                104.0,
+                900.0,
+            ),
+            Bar::new(
+                Utc.with_ymd_and_hms(2024, 1, 5, 0, 0, 0).unwrap(),
+                104.0,
+                106.0,
+                100.0,
+                105.0,
+                1000.0,
+            ),
         ]
     }
 
@@ -703,8 +756,7 @@ mod tests {
             .map(|i| {
                 let base = 100.0 + (i as f64 * 0.5);
                 Bar::new(
-                    Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap()
-                        + chrono::Duration::days(i),
+                    Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap() + chrono::Duration::days(i),
                     base,
                     base + 2.0,
                     base - 1.0,

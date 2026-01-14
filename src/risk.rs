@@ -6,7 +6,7 @@ use crate::types::Side;
 use serde::{Deserialize, Serialize};
 
 /// Stop-loss configuration.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default)]
 pub enum StopLoss {
     /// Fixed percentage stop loss from entry price.
     Percentage(f64),
@@ -17,13 +17,8 @@ pub enum StopLoss {
     /// Trailing stop loss percentage.
     Trailing(f64),
     /// No stop loss.
+    #[default]
     None,
-}
-
-impl Default for StopLoss {
-    fn default() -> Self {
-        StopLoss::None
-    }
 }
 
 impl StopLoss {
@@ -41,7 +36,10 @@ impl StopLoss {
                 Side::Buy => Some(entry_price - amount),
                 Side::Sell => Some(entry_price + amount),
             },
-            StopLoss::Atr { multiplier, atr_value } => {
+            StopLoss::Atr {
+                multiplier,
+                atr_value,
+            } => {
                 let distance = multiplier * atr_value;
                 match side {
                     Side::Buy => Some(entry_price - distance),
@@ -72,7 +70,7 @@ impl StopLoss {
 }
 
 /// Take-profit configuration.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default)]
 pub enum TakeProfit {
     /// Fixed percentage take profit from entry price.
     Percentage(f64),
@@ -83,13 +81,8 @@ pub enum TakeProfit {
     /// ATR-based take profit.
     Atr { multiplier: f64, atr_value: f64 },
     /// No take profit.
+    #[default]
     None,
-}
-
-impl Default for TakeProfit {
-    fn default() -> Self {
-        TakeProfit::None
-    }
 }
 
 impl TakeProfit {
@@ -107,14 +100,20 @@ impl TakeProfit {
                 Side::Buy => Some(entry_price + amount),
                 Side::Sell => Some(entry_price - amount),
             },
-            TakeProfit::RiskReward { ratio, stop_distance } => {
+            TakeProfit::RiskReward {
+                ratio,
+                stop_distance,
+            } => {
                 let profit_distance = stop_distance * ratio;
                 match side {
                     Side::Buy => Some(entry_price + profit_distance),
                     Side::Sell => Some(entry_price - profit_distance),
                 }
             }
-            TakeProfit::Atr { multiplier, atr_value } => {
+            TakeProfit::Atr {
+                multiplier,
+                atr_value,
+            } => {
                 let distance = multiplier * atr_value;
                 match side {
                     Side::Buy => Some(entry_price + distance),
