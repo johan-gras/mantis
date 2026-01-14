@@ -75,6 +75,77 @@ Distinct aspects/components within a JTBD. Each topic becomes ONE spec file.
 
 ---
 
+## Working with Existing Codebases (Brownfield Projects)
+
+**Critical insight**: Specs are ASPIRATIONAL, not DESCRIPTIVE.
+
+### The Wrong Approach
+
+❌ "Let me read the code and document what exists as specs"
+
+This is backwards. You're not writing documentation - you're defining requirements.
+
+### The Right Approach
+
+✅ "Let me define what SHOULD exist, then let gap analysis find what's missing"
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│  YOU define specs for ideal system (what SHOULD exist)              │
+│                           │                                         │
+│                           ▼                                         │
+│  ./loop.sh plan runs gap analysis:                                  │
+│    • Studies existing src/ with subagents                           │
+│    • Compares specs against actual code                             │
+│    • Identifies TRUE gaps (not already implemented)                 │
+│                           │                                         │
+│                           ▼                                         │
+│  IMPLEMENTATION_PLAN.md contains only MISSING items                 │
+│                           │                                         │
+│                           ▼                                         │
+│  ./loop.sh builds only what's needed                                │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+### Key Principles for Existing Code
+
+1. **Don't reverse-engineer specs from code**
+   - Specs define the ideal state
+   - Gap analysis discovers current state
+   - The delta becomes the implementation plan
+
+2. **Your existing code steers Ralph**
+   - Existing patterns in `src/` influence what Ralph generates
+   - If Ralph produces wrong patterns, add utilities/examples to steer it
+
+3. **The planning phase handles reconciliation**
+   - `PROMPT_plan.md` includes: "Do NOT assume functionality is missing; confirm with code search first"
+   - Ralph uses up to 500 subagents to study existing code
+   - Only true gaps make it to the implementation plan
+
+4. **Specs can be ambitious**
+   - Include features you WANT, even if not yet implemented
+   - Gap analysis will correctly identify them as TODO items
+
+### Example: Existing Backtest Engine
+
+You have code in `src/` that already handles data loading and basic backtesting.
+
+**Don't**: Write specs that only describe what exists
+**Do**: Write specs for the COMPLETE system you want
+
+```
+specs/data-handling.md:
+  - CSV loading ✓ (exists)
+  - Parquet loading ✓ (exists)
+  - Real-time streaming (aspirational - not yet built)
+  - Corporate actions (aspirational - not yet built)
+```
+
+Gap analysis will find that streaming and corporate actions are missing, and add them to `IMPLEMENTATION_PLAN.md`.
+
+---
+
 ## How to Execute the Requirements Phase
 
 ### Step 1: Define the JTBD

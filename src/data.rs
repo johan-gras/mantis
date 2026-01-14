@@ -965,6 +965,534 @@ pub fn cci(bars: &[Bar], period: usize) -> Option<f64> {
     Some((current_tp - mean_tp) / (0.015 * mean_deviation))
 }
 
+// =============================================================================
+// Time-Series Resampling
+// =============================================================================
+
+/// Interval for resampling time-series data.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResampleInterval {
+    /// Minute intervals (e.g., 5, 15, 30 minutes).
+    Minute(u32),
+    /// Hourly intervals (e.g., 1, 4 hours).
+    Hour(u32),
+    /// Daily intervals.
+    Day,
+    /// Weekly intervals.
+    Week,
+    /// Monthly intervals.
+    Month,
+}
+
+impl ResampleInterval {
+    /// Get the interval duration in seconds (for minute/hour/day intervals).
+    /// Returns None for week/month as they vary in actual duration.
+    pub fn to_seconds(&self) -> Option<i64> {
+        match self {
+            ResampleInterval::Minute(m) => Some(*m as i64 * 60),
+            ResampleInterval::Hour(h) => Some(*h as i64 * 3600),
+            ResampleInterval::Day => Some(86400),
+            ResampleInterval::Week => Some(7 * 86400),
+            ResampleInterval::Month => None, // Variable duration
+        }
+    }
+
+    /// Calculate the bucket key for a given timestamp.
+    /// This determines which resampled bar a timestamp belongs to.
+    fn bucket_key(&self, timestamp: DateTime<Utc>) -> i64 {
+        use chrono::Datelike;
+
+        match self {
+            ResampleInterval::Minute(m) => {
+                let secs = timestamp.timestamp();
+                let interval_secs = *m as i64 * 60;
+                secs / interval_secs
+            }
+            ResampleInterval::Hour(h) => {
+                let secs = timestamp.timestamp();
+                let interval_secs = *h as i64 * 3600;
+                secs / interval_secs
+            }
+            ResampleInterval::Day => {
+                // Use ordinal day from epoch
+                timestamp.timestamp() / 86400
+            }
+            ResampleInterval::Week => {
+                // ISO week number combined with year
+                let iso_week = timestamp.iso_week();
+                iso_week.year() as i64 * 100 + iso_week.week() as i64
+            }
+            ResampleInterval::Month => {
+                // Year * 12 + month
+                let year = timestamp.year() as i64;
+                let month = timestamp.month() as i64;
+                year * 12 + month
+            }
+        }
+    }
+
+    /// Get the start timestamp for a bucket.
+    fn bucket_start(&self, timestamp: DateTime<Utc>) -> DateTime<Utc> {
+        use chrono::{Datelike, NaiveDate, TimeZone};
+
+        match self {
+            ResampleInterval::Minute(m) => {
+                let secs = timestamp.timestamp();
+                let interval_secs = *m as i64 * 60;
+                let bucket_start_secs = (secs / interval_secs) * interval_secs;
+                DateTime::from_timestamp(bucket_start_secs, 0).unwrap_or(timestamp)
+            }
+            ResampleInterval::Hour(h) => {
+                let secs = timestamp.timestamp();
+                let interval_secs = *h as i64 * 3600;
+                let bucket_start_secs = (secs / interval_secs) * interval_secs;
+                DateTime::from_timestamp(bucket_start_secs, 0).unwrap_or(timestamp)
+            }
+            ResampleInterval::Day => {
+                let date = timestamp.date_naive();
+                Utc.from_utc_datetime(&date.and_hms_opt(0, 0, 0).unwrap())
+            }
+            ResampleInterval::Week => {
+                // Start of ISO week (Monday)
+                let iso_week = timestamp.iso_week();
+                let monday = NaiveDate::from_isoywd_opt(
+                    iso_week.year(),
+                    iso_week.week(),
+                    chrono::Weekday::Mon,
+                )
+                .unwrap_or(timestamp.date_naive());
+                Utc.from_utc_datetime(&monday.and_hms_opt(0, 0, 0).unwrap())
+            }
+            ResampleInterval::Month => {
+                let date = NaiveDate::from_ymd_opt(timestamp.year(), timestamp.month(), 1).unwrap();
+                Utc.from_utc_datetime(&date.and_hms_opt(0, 0, 0).unwrap())
+            }
+        }
+    }
+}
+
+/// Resample bars to a coarser time interval.
+///
+/// Aggregates OHLCV data using standard rules:
+/// - Open: first bar's open in the period
+/// - High: maximum high across all bars
+/// - Low: minimum low across all bars
+/// - Close: last bar's close in the period
+/// - Volume: sum of all volumes
+///
+/// # Arguments
+/// * `bars` - Input bars (must be sorted by timestamp)
+/// * `target` - Target resampling interval
+///
+/// # Returns
+/// Resampled bars at the target interval.
+pub fn resample(bars: &[Bar], target: ResampleInterval) -> Vec<Bar> {
+    if bars.is_empty() {
+        return Vec::new();
+    }
+
+    // Group bars by their bucket
+    let mut buckets: HashMap<i64, Vec<&Bar>> = HashMap::new();
+    for bar in bars {
+        let key = target.bucket_key(bar.timestamp);
+        buckets.entry(key).or_default().push(bar);
+    }
+
+    // Aggregate each bucket into a single bar
+    let mut result: Vec<Bar> = buckets
+        .into_iter()
+        .filter_map(|(_, bucket_bars)| {
+            if bucket_bars.is_empty() {
+                return None;
+            }
+
+            // Bars in bucket should be sorted by time
+            let mut sorted_bars = bucket_bars;
+            sorted_bars.sort_by_key(|b| b.timestamp);
+
+            let first = sorted_bars.first()?;
+            let last = sorted_bars.last()?;
+
+            let open = first.open;
+            let close = last.close;
+            let high = sorted_bars
+                .iter()
+                .map(|b| b.high)
+                .fold(f64::NEG_INFINITY, f64::max);
+            let low = sorted_bars
+                .iter()
+                .map(|b| b.low)
+                .fold(f64::INFINITY, f64::min);
+            let volume: f64 = sorted_bars.iter().map(|b| b.volume).sum();
+
+            // Use bucket start time as the timestamp
+            let timestamp = target.bucket_start(first.timestamp);
+
+            Some(Bar::new(timestamp, open, high, low, close, volume))
+        })
+        .collect();
+
+    // Sort result by timestamp
+    result.sort_by_key(|b| b.timestamp);
+    result
+}
+
+// =============================================================================
+// Missing Data Handling
+// =============================================================================
+
+/// Represents a gap in time-series data.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DataGap {
+    /// Start of the gap (last known timestamp before gap).
+    pub start: DateTime<Utc>,
+    /// End of the gap (first timestamp after gap).
+    pub end: DateTime<Utc>,
+    /// Number of expected bars missing.
+    pub expected_bars: usize,
+}
+
+impl DataGap {
+    /// Duration of the gap.
+    pub fn duration(&self) -> chrono::Duration {
+        self.end.signed_duration_since(self.start)
+    }
+}
+
+/// Methods for filling missing data gaps.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum FillMethod {
+    /// Forward fill: use the last known values.
+    #[default]
+    ForwardFill,
+    /// Backward fill: use the next known values.
+    BackwardFill,
+    /// Linear interpolation for prices, zero for volume.
+    Linear,
+    /// Fill with zeros (mainly useful for volume).
+    Zero,
+}
+
+/// Report on data quality issues.
+#[derive(Debug, Clone, Default)]
+pub struct DataQualityReport {
+    /// Total number of bars in the dataset.
+    pub total_bars: usize,
+    /// Detected gaps in the data.
+    pub gaps: Vec<DataGap>,
+    /// Percentage of expected data that is missing.
+    pub gap_percentage: f64,
+    /// Number of duplicate timestamps found (and removed).
+    pub duplicate_timestamps: usize,
+    /// Number of bars with invalid data (e.g., high < low).
+    pub invalid_bars: usize,
+    /// Expected time interval between bars (for gap detection).
+    pub expected_interval_seconds: i64,
+}
+
+impl DataQualityReport {
+    /// Check if the data quality is acceptable (no major issues).
+    pub fn is_acceptable(&self) -> bool {
+        self.gaps.is_empty() && self.duplicate_timestamps == 0 && self.invalid_bars == 0
+    }
+
+    /// Get a summary string of the report.
+    pub fn summary(&self) -> String {
+        format!(
+            "Bars: {}, Gaps: {}, Gap%: {:.2}%, Duplicates: {}, Invalid: {}",
+            self.total_bars,
+            self.gaps.len(),
+            self.gap_percentage,
+            self.duplicate_timestamps,
+            self.invalid_bars
+        )
+    }
+}
+
+/// Detect gaps in time-series data.
+///
+/// A gap is detected when the time between consecutive bars exceeds
+/// the expected interval by more than 50%.
+///
+/// # Arguments
+/// * `bars` - Input bars (should be sorted by timestamp)
+/// * `expected_interval_seconds` - Expected seconds between bars
+///
+/// # Returns
+/// List of detected gaps.
+pub fn detect_gaps(bars: &[Bar], expected_interval_seconds: i64) -> Vec<DataGap> {
+    if bars.len() < 2 || expected_interval_seconds <= 0 {
+        return Vec::new();
+    }
+
+    let threshold = (expected_interval_seconds as f64 * 1.5) as i64;
+    let mut gaps = Vec::new();
+
+    for window in bars.windows(2) {
+        let elapsed = window[1]
+            .timestamp
+            .signed_duration_since(window[0].timestamp)
+            .num_seconds();
+
+        if elapsed > threshold {
+            let expected_bars = ((elapsed / expected_interval_seconds) - 1) as usize;
+            gaps.push(DataGap {
+                start: window[0].timestamp,
+                end: window[1].timestamp,
+                expected_bars,
+            });
+        }
+    }
+
+    gaps
+}
+
+/// Fill gaps in time-series data.
+///
+/// # Arguments
+/// * `bars` - Input bars (should be sorted by timestamp)
+/// * `expected_interval_seconds` - Expected seconds between bars
+/// * `method` - Fill method to use
+///
+/// # Returns
+/// Bars with gaps filled according to the specified method.
+pub fn fill_gaps(bars: &[Bar], expected_interval_seconds: i64, method: FillMethod) -> Vec<Bar> {
+    if bars.len() < 2 || expected_interval_seconds <= 0 {
+        return bars.to_vec();
+    }
+
+    let mut result = Vec::with_capacity(bars.len());
+    let threshold = (expected_interval_seconds as f64 * 1.5) as i64;
+
+    for window in bars.windows(2) {
+        result.push(window[0].clone());
+
+        let elapsed = window[1]
+            .timestamp
+            .signed_duration_since(window[0].timestamp)
+            .num_seconds();
+
+        if elapsed > threshold {
+            // Calculate number of bars to insert
+            let num_fill = ((elapsed / expected_interval_seconds) - 1) as usize;
+
+            for j in 1..=num_fill {
+                let fill_timestamp = window[0].timestamp
+                    + chrono::Duration::seconds(expected_interval_seconds * j as i64);
+
+                let fill_bar = match method {
+                    FillMethod::ForwardFill => Bar::new(
+                        fill_timestamp,
+                        window[0].close, // Use previous close as open
+                        window[0].close,
+                        window[0].close,
+                        window[0].close,
+                        0.0, // Zero volume for filled bars
+                    ),
+                    FillMethod::BackwardFill => Bar::new(
+                        fill_timestamp,
+                        window[1].open, // Use next open
+                        window[1].open,
+                        window[1].open,
+                        window[1].open,
+                        0.0,
+                    ),
+                    FillMethod::Linear => {
+                        let t = (j as f64) / ((num_fill + 1) as f64);
+                        let interp_price = window[0].close * (1.0 - t) + window[1].open * t;
+                        Bar::new(
+                            fill_timestamp,
+                            interp_price,
+                            interp_price,
+                            interp_price,
+                            interp_price,
+                            0.0,
+                        )
+                    }
+                    FillMethod::Zero => Bar::new(fill_timestamp, 0.0, 0.0, 0.0, 0.0, 0.0),
+                };
+
+                result.push(fill_bar);
+            }
+        }
+    }
+
+    // Add the last bar
+    if let Some(last) = bars.last() {
+        result.push(last.clone());
+    }
+
+    result
+}
+
+/// Generate a data quality report for the given bars.
+///
+/// # Arguments
+/// * `bars` - Input bars
+/// * `expected_interval_seconds` - Expected seconds between bars
+///
+/// # Returns
+/// A comprehensive data quality report.
+pub fn data_quality_report(bars: &[Bar], expected_interval_seconds: i64) -> DataQualityReport {
+    let total_bars = bars.len();
+
+    // Detect gaps
+    let gaps = detect_gaps(bars, expected_interval_seconds);
+
+    // Calculate gap percentage
+    let total_missing: usize = gaps.iter().map(|g| g.expected_bars).sum();
+    let expected_total = total_bars + total_missing;
+    let gap_percentage = if expected_total > 0 {
+        (total_missing as f64 / expected_total as f64) * 100.0
+    } else {
+        0.0
+    };
+
+    // Count invalid bars
+    let invalid_bars = bars.iter().filter(|b| !b.validate()).count();
+
+    // Note: duplicates are removed during loading, so we can't count them here
+    // This would need to be tracked during the loading process
+
+    DataQualityReport {
+        total_bars,
+        gaps,
+        gap_percentage,
+        duplicate_timestamps: 0, // Would be set during loading
+        invalid_bars,
+        expected_interval_seconds,
+    }
+}
+
+// =============================================================================
+// Multi-Symbol Time-Series Alignment
+// =============================================================================
+
+/// Mode for aligning multiple time series.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum AlignMode {
+    /// Inner join: only timestamps present in all series.
+    #[default]
+    Inner,
+    /// Outer join with forward fill for missing values.
+    OuterForwardFill,
+    /// Outer join - missing values result in None.
+    OuterNone,
+}
+
+/// Aligned data point for a single timestamp across multiple symbols.
+#[derive(Debug, Clone)]
+pub struct AlignedBars {
+    pub timestamp: DateTime<Utc>,
+    pub bars: HashMap<String, Option<Bar>>,
+}
+
+impl AlignedBars {
+    /// Check if all symbols have data at this timestamp.
+    pub fn is_complete(&self) -> bool {
+        self.bars.values().all(|b| b.is_some())
+    }
+
+    /// Get the bar for a specific symbol.
+    pub fn get(&self, symbol: &str) -> Option<&Bar> {
+        self.bars.get(symbol).and_then(|b| b.as_ref())
+    }
+}
+
+/// Align multiple time series to common timestamps.
+///
+/// # Arguments
+/// * `series` - Slice of (symbol, bars) pairs
+/// * `mode` - Alignment mode to use
+///
+/// # Returns
+/// Vector of aligned bars at each timestamp.
+pub fn align_series(series: &[(&str, &[Bar])], mode: AlignMode) -> Vec<AlignedBars> {
+    if series.is_empty() {
+        return Vec::new();
+    }
+
+    // Collect all unique timestamps
+    let mut all_timestamps: Vec<DateTime<Utc>> = series
+        .iter()
+        .flat_map(|(_, bars)| bars.iter().map(|b| b.timestamp))
+        .collect();
+    all_timestamps.sort();
+    all_timestamps.dedup();
+
+    // Build index maps for quick lookup
+    let symbol_maps: HashMap<&str, HashMap<DateTime<Utc>, &Bar>> = series
+        .iter()
+        .map(|(symbol, bars)| {
+            let map: HashMap<DateTime<Utc>, &Bar> = bars.iter().map(|b| (b.timestamp, b)).collect();
+            (*symbol, map)
+        })
+        .collect();
+
+    let symbols: Vec<&str> = series.iter().map(|(s, _)| *s).collect();
+
+    // Track last known bars for forward fill
+    let mut last_bars: HashMap<&str, &Bar> = HashMap::new();
+
+    let mut result = Vec::new();
+
+    for ts in all_timestamps {
+        let mut bars_at_ts: HashMap<String, Option<Bar>> = HashMap::new();
+        let mut all_present = true;
+
+        for &symbol in &symbols {
+            let bar = symbol_maps.get(symbol).and_then(|m| m.get(&ts).copied());
+
+            match bar {
+                Some(b) => {
+                    last_bars.insert(symbol, b);
+                    bars_at_ts.insert(symbol.to_string(), Some(b.clone()));
+                }
+                None => {
+                    all_present = false;
+                    match mode {
+                        AlignMode::Inner => {
+                            bars_at_ts.insert(symbol.to_string(), None);
+                        }
+                        AlignMode::OuterForwardFill => {
+                            let filled = last_bars.get(symbol).map(|&prev| {
+                                // Create forward-filled bar with updated timestamp
+                                Bar::new(ts, prev.close, prev.close, prev.close, prev.close, 0.0)
+                            });
+                            bars_at_ts.insert(symbol.to_string(), filled);
+                        }
+                        AlignMode::OuterNone => {
+                            bars_at_ts.insert(symbol.to_string(), None);
+                        }
+                    }
+                }
+            }
+        }
+
+        // For inner join, only include if all symbols have data
+        if mode == AlignMode::Inner && !all_present {
+            continue;
+        }
+
+        result.push(AlignedBars {
+            timestamp: ts,
+            bars: bars_at_ts,
+        });
+    }
+
+    result
+}
+
+/// Convert aligned bars back to separate series.
+///
+/// This is useful after alignment to get back individual bar vectors.
+pub fn unalign_series(aligned: &[AlignedBars], symbol: &str) -> Vec<Bar> {
+    aligned
+        .iter()
+        .filter_map(|ab| ab.get(symbol).cloned())
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1325,5 +1853,409 @@ mod tests {
 
         assert!(dm.contains("TEST_CSV"));
         assert_eq!(dm.get("TEST_CSV").unwrap().len(), 5);
+    }
+
+    // =========================================================================
+    // Resampling Tests
+    // =========================================================================
+
+    fn create_minute_bars() -> Vec<Bar> {
+        // Create 60 minute bars (1 hour of data)
+        (0..60)
+            .map(|i| {
+                let ts = Utc.with_ymd_and_hms(2024, 1, 1, 9, i, 0).unwrap();
+                let base_price = 100.0 + (i as f64 * 0.1);
+                Bar::new(
+                    ts,
+                    base_price,
+                    base_price + 0.5,
+                    base_price - 0.3,
+                    base_price + 0.2,
+                    1000.0 + (i as f64 * 10.0),
+                )
+            })
+            .collect()
+    }
+
+    #[test]
+    fn test_resample_minute_to_5min() {
+        let bars = create_minute_bars();
+        let resampled = resample(&bars, ResampleInterval::Minute(5));
+
+        // 60 minutes -> 12 five-minute bars
+        assert_eq!(resampled.len(), 12);
+
+        // Check first bar aggregation
+        let first = &resampled[0];
+        assert_eq!(first.open, 100.0); // First minute's open
+        assert_eq!(first.close, 100.0 + 0.2 + 4.0 * 0.1); // Fifth minute's close (i=4)
+
+        // High should be max of first 5 bars
+        let expected_high = (0..5)
+            .map(|i| 100.0 + (i as f64 * 0.1) + 0.5)
+            .fold(f64::NEG_INFINITY, f64::max);
+        assert!((first.high - expected_high).abs() < 0.001);
+
+        // Volume should be sum
+        let expected_vol: f64 = (0..5).map(|i| 1000.0 + (i as f64 * 10.0)).sum();
+        assert!((first.volume - expected_vol).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_resample_minute_to_hour() {
+        let bars = create_minute_bars();
+        let resampled = resample(&bars, ResampleInterval::Hour(1));
+
+        // 60 minutes -> 1 hour bar
+        assert_eq!(resampled.len(), 1);
+
+        let bar = &resampled[0];
+        assert_eq!(bar.open, 100.0);
+        assert!((bar.close - (100.0 + 0.2 + 59.0 * 0.1)).abs() < 0.001);
+
+        // Volume should be sum of all 60 bars
+        let expected_vol: f64 = (0..60).map(|i| 1000.0 + (i as f64 * 10.0)).sum();
+        assert!((bar.volume - expected_vol).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_resample_daily_to_weekly() {
+        // Create 14 daily bars (2 weeks)
+        let bars: Vec<Bar> = (0..14)
+            .map(|i| {
+                let ts =
+                    Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap() + chrono::Duration::days(i);
+                Bar::new(
+                    ts,
+                    100.0 + i as f64,
+                    105.0 + i as f64,
+                    95.0 + i as f64,
+                    102.0 + i as f64,
+                    1000.0,
+                )
+            })
+            .collect();
+
+        let resampled = resample(&bars, ResampleInterval::Week);
+
+        // Should have 3 weeks (partial week at start, full week, partial at end)
+        // Week 1 of 2024 starts Jan 1 (Monday)
+        assert!(resampled.len() >= 2);
+
+        // Each resampled bar should have proper OHLC aggregation
+        for bar in &resampled {
+            assert!(bar.high >= bar.low);
+            assert!(bar.high >= bar.open);
+            assert!(bar.high >= bar.close);
+        }
+    }
+
+    #[test]
+    fn test_resample_empty() {
+        let bars: Vec<Bar> = Vec::new();
+        let resampled = resample(&bars, ResampleInterval::Day);
+        assert!(resampled.is_empty());
+    }
+
+    #[test]
+    fn test_resample_interval_to_seconds() {
+        assert_eq!(ResampleInterval::Minute(5).to_seconds(), Some(300));
+        assert_eq!(ResampleInterval::Hour(1).to_seconds(), Some(3600));
+        assert_eq!(ResampleInterval::Day.to_seconds(), Some(86400));
+        assert_eq!(ResampleInterval::Week.to_seconds(), Some(604800));
+        assert_eq!(ResampleInterval::Month.to_seconds(), None);
+    }
+
+    // =========================================================================
+    // Gap Detection Tests
+    // =========================================================================
+
+    fn create_bars_with_gap() -> Vec<Bar> {
+        // Create bars with a 3-day gap
+        vec![
+            Bar::new(
+                Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap(),
+                100.0,
+                105.0,
+                98.0,
+                102.0,
+                1000.0,
+            ),
+            Bar::new(
+                Utc.with_ymd_and_hms(2024, 1, 2, 0, 0, 0).unwrap(),
+                102.0,
+                108.0,
+                101.0,
+                107.0,
+                1200.0,
+            ),
+            // Gap: Jan 3, 4, 5 missing
+            Bar::new(
+                Utc.with_ymd_and_hms(2024, 1, 6, 0, 0, 0).unwrap(),
+                108.0,
+                112.0,
+                106.0,
+                110.0,
+                900.0,
+            ),
+            Bar::new(
+                Utc.with_ymd_and_hms(2024, 1, 7, 0, 0, 0).unwrap(),
+                110.0,
+                115.0,
+                108.0,
+                112.0,
+                1100.0,
+            ),
+        ]
+    }
+
+    #[test]
+    fn test_detect_gaps() {
+        let bars = create_bars_with_gap();
+        let gaps = detect_gaps(&bars, 86400); // Daily interval
+
+        assert_eq!(gaps.len(), 1);
+
+        let gap = &gaps[0];
+        assert_eq!(
+            gap.start,
+            Utc.with_ymd_and_hms(2024, 1, 2, 0, 0, 0).unwrap()
+        );
+        assert_eq!(gap.end, Utc.with_ymd_and_hms(2024, 1, 6, 0, 0, 0).unwrap());
+        assert_eq!(gap.expected_bars, 3); // Jan 3, 4, 5
+    }
+
+    #[test]
+    fn test_detect_gaps_no_gaps() {
+        let bars = create_test_bars();
+        let gaps = detect_gaps(&bars, 86400); // Daily interval
+
+        assert!(gaps.is_empty());
+    }
+
+    #[test]
+    fn test_fill_gaps_forward_fill() {
+        let bars = create_bars_with_gap();
+        let filled = fill_gaps(&bars, 86400, FillMethod::ForwardFill);
+
+        assert_eq!(filled.len(), 7); // Original 4 + 3 filled
+
+        // Check filled bars use previous close
+        let filled_bar = &filled[2]; // First filled bar (Jan 3)
+        assert_eq!(filled_bar.open, 107.0); // Previous close
+        assert_eq!(filled_bar.close, 107.0);
+        assert_eq!(filled_bar.volume, 0.0); // Zero volume for fills
+    }
+
+    #[test]
+    fn test_fill_gaps_backward_fill() {
+        let bars = create_bars_with_gap();
+        let filled = fill_gaps(&bars, 86400, FillMethod::BackwardFill);
+
+        assert_eq!(filled.len(), 7);
+
+        // Check filled bars use next open
+        let filled_bar = &filled[2]; // First filled bar
+        assert_eq!(filled_bar.open, 108.0); // Next open
+        assert_eq!(filled_bar.close, 108.0);
+    }
+
+    #[test]
+    fn test_fill_gaps_linear() {
+        let bars = create_bars_with_gap();
+        let filled = fill_gaps(&bars, 86400, FillMethod::Linear);
+
+        assert_eq!(filled.len(), 7);
+
+        // Check interpolated values
+        // Gap from close=107 to open=108
+        // With 3 fill bars, t = 1/4, 2/4, 3/4
+        let filled_bar = &filled[2]; // t = 0.25
+        let expected_price = 107.0 * 0.75 + 108.0 * 0.25;
+        assert!((filled_bar.close - expected_price).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_data_quality_report() {
+        let bars = create_bars_with_gap();
+        let report = data_quality_report(&bars, 86400);
+
+        assert_eq!(report.total_bars, 4);
+        assert_eq!(report.gaps.len(), 1);
+        assert!(report.gap_percentage > 0.0);
+        assert_eq!(report.invalid_bars, 0);
+        assert!(!report.is_acceptable()); // Has gaps
+    }
+
+    #[test]
+    fn test_data_quality_report_clean_data() {
+        let bars = create_test_bars();
+        let report = data_quality_report(&bars, 86400);
+
+        assert!(report.is_acceptable());
+        assert!(report.gaps.is_empty());
+    }
+
+    // =========================================================================
+    // Alignment Tests
+    // =========================================================================
+
+    fn create_series_a() -> Vec<Bar> {
+        vec![
+            Bar::new(
+                Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap(),
+                100.0,
+                105.0,
+                98.0,
+                102.0,
+                1000.0,
+            ),
+            Bar::new(
+                Utc.with_ymd_and_hms(2024, 1, 2, 0, 0, 0).unwrap(),
+                102.0,
+                108.0,
+                101.0,
+                107.0,
+                1200.0,
+            ),
+            Bar::new(
+                Utc.with_ymd_and_hms(2024, 1, 3, 0, 0, 0).unwrap(),
+                107.0,
+                110.0,
+                105.0,
+                108.0,
+                1100.0,
+            ),
+        ]
+    }
+
+    fn create_series_b() -> Vec<Bar> {
+        vec![
+            Bar::new(
+                Utc.with_ymd_and_hms(2024, 1, 2, 0, 0, 0).unwrap(),
+                50.0,
+                55.0,
+                48.0,
+                52.0,
+                500.0,
+            ),
+            Bar::new(
+                Utc.with_ymd_and_hms(2024, 1, 3, 0, 0, 0).unwrap(),
+                52.0,
+                58.0,
+                51.0,
+                57.0,
+                600.0,
+            ),
+            Bar::new(
+                Utc.with_ymd_and_hms(2024, 1, 4, 0, 0, 0).unwrap(),
+                57.0,
+                60.0,
+                55.0,
+                58.0,
+                550.0,
+            ),
+        ]
+    }
+
+    #[test]
+    fn test_align_series_inner() {
+        let series_a = create_series_a();
+        let series_b = create_series_b();
+
+        let aligned = align_series(&[("A", &series_a), ("B", &series_b)], AlignMode::Inner);
+
+        // Only Jan 2 and Jan 3 are common
+        assert_eq!(aligned.len(), 2);
+
+        // Check first aligned point (Jan 2)
+        let first = &aligned[0];
+        assert_eq!(
+            first.timestamp,
+            Utc.with_ymd_and_hms(2024, 1, 2, 0, 0, 0).unwrap()
+        );
+        assert!(first.is_complete());
+        assert_eq!(first.get("A").unwrap().close, 107.0);
+        assert_eq!(first.get("B").unwrap().close, 52.0);
+    }
+
+    #[test]
+    fn test_align_series_outer_none() {
+        let series_a = create_series_a();
+        let series_b = create_series_b();
+
+        let aligned = align_series(&[("A", &series_a), ("B", &series_b)], AlignMode::OuterNone);
+
+        // All 4 unique dates
+        assert_eq!(aligned.len(), 4);
+
+        // Jan 1 - only A has data
+        let jan1 = &aligned[0];
+        assert!(jan1.get("A").is_some());
+        assert!(jan1.get("B").is_none());
+
+        // Jan 4 - only B has data
+        let jan4 = &aligned[3];
+        assert!(jan4.get("A").is_none());
+        assert!(jan4.get("B").is_some());
+    }
+
+    #[test]
+    fn test_align_series_outer_forward_fill() {
+        let series_a = create_series_a();
+        let series_b = create_series_b();
+
+        let aligned = align_series(
+            &[("A", &series_a), ("B", &series_b)],
+            AlignMode::OuterForwardFill,
+        );
+
+        assert_eq!(aligned.len(), 4);
+
+        // Jan 1 - B should have None (no previous value to forward fill)
+        let jan1 = &aligned[0];
+        assert!(jan1.get("A").is_some());
+        assert!(jan1.get("B").is_none());
+
+        // Jan 4 - A should be forward filled from Jan 3
+        let jan4 = &aligned[3];
+        let a_bar = jan4.get("A").unwrap();
+        assert_eq!(a_bar.close, 108.0); // Forward filled from Jan 3 close
+        assert_eq!(a_bar.volume, 0.0); // Filled bars have zero volume
+    }
+
+    #[test]
+    fn test_unalign_series() {
+        let series_a = create_series_a();
+        let series_b = create_series_b();
+
+        let aligned = align_series(&[("A", &series_a), ("B", &series_b)], AlignMode::Inner);
+        let unaligned_a = unalign_series(&aligned, "A");
+
+        assert_eq!(unaligned_a.len(), 2);
+        assert_eq!(unaligned_a[0].close, 107.0);
+        assert_eq!(unaligned_a[1].close, 108.0);
+    }
+
+    #[test]
+    fn test_align_series_empty() {
+        let aligned = align_series(&[], AlignMode::Inner);
+        assert!(aligned.is_empty());
+    }
+
+    #[test]
+    fn test_aligned_bars_is_complete() {
+        let series_a = create_series_a();
+        let series_b = create_series_b();
+
+        let aligned = align_series(&[("A", &series_a), ("B", &series_b)], AlignMode::OuterNone);
+
+        // Jan 2 should be complete
+        let jan2 = &aligned[1];
+        assert!(jan2.is_complete());
+
+        // Jan 1 should not be complete
+        let jan1 = &aligned[0];
+        assert!(!jan1.is_complete());
     }
 }

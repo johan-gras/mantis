@@ -2,7 +2,9 @@
 
 use mantis::analytics::ResultFormatter;
 use mantis::config::BacktestFileConfig;
-use mantis::data::{load_csv, load_data, load_parquet, DataConfig};
+use mantis::data::{
+    data_quality_report, load_csv, load_data, load_parquet, resample, DataConfig, ResampleInterval,
+};
 use mantis::engine::{BacktestConfig, Engine};
 use mantis::error::Result;
 use mantis::features::{FeatureConfig, FeatureExtractor, TimeSeriesSplitter};
@@ -168,6 +170,40 @@ pub enum Commands {
         #[arg(long, default_value = "0.15")]
         validation_ratio: f64,
     },
+
+    /// Resample time-series data to a different interval
+    Resample {
+        /// Path to input data file (CSV or Parquet)
+        #[arg(short, long)]
+        input: PathBuf,
+
+        /// Path to output file
+        #[arg(short, long)]
+        output: PathBuf,
+
+        /// Target resampling interval
+        #[arg(short = 'I', long, value_enum)]
+        interval: ResampleIntervalArg,
+
+        /// Data file format (auto-detects from extension if not specified)
+        #[arg(short, long, value_enum, default_value = "auto")]
+        format: DataFormatArg,
+    },
+
+    /// Generate a data quality report
+    Quality {
+        /// Path to data file (CSV or Parquet)
+        #[arg(short, long)]
+        data: PathBuf,
+
+        /// Expected interval between bars in seconds (e.g., 60 for 1-minute, 86400 for daily)
+        #[arg(short = 'I', long)]
+        interval_seconds: i64,
+
+        /// Data file format (auto-detects from extension if not specified)
+        #[arg(short, long, value_enum, default_value = "auto")]
+        format: DataFormatArg,
+    },
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, ValueEnum)]
@@ -210,6 +246,54 @@ pub enum DataFormatArg {
     Csv,
     /// Force Parquet format
     Parquet,
+}
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq, ValueEnum)]
+pub enum ResampleIntervalArg {
+    /// 1 minute
+    #[value(name = "1m")]
+    OneMinute,
+    /// 5 minutes
+    #[value(name = "5m")]
+    FiveMinutes,
+    /// 15 minutes
+    #[value(name = "15m")]
+    FifteenMinutes,
+    /// 30 minutes
+    #[value(name = "30m")]
+    ThirtyMinutes,
+    /// 1 hour
+    #[value(name = "1h")]
+    OneHour,
+    /// 4 hours
+    #[value(name = "4h")]
+    FourHours,
+    /// 1 day (daily)
+    #[value(name = "1d")]
+    OneDay,
+    /// 1 week (weekly)
+    #[value(name = "1w")]
+    OneWeek,
+    /// 1 month (monthly)
+    #[value(name = "1M")]
+    OneMonth,
+}
+
+impl ResampleIntervalArg {
+    /// Convert CLI argument to ResampleInterval.
+    fn to_interval(self) -> ResampleInterval {
+        match self {
+            ResampleIntervalArg::OneMinute => ResampleInterval::Minute(1),
+            ResampleIntervalArg::FiveMinutes => ResampleInterval::Minute(5),
+            ResampleIntervalArg::FifteenMinutes => ResampleInterval::Minute(15),
+            ResampleIntervalArg::ThirtyMinutes => ResampleInterval::Minute(30),
+            ResampleIntervalArg::OneHour => ResampleInterval::Hour(1),
+            ResampleIntervalArg::FourHours => ResampleInterval::Hour(4),
+            ResampleIntervalArg::OneDay => ResampleInterval::Day,
+            ResampleIntervalArg::OneWeek => ResampleInterval::Week,
+            ResampleIntervalArg::OneMonth => ResampleInterval::Month,
+        }
+    }
 }
 
 /// Load data based on format argument.
@@ -316,6 +400,19 @@ pub fn run() -> Result<()> {
             *train_ratio,
             *validation_ratio,
         ),
+
+        Commands::Resample {
+            input,
+            output,
+            interval,
+            format,
+        } => resample_data(input, output, *interval, *format),
+
+        Commands::Quality {
+            data,
+            interval_seconds,
+            format,
+        } => run_quality_report(data, *interval_seconds, *format),
     }
 }
 
@@ -731,6 +828,139 @@ fn extract_features(
         "  train_df = pd.read_csv('{}/train.csv')",
         output_dir.display()
     );
+
+    Ok(())
+}
+
+fn resample_data(
+    input_path: &PathBuf,
+    output_path: &PathBuf,
+    interval: ResampleIntervalArg,
+    format: DataFormatArg,
+) -> Result<()> {
+    info!("Loading data from: {}", input_path.display());
+    let bars = load_data_with_format(input_path, &DataConfig::default(), format)?;
+
+    println!("Loaded {} bars from input file", bars.len());
+
+    let target_interval = interval.to_interval();
+    let resampled = resample(&bars, target_interval);
+
+    println!(
+        "Resampled to {} bars at {:?} interval",
+        resampled.len(),
+        target_interval
+    );
+
+    // Write output based on file extension
+    let ext = output_path
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("csv")
+        .to_lowercase();
+
+    match ext.as_str() {
+        "csv" => {
+            // Create a simple CSV writer
+            use std::io::Write;
+            let mut file = fs::File::create(output_path)?;
+            writeln!(file, "timestamp,open,high,low,close,volume")?;
+            for bar in &resampled {
+                writeln!(
+                    file,
+                    "{},{},{},{},{},{}",
+                    bar.timestamp.format("%Y-%m-%d %H:%M:%S"),
+                    bar.open,
+                    bar.high,
+                    bar.low,
+                    bar.close,
+                    bar.volume
+                )?;
+            }
+            println!("Saved to: {}", output_path.display());
+        }
+        "parquet" | "pq" => {
+            // Parquet OHLCV export is not directly supported yet
+            // Users should use CSV format for resampled data
+            return Err(mantis::BacktestError::DataError(
+                "Parquet output for resampled OHLCV data is not yet supported. Use .csv extension instead.".to_string()
+            ));
+        }
+        _ => {
+            return Err(mantis::BacktestError::DataError(format!(
+                "Unsupported output format: {}. Use .csv or .parquet",
+                ext
+            )));
+        }
+    }
+
+    Ok(())
+}
+
+fn run_quality_report(
+    data_path: &PathBuf,
+    interval_seconds: i64,
+    format: DataFormatArg,
+) -> Result<()> {
+    info!("Loading data from: {}", data_path.display());
+    let bars = load_data_with_format(data_path, &DataConfig::default(), format)?;
+
+    println!("Analyzing data quality...\n");
+
+    let report = data_quality_report(&bars, interval_seconds);
+
+    println!("Data Quality Report");
+    println!("===================");
+    println!("Total bars: {}", report.total_bars);
+    println!(
+        "Expected interval: {} seconds ({:.1} minutes / {:.2} hours)",
+        report.expected_interval_seconds,
+        report.expected_interval_seconds as f64 / 60.0,
+        report.expected_interval_seconds as f64 / 3600.0
+    );
+    println!();
+
+    if !bars.is_empty() {
+        println!(
+            "Date range: {} to {}",
+            bars.first().unwrap().timestamp,
+            bars.last().unwrap().timestamp
+        );
+        println!();
+    }
+
+    println!("Gaps: {} detected", report.gaps.len());
+    if !report.gaps.is_empty() {
+        println!("Gap percentage: {:.2}%", report.gap_percentage);
+        println!();
+        println!("Gap Details:");
+        for (i, gap) in report.gaps.iter().enumerate().take(10) {
+            println!(
+                "  {}. {} to {} ({} bars missing)",
+                i + 1,
+                gap.start.format("%Y-%m-%d %H:%M:%S"),
+                gap.end.format("%Y-%m-%d %H:%M:%S"),
+                gap.expected_bars
+            );
+        }
+        if report.gaps.len() > 10 {
+            println!("  ... and {} more gaps", report.gaps.len() - 10);
+        }
+        println!();
+    }
+
+    println!("Invalid bars: {}", report.invalid_bars);
+    println!(
+        "Duplicate timestamps: {} (removed during loading)",
+        report.duplicate_timestamps
+    );
+    println!();
+
+    if report.is_acceptable() {
+        println!("Status: GOOD - Data quality is acceptable");
+    } else {
+        println!("Status: ISSUES DETECTED - Review gaps and invalid bars");
+    }
 
     Ok(())
 }

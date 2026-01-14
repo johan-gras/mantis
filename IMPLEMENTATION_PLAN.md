@@ -4,7 +4,7 @@
 
 | Metric | Status |
 |--------|--------|
-| **Tests** | 182 passing (149 unit + 2 CLI + 28 integration + 3 doc-tests) |
+| **Tests** | 197 passing (167 unit + 2 CLI + 28 integration + 3 doc-tests) |
 | **Clippy** | 0 errors (PASSING) |
 | **Cargo fmt** | PASSING |
 
@@ -76,94 +76,38 @@ These features are explicitly required in the spec but not implemented.
 - CLI support via `--format` option (auto/csv/parquet) on the Run command
 - Comprehensive tests: `test_load_parquet`, `test_load_parquet_matches_csv`, `test_load_data_auto_detect`, `test_data_format_detection`, `test_data_manager_parquet`, `test_data_manager_auto_detect`
 
-### 2.3 Time-Series Alignment and Resampling
+### 2.3 Time-Series Alignment and Resampling - COMPLETE
 
 **Spec requirement:** "Time-series alignment and resampling" (backtest-engine.md line 19)
 
 **Location:** `src/data.rs`
 
-**Current state:** No alignment or resampling functions exist
+**Implementation Summary:**
+- `ResampleInterval` enum with Minute(u32), Hour(u32), Day, Week, Month variants
+- `resample()` function for OHLCV aggregation with standard rules (first open, max high, min low, last close, sum volume)
+- `AlignMode` enum: Inner (common timestamps only), OuterForwardFill, OuterNone
+- `AlignedBars` struct for aligned multi-symbol data at a single timestamp
+- `align_series()` function for aligning multiple symbol series to common timestamps
+- `unalign_series()` helper to extract individual symbol data from aligned result
+- CLI support via `mantis resample -i input.csv -o output.csv -I 1h` command
+- Supported intervals: 1m, 5m, 15m, 30m, 1h, 4h, 1d, 1w, 1M
+- Tests: `test_resample_minute_to_5min`, `test_resample_minute_to_hour`, `test_resample_daily_to_weekly`, `test_resample_empty`, `test_resample_interval_to_seconds`, `test_align_series_inner`, `test_align_series_outer_none`, `test_align_series_outer_forward_fill`, `test_unalign_series`, `test_align_series_empty`, `test_aligned_bars_is_complete`
 
-**Implementation tasks:**
-1. Add resampling module or extend `src/data.rs`:
-   ```rust
-   pub enum ResampleInterval {
-       Minute(u32),  // e.g., 5, 15, 30
-       Hour(u32),
-       Day,
-       Week,
-       Month,
-   }
-
-   pub fn resample(bars: &[Bar], target: ResampleInterval) -> Vec<Bar>
-   ```
-
-2. Implement OHLCV aggregation logic:
-   - Open: first bar's open
-   - High: maximum high
-   - Low: minimum low
-   - Close: last bar's close
-   - Volume: sum of volumes
-
-3. Add alignment function for multi-symbol data:
-   ```rust
-   pub fn align_series(series: &[(&str, &[Bar])]) -> HashMap<DateTime<Utc>, HashMap<String, Bar>>
-   ```
-
-4. Support different alignment modes:
-   - Inner join (only timestamps present in all series)
-   - Outer join with forward-fill
-   - Outer join with NaN/None handling
-
-5. Add CLI support: `mantis resample --input 1min.csv --output 1h.csv --interval 1h`
-
-### 2.4 Missing Data Handling
+### 2.4 Missing Data Handling - COMPLETE
 
 **Spec requirement:** "Missing data handling" (backtest-engine.md line 20)
 
 **Location:** `src/data.rs`
 
-**Current state:** No gap detection or filling functionality
-
-**Implementation tasks:**
-1. Add gap detection:
-   ```rust
-   pub struct DataGap {
-       pub start: DateTime<Utc>,
-       pub end: DateTime<Utc>,
-       pub expected_bars: usize,
-   }
-
-   pub fn detect_gaps(bars: &[Bar], expected_interval: Duration) -> Vec<DataGap>
-   ```
-
-2. Add fill methods:
-   ```rust
-   pub enum FillMethod {
-       ForwardFill,
-       BackwardFill,
-       Linear,      // Linear interpolation for OHLC
-       Zero,        // Fill with zeros (for volume)
-       Drop,        // Remove periods with gaps
-   }
-
-   pub fn fill_gaps(bars: &[Bar], expected_interval: Duration, method: FillMethod) -> Vec<Bar>
-   ```
-
-3. Add data quality report:
-   ```rust
-   pub struct DataQualityReport {
-       pub total_bars: usize,
-       pub gaps: Vec<DataGap>,
-       pub gap_percentage: f64,
-       pub duplicate_timestamps: usize,
-       pub invalid_bars: usize,  // e.g., high < low
-   }
-
-   pub fn data_quality_report(bars: &[Bar], expected_interval: Duration) -> DataQualityReport
-   ```
-
-4. Integration with `DataManager::load()` - option to auto-fill or report gaps
+**Implementation Summary:**
+- `DataGap` struct with start, end timestamps and expected_bars count
+- `FillMethod` enum: ForwardFill, BackwardFill, Linear, Zero
+- `DataQualityReport` struct with total_bars, gaps, gap_percentage, duplicate_timestamps, invalid_bars
+- `detect_gaps()` function to find gaps in time series based on expected interval
+- `fill_gaps()` function to fill gaps using specified method
+- `data_quality_report()` function for comprehensive data quality analysis
+- CLI support via `mantis quality -d data.csv -I 86400` command (interval in seconds)
+- Tests: `test_detect_gaps`, `test_detect_gaps_no_gaps`, `test_fill_gaps_forward_fill`, `test_fill_gaps_backward_fill`, `test_fill_gaps_linear`, `test_data_quality_report`, `test_data_quality_report_clean_data`
 
 ### 2.5 Corporate Actions Support
 
@@ -623,10 +567,10 @@ fn get_mean_reversion_param_ranges() -> Vec<ParamRange> {
 ### Phase 1: Fix Acceptance Criteria - COMPLETE
 All clippy errors fixed and code formatted. Verification passes.
 
-### Phase 2: Core Data Features
+### Phase 2: Core Data Features - COMPLETE
 1. ~~Implement Parquet loading (2.2)~~ - COMPLETE
-2. Implement time-series alignment/resampling (2.3)
-3. Implement missing data handling (2.4)
+2. ~~Implement time-series alignment/resampling (2.3)~~ - COMPLETE
+3. ~~Implement missing data handling (2.4)~~ - COMPLETE
 
 ### Phase 3: Analytics and Benchmarks
 1. Add benchmark comparison (2.1)
@@ -668,7 +612,7 @@ The following spec requirements are fully implemented and verified:
 - [x] Configuration via files and arguments
 - [x] Progress reporting (indicatif progress bars)
 - [x] Output in multiple formats
-- [x] Comprehensive test coverage (176 tests)
+- [x] Comprehensive test coverage (197 tests)
 - [x] Stop-loss, take-profit, trailing stops (`src/risk.rs`)
 - [x] Position sizing (risk-based, volatility-based, Kelly)
 - [x] Monte Carlo simulation (`src/monte_carlo.rs`)
@@ -677,6 +621,9 @@ The following spec requirements are fully implemented and verified:
 - [x] Streaming/incremental indicators (`src/streaming.rs`)
 - [x] Example strategies (7 types + ML variants)
 - [x] Realistic order execution simulation (market, limit, stop, stop-limit orders)
+- [x] Time-series resampling (minute to hourly/daily/weekly/monthly)
+- [x] Multi-symbol time-series alignment (inner join, outer join with forward fill)
+- [x] Missing data handling (gap detection, fill methods, data quality reports)
 
 ---
 
