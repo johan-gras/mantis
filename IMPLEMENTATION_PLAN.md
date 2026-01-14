@@ -4,7 +4,7 @@
 
 | Metric | Status |
 |--------|--------|
-| **Tests** | 197 passing (167 unit + 2 CLI + 28 integration + 3 doc-tests) |
+| **Tests** | 205 passing (175 unit + 2 CLI + 28 integration + 3 doc-tests) |
 | **Clippy** | 0 errors (PASSING) |
 | **Cargo fmt** | PASSING |
 
@@ -26,40 +26,33 @@ Code has been formatted. Verification: `cargo fmt --check` passes.
 
 These features are explicitly required in the spec but not implemented.
 
-### 2.1 Benchmark Comparison for Analytics
+### 2.1 Benchmark Comparison for Analytics - COMPLETE
 
 **Spec requirement:** "Benchmark comparison" (backtest-engine.md line 28)
 
 **Location:** `src/analytics.rs`
 
-**Current state:** Completely absent - no benchmark-related code exists
-
-**Implementation tasks:**
-1. Add new `BenchmarkMetrics` struct with fields:
-   - `alpha: f64` - Jensen's alpha
-   - `beta: f64` - Portfolio beta to benchmark
-   - `tracking_error: f64` - Standard deviation of excess returns
-   - `information_ratio: f64` - Risk-adjusted excess return
-   - `correlation: f64` - Correlation with benchmark
-   - `up_capture: f64` - Upside capture ratio
-   - `down_capture: f64` - Downside capture ratio
-
-2. Add benchmark loading capability:
-   - Extend `BacktestResult` with `benchmark_returns: Option<Vec<f64>>`
-   - Add `BenchmarkConfig` to `BacktestConfig`
-   - Support benchmark data loading via CLI (`--benchmark <path>`)
-
-3. Implement calculation functions in `analytics.rs`:
-   ```rust
-   fn calculate_alpha(portfolio_returns: &[f64], benchmark_returns: &[f64], risk_free_rate: f64) -> f64
-   fn calculate_beta(portfolio_returns: &[f64], benchmark_returns: &[f64]) -> f64
-   fn calculate_tracking_error(portfolio_returns: &[f64], benchmark_returns: &[f64]) -> f64
-   fn calculate_information_ratio(alpha: f64, tracking_error: f64) -> f64
-   ```
-
-4. Add benchmark comparison to `ResultFormatter::print_report()`
-
-5. Add benchmark column to export functions in `src/export.rs`
+**Implementation Summary:**
+- `BenchmarkMetrics` struct with all required fields:
+  - `alpha: f64` - Jensen's alpha (annualized, as percentage)
+  - `beta: f64` - Portfolio beta to benchmark
+  - `tracking_error: f64` - Standard deviation of excess returns (annualized, as percentage)
+  - `information_ratio: f64` - Risk-adjusted excess return (annualized)
+  - `correlation: f64` - Correlation coefficient with benchmark
+  - `up_capture: f64` - Upside capture ratio (percentage)
+  - `down_capture: f64` - Downside capture ratio (percentage)
+  - `benchmark_return_pct: f64` - Benchmark total return
+  - `excess_return_pct: f64` - Portfolio excess return over benchmark
+- `BenchmarkMetrics::calculate()` method to compute all metrics from aligned return series
+- `BenchmarkMetrics::extract_daily_returns()` to extract actual returns from equity curves
+- `BenchmarkMetrics::extract_returns_from_prices()` to extract returns from price series
+- `ResultFormatter::print_benchmark_comparison()` for terminal output
+- `ResultFormatter::print_report_with_benchmark()` for full report with optional benchmark
+- Tests: `test_benchmark_metrics_calculation`, `test_benchmark_metrics_perfect_correlation`,
+  `test_benchmark_metrics_empty_returns`, `test_benchmark_metrics_mismatched_lengths`,
+  `test_extract_daily_returns`, `test_extract_returns_from_prices`,
+  `test_capture_ratios_all_up_market`, `test_benchmark_serialization`
+- Re-exported in `lib.rs` for public API access
 
 ### 2.2 Parquet Data Loading - COMPLETE
 
@@ -573,7 +566,7 @@ All clippy errors fixed and code formatted. Verification passes.
 3. ~~Implement missing data handling (2.4)~~ - COMPLETE
 
 ### Phase 3: Analytics and Benchmarks
-1. Add benchmark comparison (2.1)
+1. ~~Add benchmark comparison (2.1)~~ - COMPLETE
 2. Fix daily returns calculation (3.1)
 3. Fix drawdown analysis (3.2)
 
@@ -612,7 +605,7 @@ The following spec requirements are fully implemented and verified:
 - [x] Configuration via files and arguments
 - [x] Progress reporting (indicatif progress bars)
 - [x] Output in multiple formats
-- [x] Comprehensive test coverage (197 tests)
+- [x] Comprehensive test coverage (205 tests)
 - [x] Stop-loss, take-profit, trailing stops (`src/risk.rs`)
 - [x] Position sizing (risk-based, volatility-based, Kelly)
 - [x] Monte Carlo simulation (`src/monte_carlo.rs`)
@@ -624,6 +617,7 @@ The following spec requirements are fully implemented and verified:
 - [x] Time-series resampling (minute to hourly/daily/weekly/monthly)
 - [x] Multi-symbol time-series alignment (inner join, outer join with forward fill)
 - [x] Missing data handling (gap detection, fill methods, data quality reports)
+- [x] Benchmark comparison metrics (alpha, beta, tracking error, information ratio, correlation, capture ratios)
 
 ---
 
