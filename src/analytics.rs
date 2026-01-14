@@ -2,8 +2,10 @@
 
 use crate::engine::BacktestResult;
 use crate::types::Trade;
+use chrono::Datelike;
 use colored::Colorize;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use tabled::{builder::Builder, settings::Style};
 
 /// Benchmark comparison metrics.
@@ -422,8 +424,38 @@ impl PerformanceMetrics {
             .collect()
     }
 
+    /// Calculate actual daily returns from the equity curve.
+    /// This provides meaningful volatility calculations by using real equity changes
+    /// instead of synthetic uniform returns.
     fn calculate_daily_returns(result: &BacktestResult) -> Vec<f64> {
-        // Approximate daily returns from total return and trading days
+        // Use actual equity curve if available
+        if result.equity_curve.len() >= 2 {
+            // Group equity points by day and take the last equity value for each day.
+            // This handles both daily and intraday data correctly.
+            let mut daily_equity: BTreeMap<(i32, u32, u32), f64> = BTreeMap::new();
+            for point in &result.equity_curve {
+                let key = (
+                    point.timestamp.year(),
+                    point.timestamp.month(),
+                    point.timestamp.day(),
+                );
+                // BTreeMap::insert overwrites, so we keep the last value for each day
+                daily_equity.insert(key, point.equity);
+            }
+
+            // Convert to vector of daily equity values (sorted by date due to BTreeMap)
+            let equity_values: Vec<f64> = daily_equity.values().copied().collect();
+
+            // Calculate returns between consecutive days
+            if equity_values.len() >= 2 {
+                return equity_values
+                    .windows(2)
+                    .map(|w| (w[1] - w[0]) / w[0])
+                    .collect();
+            }
+        }
+
+        // Fallback to synthetic returns only if equity curve is unavailable or too small
         if result.trading_days <= 1 {
             return vec![];
         }
@@ -1080,5 +1112,331 @@ mod tests {
         let deserialized: BenchmarkMetrics = serde_json::from_str(&json).unwrap();
         assert_eq!(deserialized.benchmark_name, "SPY");
         assert!((deserialized.beta - metrics.beta).abs() < 0.0001);
+    }
+
+    #[test]
+    fn test_calculate_daily_returns_from_equity_curve() {
+        use crate::types::EquityPoint;
+
+        let start = Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap();
+        let end = Utc.with_ymd_and_hms(2024, 1, 5, 0, 0, 0).unwrap();
+
+        // Create an equity curve with varying daily returns
+        let equity_curve = vec![
+            EquityPoint {
+                timestamp: Utc.with_ymd_and_hms(2024, 1, 1, 16, 0, 0).unwrap(),
+                equity: 100000.0,
+                cash: 50000.0,
+                positions_value: 50000.0,
+                drawdown: 0.0,
+                drawdown_pct: 0.0,
+            },
+            EquityPoint {
+                timestamp: Utc.with_ymd_and_hms(2024, 1, 2, 16, 0, 0).unwrap(),
+                equity: 102000.0, // +2%
+                cash: 51000.0,
+                positions_value: 51000.0,
+                drawdown: 0.0,
+                drawdown_pct: 0.0,
+            },
+            EquityPoint {
+                timestamp: Utc.with_ymd_and_hms(2024, 1, 3, 16, 0, 0).unwrap(),
+                equity: 99000.0, // -2.94%
+                cash: 49500.0,
+                positions_value: 49500.0,
+                drawdown: 3000.0,
+                drawdown_pct: 2.94,
+            },
+            EquityPoint {
+                timestamp: Utc.with_ymd_and_hms(2024, 1, 4, 16, 0, 0).unwrap(),
+                equity: 103000.0, // +4.04%
+                cash: 51500.0,
+                positions_value: 51500.0,
+                drawdown: 0.0,
+                drawdown_pct: 0.0,
+            },
+            EquityPoint {
+                timestamp: Utc.with_ymd_and_hms(2024, 1, 5, 16, 0, 0).unwrap(),
+                equity: 101000.0, // -1.94%
+                cash: 50500.0,
+                positions_value: 50500.0,
+                drawdown: 2000.0,
+                drawdown_pct: 1.94,
+            },
+        ];
+
+        let mut trade = Trade::open("TEST", Side::Buy, 100.0, 100.0, start, 1.0, 0.0);
+        trade.close(101.0, end, 1.0);
+
+        let result = BacktestResult {
+            strategy_name: "TestStrategy".to_string(),
+            symbols: vec!["TEST".to_string()],
+            config: BacktestConfig::default(),
+            initial_capital: 100000.0,
+            final_equity: 101000.0,
+            total_return_pct: 1.0,
+            annual_return_pct: 1.0,
+            trading_days: 5,
+            total_trades: 1,
+            winning_trades: 1,
+            losing_trades: 0,
+            win_rate: 100.0,
+            avg_win: 100.0,
+            avg_loss: 0.0,
+            profit_factor: f64::INFINITY,
+            max_drawdown_pct: 2.94,
+            sharpe_ratio: 0.5,
+            sortino_ratio: 0.7,
+            calmar_ratio: 0.34,
+            trades: vec![trade],
+            equity_curve,
+            start_time: start,
+            end_time: end,
+        };
+
+        // Test that daily returns are calculated from actual equity curve
+        let returns = PerformanceMetrics::calculate_daily_returns(&result);
+
+        assert_eq!(returns.len(), 4, "Should have 4 daily returns from 5 days");
+
+        // Verify actual returns are calculated correctly
+        // Day 1 to Day 2: (102000 - 100000) / 100000 = 0.02 (+2%)
+        assert!(
+            (returns[0] - 0.02).abs() < 0.0001,
+            "First return should be ~2%: {}",
+            returns[0]
+        );
+
+        // Day 2 to Day 3: (99000 - 102000) / 102000 = -0.0294 (-2.94%)
+        assert!(
+            (returns[1] - (-0.0294117647)).abs() < 0.0001,
+            "Second return should be ~-2.94%: {}",
+            returns[1]
+        );
+
+        // Returns should NOT be all identical (unlike synthetic returns)
+        assert!(
+            returns[0] != returns[1],
+            "Returns should vary, not be synthetic uniform values"
+        );
+    }
+
+    #[test]
+    fn test_calculate_daily_returns_meaningful_volatility() {
+        use crate::types::EquityPoint;
+
+        let start = Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap();
+        let end = Utc.with_ymd_and_hms(2024, 1, 10, 0, 0, 0).unwrap();
+
+        // Create an equity curve with significant variation
+        let equity_curve = vec![
+            EquityPoint {
+                timestamp: Utc.with_ymd_and_hms(2024, 1, 1, 16, 0, 0).unwrap(),
+                equity: 100000.0,
+                cash: 100000.0,
+                positions_value: 0.0,
+                drawdown: 0.0,
+                drawdown_pct: 0.0,
+            },
+            EquityPoint {
+                timestamp: Utc.with_ymd_and_hms(2024, 1, 2, 16, 0, 0).unwrap(),
+                equity: 105000.0, // +5%
+                cash: 0.0,
+                positions_value: 105000.0,
+                drawdown: 0.0,
+                drawdown_pct: 0.0,
+            },
+            EquityPoint {
+                timestamp: Utc.with_ymd_and_hms(2024, 1, 3, 16, 0, 0).unwrap(),
+                equity: 95000.0, // -9.5%
+                cash: 0.0,
+                positions_value: 95000.0,
+                drawdown: 10000.0,
+                drawdown_pct: 9.5,
+            },
+            EquityPoint {
+                timestamp: Utc.with_ymd_and_hms(2024, 1, 4, 16, 0, 0).unwrap(),
+                equity: 110000.0, // +15.8%
+                cash: 0.0,
+                positions_value: 110000.0,
+                drawdown: 0.0,
+                drawdown_pct: 0.0,
+            },
+        ];
+
+        let mut trade = Trade::open("TEST", Side::Buy, 100.0, 100.0, start, 1.0, 0.0);
+        trade.close(110.0, end, 1.0);
+
+        let result = BacktestResult {
+            strategy_name: "TestStrategy".to_string(),
+            symbols: vec!["TEST".to_string()],
+            config: BacktestConfig::default(),
+            initial_capital: 100000.0,
+            final_equity: 110000.0,
+            total_return_pct: 10.0,
+            annual_return_pct: 10.0,
+            trading_days: 4,
+            total_trades: 1,
+            winning_trades: 1,
+            losing_trades: 0,
+            win_rate: 100.0,
+            avg_win: 1000.0,
+            avg_loss: 0.0,
+            profit_factor: f64::INFINITY,
+            max_drawdown_pct: 9.5,
+            sharpe_ratio: 0.5,
+            sortino_ratio: 0.7,
+            calmar_ratio: 1.0,
+            trades: vec![trade],
+            equity_curve,
+            start_time: start,
+            end_time: end,
+        };
+
+        let metrics = PerformanceMetrics::from_result(&result);
+
+        // Volatility should be meaningful (non-zero) with varying returns
+        assert!(
+            metrics.volatility_annual > 0.0,
+            "Volatility should be positive with varying returns: {}",
+            metrics.volatility_annual
+        );
+
+        // Volatility should be significant given the large daily swings
+        assert!(
+            metrics.volatility_annual > 50.0,
+            "Volatility should be significant given 5%, -9.5%, +15.8% daily moves: {}",
+            metrics.volatility_annual
+        );
+    }
+
+    #[test]
+    fn test_calculate_daily_returns_empty_equity_curve_fallback() {
+        // Test fallback to synthetic returns when equity curve is empty
+        let result = create_test_result(); // has empty equity_curve
+
+        let returns = PerformanceMetrics::calculate_daily_returns(&result);
+
+        // Should fall back to synthetic returns (252 identical values)
+        assert_eq!(returns.len(), 252);
+
+        // All values should be identical in fallback mode
+        let first = returns[0];
+        assert!(
+            returns.iter().all(|&r| (r - first).abs() < 1e-10),
+            "Fallback returns should all be identical"
+        );
+    }
+
+    #[test]
+    fn test_calculate_daily_returns_intraday_aggregation() {
+        use crate::types::EquityPoint;
+
+        let start = Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap();
+        let end = Utc.with_ymd_and_hms(2024, 1, 3, 0, 0, 0).unwrap();
+
+        // Create equity curve with multiple intraday points
+        // Should aggregate to daily by taking last value of each day
+        let equity_curve = vec![
+            // Day 1 - multiple points, last should be used
+            EquityPoint {
+                timestamp: Utc.with_ymd_and_hms(2024, 1, 1, 9, 30, 0).unwrap(),
+                equity: 100000.0,
+                cash: 100000.0,
+                positions_value: 0.0,
+                drawdown: 0.0,
+                drawdown_pct: 0.0,
+            },
+            EquityPoint {
+                timestamp: Utc.with_ymd_and_hms(2024, 1, 1, 12, 0, 0).unwrap(),
+                equity: 100500.0,
+                cash: 0.0,
+                positions_value: 100500.0,
+                drawdown: 0.0,
+                drawdown_pct: 0.0,
+            },
+            EquityPoint {
+                timestamp: Utc.with_ymd_and_hms(2024, 1, 1, 16, 0, 0).unwrap(),
+                equity: 101000.0, // This should be used for Day 1
+                cash: 0.0,
+                positions_value: 101000.0,
+                drawdown: 0.0,
+                drawdown_pct: 0.0,
+            },
+            // Day 2 - multiple points
+            EquityPoint {
+                timestamp: Utc.with_ymd_and_hms(2024, 1, 2, 9, 30, 0).unwrap(),
+                equity: 100000.0,
+                cash: 0.0,
+                positions_value: 100000.0,
+                drawdown: 1000.0,
+                drawdown_pct: 0.99,
+            },
+            EquityPoint {
+                timestamp: Utc.with_ymd_and_hms(2024, 1, 2, 16, 0, 0).unwrap(),
+                equity: 102000.0, // This should be used for Day 2
+                cash: 0.0,
+                positions_value: 102000.0,
+                drawdown: 0.0,
+                drawdown_pct: 0.0,
+            },
+            // Day 3 - single point
+            EquityPoint {
+                timestamp: Utc.with_ymd_and_hms(2024, 1, 3, 16, 0, 0).unwrap(),
+                equity: 103000.0, // This should be used for Day 3
+                cash: 0.0,
+                positions_value: 103000.0,
+                drawdown: 0.0,
+                drawdown_pct: 0.0,
+            },
+        ];
+
+        let mut trade = Trade::open("TEST", Side::Buy, 100.0, 100.0, start, 1.0, 0.0);
+        trade.close(103.0, end, 1.0);
+
+        let result = BacktestResult {
+            strategy_name: "TestStrategy".to_string(),
+            symbols: vec!["TEST".to_string()],
+            config: BacktestConfig::default(),
+            initial_capital: 100000.0,
+            final_equity: 103000.0,
+            total_return_pct: 3.0,
+            annual_return_pct: 3.0,
+            trading_days: 3,
+            total_trades: 1,
+            winning_trades: 1,
+            losing_trades: 0,
+            win_rate: 100.0,
+            avg_win: 300.0,
+            avg_loss: 0.0,
+            profit_factor: f64::INFINITY,
+            max_drawdown_pct: 0.99,
+            sharpe_ratio: 1.0,
+            sortino_ratio: 1.5,
+            calmar_ratio: 3.0,
+            trades: vec![trade],
+            equity_curve,
+            start_time: start,
+            end_time: end,
+        };
+
+        let returns = PerformanceMetrics::calculate_daily_returns(&result);
+
+        // Should have 2 daily returns from 3 days
+        assert_eq!(returns.len(), 2);
+
+        // Day 1 to Day 2: (102000 - 101000) / 101000 = 0.0099 (~0.99%)
+        assert!(
+            (returns[0] - 0.00990099).abs() < 0.0001,
+            "First return should be ~0.99%: {}",
+            returns[0]
+        );
+
+        // Day 2 to Day 3: (103000 - 102000) / 102000 = 0.0098 (~0.98%)
+        assert!(
+            (returns[1] - 0.00980392).abs() < 0.0001,
+            "Second return should be ~0.98%: {}",
+            returns[1]
+        );
     }
 }

@@ -4,7 +4,7 @@
 
 | Metric | Status |
 |--------|--------|
-| **Tests** | 205 passing (175 unit + 2 CLI + 28 integration + 3 doc-tests) |
+| **Tests** | 209 passing (179 unit + 2 CLI + 28 integration + 3 doc-tests) |
 | **Clippy** | 0 errors (PASSING) |
 | **Cargo fmt** | PASSING |
 
@@ -214,34 +214,23 @@ These features are explicitly required in the spec but not implemented.
 
 These items significantly improve quality but are not explicit spec violations.
 
-### 3.1 Fix Daily Returns Calculation in Analytics
+### 3.1 Fix Daily Returns Calculation in Analytics - COMPLETE
 
-**Location:** `src/analytics.rs` lines 204-212
+**Location:** `src/analytics.rs` lines 427-466
 
-**Current state:** `calculate_daily_returns()` reconstructs synthetic daily returns from total return, assuming uniform distribution:
-```rust
-let daily_return = (final_equity / initial_capital).powf(1.0 / trading_days as f64) - 1.0;
-vec![daily_return; trading_days]  // All identical values!
-```
-
-**Problem:** Volatility calculations are meaningless with identical values; Sharpe/Sortino are approximations.
-
-**Implementation tasks:**
-1. Calculate actual daily returns from equity curve:
-   ```rust
-   fn calculate_daily_returns(equity_curve: &[EquityPoint]) -> Vec<f64> {
-       equity_curve.windows(2)
-           .filter(|w| is_different_day(w[0].timestamp, w[1].timestamp))
-           .map(|w| (w[1].equity - w[0].equity) / w[0].equity)
-           .collect()
-   }
-   ```
-
-2. Update `PerformanceMetrics::from_result()` to use actual returns
-
-3. Ensure `BacktestResult` has sufficient equity curve granularity
-
-4. Add test coverage comparing synthetic vs actual volatility
+**Implementation Summary:**
+- Replaced synthetic uniform returns with actual daily returns from equity curve
+- `calculate_daily_returns()` now:
+  - Groups equity points by day (year, month, day) to handle intraday data
+  - Takes the last equity value for each day using BTreeMap
+  - Calculates actual returns between consecutive days
+  - Falls back to synthetic returns only if equity curve is unavailable or too small
+- Volatility calculations now produce meaningful results from actual equity changes
+- Tests added:
+  - `test_calculate_daily_returns_from_equity_curve` - verifies actual returns calculation
+  - `test_calculate_daily_returns_meaningful_volatility` - verifies volatility is non-zero with varying returns
+  - `test_calculate_daily_returns_empty_equity_curve_fallback` - verifies fallback behavior
+  - `test_calculate_daily_returns_intraday_aggregation` - verifies intraday data handling
 
 ### 3.2 Fix Drawdown Analysis Approximations
 
@@ -567,7 +556,7 @@ All clippy errors fixed and code formatted. Verification passes.
 
 ### Phase 3: Analytics and Benchmarks
 1. ~~Add benchmark comparison (2.1)~~ - COMPLETE
-2. Fix daily returns calculation (3.1)
+2. ~~Fix daily returns calculation (3.1)~~ - COMPLETE
 3. Fix drawdown analysis (3.2)
 
 ### Phase 4: Asset Classes and Corporate Actions
@@ -618,6 +607,7 @@ The following spec requirements are fully implemented and verified:
 - [x] Multi-symbol time-series alignment (inner join, outer join with forward fill)
 - [x] Missing data handling (gap detection, fill methods, data quality reports)
 - [x] Benchmark comparison metrics (alpha, beta, tracking error, information ratio, correlation, capture ratios)
+- [x] Actual daily returns from equity curve (meaningful volatility calculations)
 
 ---
 
