@@ -541,6 +541,7 @@ mod tests {
             sortino_ratio: 2.0,
             calmar_ratio: 2.0,
             trades: vec![trade],
+            equity_curve: vec![],
             start_time: start,
             end_time: end,
         }

@@ -81,13 +81,21 @@ impl Exporter {
         let mut writer = BufWriter::new(file);
 
         if self.config.include_headers {
-            writeln!(writer, "timestamp,equity,drawdown_pct")?;
+            writeln!(writer, "timestamp,equity,cash,positions_value,drawdown,drawdown_pct")?;
         }
 
-        for point in &self.result.trades {
-            // Use equity from trades (entry timestamps)
-            // Actually we need equity curve from engine, but it's not stored in BacktestResult
-            // For now, we'll compute from trades
+        let prec = self.config.precision;
+        for point in &self.result.equity_curve {
+            writeln!(
+                writer,
+                "{},{:.prec$},{:.prec$},{:.prec$},{:.prec$},{:.prec$}",
+                point.timestamp.format(&self.config.date_format),
+                point.equity,
+                point.cash,
+                point.positions_value,
+                point.drawdown,
+                point.drawdown_pct,
+            )?;
         }
 
         Ok(())
@@ -427,6 +435,266 @@ pub fn export_features_npy(features: &[Vec<f64>], path: impl AsRef<Path>) -> Res
     Ok(())
 }
 
+/// Export feature matrix to Parquet format for efficient ML data loading.
+///
+/// Parquet is a columnar storage format that's efficient for ML workflows:
+/// - Compressed storage (typically 2-5x smaller than CSV)
+/// - Fast random access and column-wise operations
+/// - Native support in pandas, PyArrow, and most ML frameworks
+///
+/// # Arguments
+/// * `features` - 2D feature matrix (rows x columns)
+/// * `column_names` - Names for each column (must match feature columns)
+/// * `path` - Output file path (.parquet extension recommended)
+///
+/// # Example
+/// ```ignore
+/// let features = vec![
+///     vec![1.0, 0.5, -0.2],
+///     vec![1.1, 0.6, -0.1],
+/// ];
+/// let columns = vec!["returns", "rsi", "macd"];
+/// export_features_parquet(&features, &columns, "features.parquet")?;
+/// ```
+pub fn export_features_parquet(
+    features: &[Vec<f64>],
+    column_names: &[impl AsRef<str>],
+    path: impl AsRef<Path>,
+) -> Result<()> {
+    use arrow::array::Float64Array;
+    use arrow::datatypes::{DataType, Field, Schema};
+    use arrow::record_batch::RecordBatch;
+    use parquet::arrow::ArrowWriter;
+    use std::sync::Arc;
+
+    if features.is_empty() {
+        return Err(BacktestError::DataError("No features to export".to_string()));
+    }
+
+    let num_cols = features[0].len();
+
+    if column_names.len() != num_cols {
+        return Err(BacktestError::DataError(format!(
+            "Column names count ({}) doesn't match feature columns ({})",
+            column_names.len(),
+            num_cols
+        )));
+    }
+
+    // Create schema
+    let fields: Vec<Field> = column_names
+        .iter()
+        .map(|name| Field::new(name.as_ref(), DataType::Float64, false))
+        .collect();
+    let schema = Arc::new(Schema::new(fields));
+
+    // Create column arrays
+    let arrays: Vec<Arc<dyn arrow::array::Array>> = (0..num_cols)
+        .map(|col_idx| {
+            let values: Vec<f64> = features.iter().map(|row| row[col_idx]).collect();
+            Arc::new(Float64Array::from(values)) as Arc<dyn arrow::array::Array>
+        })
+        .collect();
+
+    // Create record batch
+    let batch = RecordBatch::try_new(schema.clone(), arrays)
+        .map_err(|e| BacktestError::DataError(format!("Failed to create record batch: {}", e)))?;
+
+    // Write to parquet file
+    let file = File::create(path)?;
+    let mut writer = ArrowWriter::try_new(file, schema, None)
+        .map_err(|e| BacktestError::DataError(format!("Failed to create parquet writer: {}", e)))?;
+
+    writer
+        .write(&batch)
+        .map_err(|e| BacktestError::DataError(format!("Failed to write parquet: {}", e)))?;
+
+    writer
+        .close()
+        .map_err(|e| BacktestError::DataError(format!("Failed to close parquet file: {}", e)))?;
+
+    Ok(())
+}
+
+/// Export equity curve to Parquet format.
+pub fn export_equity_curve_parquet(
+    equity_curve: &[EquityPoint],
+    path: impl AsRef<Path>,
+) -> Result<()> {
+    use arrow::array::{Float64Array, TimestampMillisecondArray};
+    use arrow::datatypes::{DataType, Field, Schema, TimeUnit};
+    use arrow::record_batch::RecordBatch;
+    use parquet::arrow::ArrowWriter;
+    use std::sync::Arc;
+
+    if equity_curve.is_empty() {
+        return Err(BacktestError::DataError(
+            "No equity curve data to export".to_string(),
+        ));
+    }
+
+    // Create schema
+    let schema = Arc::new(Schema::new(vec![
+        Field::new(
+            "timestamp",
+            DataType::Timestamp(TimeUnit::Millisecond, None),
+            false,
+        ),
+        Field::new("equity", DataType::Float64, false),
+        Field::new("cash", DataType::Float64, false),
+        Field::new("positions_value", DataType::Float64, false),
+        Field::new("drawdown", DataType::Float64, false),
+        Field::new("drawdown_pct", DataType::Float64, false),
+    ]));
+
+    // Create arrays
+    let timestamps: Vec<i64> = equity_curve
+        .iter()
+        .map(|p| p.timestamp.timestamp_millis())
+        .collect();
+    let equity: Vec<f64> = equity_curve.iter().map(|p| p.equity).collect();
+    let cash: Vec<f64> = equity_curve.iter().map(|p| p.cash).collect();
+    let positions_value: Vec<f64> = equity_curve.iter().map(|p| p.positions_value).collect();
+    let drawdown: Vec<f64> = equity_curve.iter().map(|p| p.drawdown).collect();
+    let drawdown_pct: Vec<f64> = equity_curve.iter().map(|p| p.drawdown_pct).collect();
+
+    let arrays: Vec<Arc<dyn arrow::array::Array>> = vec![
+        Arc::new(TimestampMillisecondArray::from(timestamps)),
+        Arc::new(Float64Array::from(equity)),
+        Arc::new(Float64Array::from(cash)),
+        Arc::new(Float64Array::from(positions_value)),
+        Arc::new(Float64Array::from(drawdown)),
+        Arc::new(Float64Array::from(drawdown_pct)),
+    ];
+
+    let batch = RecordBatch::try_new(schema.clone(), arrays)
+        .map_err(|e| BacktestError::DataError(format!("Failed to create record batch: {}", e)))?;
+
+    let file = File::create(path)?;
+    let mut writer = ArrowWriter::try_new(file, schema, None)
+        .map_err(|e| BacktestError::DataError(format!("Failed to create parquet writer: {}", e)))?;
+
+    writer
+        .write(&batch)
+        .map_err(|e| BacktestError::DataError(format!("Failed to write parquet: {}", e)))?;
+
+    writer
+        .close()
+        .map_err(|e| BacktestError::DataError(format!("Failed to close parquet file: {}", e)))?;
+
+    Ok(())
+}
+
+/// Export trades to Parquet format.
+pub fn export_trades_parquet(
+    trades: &[crate::types::Trade],
+    path: impl AsRef<Path>,
+) -> Result<()> {
+    use arrow::array::{Float64Array, Int64Array, StringBuilder, TimestampMillisecondArray};
+    use arrow::datatypes::{DataType, Field, Schema, TimeUnit};
+    use arrow::record_batch::RecordBatch;
+    use parquet::arrow::ArrowWriter;
+    use std::sync::Arc;
+
+    let closed_trades: Vec<_> = trades.iter().filter(|t| t.is_closed()).collect();
+
+    if closed_trades.is_empty() {
+        return Err(BacktestError::DataError(
+            "No closed trades to export".to_string(),
+        ));
+    }
+
+    // Create schema
+    let schema = Arc::new(Schema::new(vec![
+        Field::new("symbol", DataType::Utf8, false),
+        Field::new("side", DataType::Utf8, false),
+        Field::new("quantity", DataType::Float64, false),
+        Field::new("entry_price", DataType::Float64, false),
+        Field::new(
+            "entry_time",
+            DataType::Timestamp(TimeUnit::Millisecond, None),
+            false,
+        ),
+        Field::new("exit_price", DataType::Float64, false),
+        Field::new(
+            "exit_time",
+            DataType::Timestamp(TimeUnit::Millisecond, None),
+            false,
+        ),
+        Field::new("pnl", DataType::Float64, false),
+        Field::new("pnl_pct", DataType::Float64, false),
+        Field::new("commission", DataType::Float64, false),
+        Field::new("duration_hours", DataType::Int64, false),
+    ]));
+
+    // Build arrays
+    let mut symbols = StringBuilder::new();
+    let mut sides = StringBuilder::new();
+    let mut quantities = Vec::new();
+    let mut entry_prices = Vec::new();
+    let mut entry_times = Vec::new();
+    let mut exit_prices = Vec::new();
+    let mut exit_times = Vec::new();
+    let mut pnls = Vec::new();
+    let mut pnl_pcts = Vec::new();
+    let mut commissions = Vec::new();
+    let mut durations = Vec::new();
+
+    for trade in &closed_trades {
+        symbols.append_value(&trade.symbol);
+        sides.append_value(format!("{:?}", trade.side));
+        quantities.push(trade.quantity);
+        entry_prices.push(trade.entry_price);
+        entry_times.push(trade.entry_time.timestamp_millis());
+        exit_prices.push(trade.exit_price.unwrap_or(0.0));
+        exit_times.push(
+            trade
+                .exit_time
+                .map(|t| t.timestamp_millis())
+                .unwrap_or(0),
+        );
+        pnls.push(trade.net_pnl().unwrap_or(0.0));
+        pnl_pcts.push(trade.return_pct().unwrap_or(0.0));
+        commissions.push(trade.commission);
+        let duration_hours = trade
+            .holding_period()
+            .map(|d| d.num_hours())
+            .unwrap_or(0);
+        durations.push(duration_hours);
+    }
+
+    let arrays: Vec<Arc<dyn arrow::array::Array>> = vec![
+        Arc::new(symbols.finish()),
+        Arc::new(sides.finish()),
+        Arc::new(Float64Array::from(quantities)),
+        Arc::new(Float64Array::from(entry_prices)),
+        Arc::new(TimestampMillisecondArray::from(entry_times)),
+        Arc::new(Float64Array::from(exit_prices)),
+        Arc::new(TimestampMillisecondArray::from(exit_times)),
+        Arc::new(Float64Array::from(pnls)),
+        Arc::new(Float64Array::from(pnl_pcts)),
+        Arc::new(Float64Array::from(commissions)),
+        Arc::new(Int64Array::from(durations)),
+    ];
+
+    let batch = RecordBatch::try_new(schema.clone(), arrays)
+        .map_err(|e| BacktestError::DataError(format!("Failed to create record batch: {}", e)))?;
+
+    let file = File::create(path)?;
+    let mut writer = ArrowWriter::try_new(file, schema, None)
+        .map_err(|e| BacktestError::DataError(format!("Failed to create parquet writer: {}", e)))?;
+
+    writer
+        .write(&batch)
+        .map_err(|e| BacktestError::DataError(format!("Failed to write parquet: {}", e)))?;
+
+    writer
+        .close()
+        .map_err(|e| BacktestError::DataError(format!("Failed to close parquet file: {}", e)))?;
+
+    Ok(())
+}
+
 /// Multi-asset result exporter.
 pub struct MultiAssetExporter {
     result: MultiAssetResult,
@@ -442,24 +710,31 @@ impl MultiAssetExporter {
         }
     }
 
+    /// Create exporter with custom config.
+    pub fn with_config(result: MultiAssetResult, config: ExportConfig) -> Self {
+        Self { result, config }
+    }
+
     /// Export weight history to CSV.
     pub fn export_weights_csv(&self, path: impl AsRef<Path>) -> Result<()> {
         let file = File::create(path)?;
         let mut writer = BufWriter::new(file);
 
         // Write header
-        write!(writer, "timestamp")?;
-        for symbol in &self.result.symbols {
-            write!(writer, ",{}", symbol)?;
+        if self.config.include_headers {
+            write!(writer, "timestamp")?;
+            for symbol in &self.result.symbols {
+                write!(writer, "{}{}", self.config.delimiter, symbol)?;
+            }
+            writeln!(writer)?;
         }
-        writeln!(writer)?;
 
         // Write data
         for (timestamp, weights) in &self.result.weight_history {
-            write!(writer, "{}", timestamp.format("%Y-%m-%d %H:%M:%S"))?;
+            write!(writer, "{}", timestamp.format(&self.config.date_format))?;
             for symbol in &self.result.symbols {
                 let weight = weights.get(symbol).copied().unwrap_or(0.0);
-                write!(writer, ",{:.4}", weight)?;
+                write!(writer, "{}{:.prec$}", self.config.delimiter, weight, prec = self.config.precision)?;
             }
             writeln!(writer)?;
         }
@@ -551,7 +826,7 @@ impl MultiAssetExporter {
 mod tests {
     use super::*;
     use crate::engine::BacktestConfig;
-    use crate::types::Side;
+    use crate::types::{Side, Trade};
     use chrono::TimeZone;
     use tempfile::NamedTempFile;
 
@@ -592,6 +867,7 @@ mod tests {
             sortino_ratio: 2.0,
             calmar_ratio: 3.0,
             trades,
+            equity_curve: vec![],
             start_time: Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap(),
             end_time: Utc.with_ymd_and_hms(2024, 12, 31, 0, 0, 0).unwrap(),
         }
@@ -723,6 +999,79 @@ mod tests {
 
         let file = NamedTempFile::new().unwrap();
         export_features_npy(&features, file.path()).unwrap();
+
+        // Check file was created and has content
+        let metadata = std::fs::metadata(file.path()).unwrap();
+        assert!(metadata.len() > 0);
+    }
+
+    #[test]
+    fn test_export_features_parquet() {
+        let features = vec![
+            vec![1.0, 0.5, -0.2],
+            vec![1.1, 0.6, -0.1],
+            vec![1.2, 0.4, 0.0],
+        ];
+        let columns = vec!["returns", "rsi", "macd"];
+
+        let file = NamedTempFile::new().unwrap();
+        export_features_parquet(&features, &columns, file.path()).unwrap();
+
+        // Check file was created and has content
+        let metadata = std::fs::metadata(file.path()).unwrap();
+        assert!(metadata.len() > 0);
+    }
+
+    #[test]
+    fn test_export_equity_curve_parquet() {
+        let equity_curve = vec![
+            EquityPoint {
+                timestamp: Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap(),
+                equity: 100000.0,
+                cash: 50000.0,
+                positions_value: 50000.0,
+                drawdown: 0.0,
+                drawdown_pct: 0.0,
+            },
+            EquityPoint {
+                timestamp: Utc.with_ymd_and_hms(2024, 1, 2, 0, 0, 0).unwrap(),
+                equity: 101000.0,
+                cash: 51000.0,
+                positions_value: 50000.0,
+                drawdown: 0.0,
+                drawdown_pct: 0.0,
+            },
+        ];
+
+        let file = NamedTempFile::new().unwrap();
+        export_equity_curve_parquet(&equity_curve, file.path()).unwrap();
+
+        // Check file was created and has content
+        let metadata = std::fs::metadata(file.path()).unwrap();
+        assert!(metadata.len() > 0);
+    }
+
+    #[test]
+    fn test_export_trades_parquet() {
+        let mut trade = Trade::open(
+            "TEST",
+            Side::Buy,
+            100.0,
+            100.0,
+            Utc.with_ymd_and_hms(2024, 1, 1, 10, 0, 0).unwrap(),
+            1.0,
+            0.0,
+        );
+        trade.close(
+            110.0,
+            Utc.with_ymd_and_hms(2024, 1, 5, 15, 0, 0).unwrap(),
+            1.0,
+        );
+
+        let trades = vec![trade];
+
+        let file = NamedTempFile::new().unwrap();
+        export_trades_parquet(&trades, file.path()).unwrap();
 
         // Check file was created and has content
         let metadata = std::fs::metadata(file.path()).unwrap();

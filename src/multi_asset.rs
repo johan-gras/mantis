@@ -762,7 +762,7 @@ mod tests {
 
     #[test]
     fn test_equal_weight_strategy() {
-        let mut strategy = EqualWeightStrategy::new(20);
+        let strategy = EqualWeightStrategy::new(20);
         assert_eq!(strategy.name(), "Equal Weight");
     }
 

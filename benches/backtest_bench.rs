@@ -228,12 +228,163 @@ fn bench_optimization(c: &mut Criterion) {
     group.finish();
 }
 
+/// Benchmark streaming indicators.
+fn bench_streaming_indicators(c: &mut Criterion) {
+    use ralph_backtest::streaming::{StreamingSMA, StreamingEMA, StreamingRSI, StreamingIndicator};
+
+    let bars = generate_bars(1000);
+
+    let mut group = c.benchmark_group("streaming");
+
+    // Streaming SMA
+    group.bench_function("streaming_sma_20", |b| {
+        b.iter(|| {
+            let mut sma = StreamingSMA::new(20);
+            for bar in black_box(&bars) {
+                sma.update(bar.close);
+            }
+            sma.value()
+        })
+    });
+
+    // Streaming EMA
+    group.bench_function("streaming_ema_20", |b| {
+        b.iter(|| {
+            let mut ema = StreamingEMA::new(20);
+            for bar in black_box(&bars) {
+                ema.update(bar.close);
+            }
+            ema.value()
+        })
+    });
+
+    // Streaming RSI
+    group.bench_function("streaming_rsi_14", |b| {
+        b.iter(|| {
+            let mut rsi = StreamingRSI::new(14);
+            for bar in black_box(&bars) {
+                rsi.update(bar.close);
+            }
+            rsi.value()
+        })
+    });
+
+    group.finish();
+}
+
+/// Benchmark Monte Carlo simulation.
+fn bench_monte_carlo(c: &mut Criterion) {
+    use ralph_backtest::monte_carlo::{MonteCarloConfig, MonteCarloSimulator};
+
+    let mut group = c.benchmark_group("monte_carlo");
+    group.sample_size(10); // Fewer samples for slow benchmarks
+
+    // Create some test returns
+    let returns: Vec<f64> = (0..100)
+        .map(|i| (i as f64 * 0.1).sin() * 5.0)
+        .collect();
+
+    // Monte Carlo with 100 simulations
+    group.bench_function("mc_100_sims", |b| {
+        b.iter(|| {
+            let config = MonteCarloConfig {
+                num_simulations: 100,
+                confidence_level: 0.95,
+                seed: Some(42),
+                resample_trades: true,
+                shuffle_returns: false,
+            };
+            let mut simulator = MonteCarloSimulator::new(config);
+            simulator.simulate_from_returns(black_box(&returns), 100_000.0)
+        })
+    });
+
+    // Monte Carlo with 1000 simulations
+    group.bench_function("mc_1000_sims", |b| {
+        b.iter(|| {
+            let config = MonteCarloConfig {
+                num_simulations: 1000,
+                confidence_level: 0.95,
+                seed: Some(42),
+                resample_trades: true,
+                shuffle_returns: false,
+            };
+            let mut simulator = MonteCarloSimulator::new(config);
+            simulator.simulate_from_returns(black_box(&returns), 100_000.0)
+        })
+    });
+
+    group.finish();
+}
+
+/// Benchmark regime detection.
+fn bench_regime_detection(c: &mut Criterion) {
+    use ralph_backtest::regime::{RegimeConfig, RegimeDetector};
+
+    let mut group = c.benchmark_group("regime");
+
+    // Different data sizes
+    for size in [252, 500, 1000].iter() {
+        let bars = generate_bars(*size);
+
+        group.bench_with_input(
+            BenchmarkId::new("detect", size),
+            &bars,
+            |b, bars| {
+                let config = RegimeConfig::default();
+                let detector = RegimeDetector::new(config);
+                b.iter(|| detector.detect(black_box(bars)))
+            },
+        );
+    }
+
+    group.finish();
+}
+
+/// Benchmark Parquet export.
+fn bench_parquet_export(c: &mut Criterion) {
+    use ralph_backtest::export::export_features_parquet;
+    use tempfile::TempDir;
+
+    let mut group = c.benchmark_group("parquet");
+    group.sample_size(10); // Fewer samples for I/O benchmarks
+
+    // Create feature matrix
+    let features: Vec<Vec<f64>> = (0..1000)
+        .map(|i| {
+            vec![
+                i as f64,
+                (i as f64 * 0.1).sin(),
+                (i as f64 * 0.2).cos(),
+                i as f64 * 0.001,
+                100.0 - i as f64 * 0.01,
+            ]
+        })
+        .collect();
+    let columns = vec!["f1", "f2", "f3", "f4", "f5"];
+
+    group.bench_function("export_1000_rows", |b| {
+        let temp_dir = TempDir::new().unwrap();
+        let path = temp_dir.path().join("features.parquet");
+
+        b.iter(|| {
+            export_features_parquet(black_box(&features), &columns, &path).unwrap()
+        })
+    });
+
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_indicators,
     bench_backtest,
     bench_features,
     bench_optimization,
+    bench_streaming_indicators,
+    bench_monte_carlo,
+    bench_regime_detection,
+    bench_parquet_export,
 );
 
 criterion_main!(benches);

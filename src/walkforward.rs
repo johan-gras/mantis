@@ -499,6 +499,7 @@ mod tests {
             sortino_ratio: 2.0,
             calmar_ratio: 2.0,
             trades: vec![],
+            equity_curve: vec![],
             start_time: Utc::now(),
             end_time: Utc::now(),
         };

@@ -5,7 +5,7 @@ use crate::error::{BacktestError, Result};
 use crate::portfolio::{CostModel, Portfolio};
 use crate::risk::{RiskConfig, StopLoss, TrailingStop};
 use crate::strategy::{Strategy, StrategyContext};
-use crate::types::{Bar, Order, Side, Signal, Trade};
+use crate::types::{Bar, EquityPoint, Order, Side, Signal, Trade};
 use chrono::{DateTime, Utc};
 use indicatif::{ProgressBar, ProgressStyle};
 use rayon::prelude::*;
@@ -96,6 +96,8 @@ pub struct BacktestResult {
     pub calmar_ratio: f64,
     /// All trades.
     pub trades: Vec<Trade>,
+    /// Equity curve.
+    pub equity_curve: Vec<EquityPoint>,
     /// Start timestamp.
     pub start_time: DateTime<Utc>,
     /// End timestamp.
@@ -554,6 +556,7 @@ impl Engine {
             sortino_ratio,
             calmar_ratio,
             trades: trades.to_vec(),
+            equity_curve: equity_curve.to_vec(),
             start_time,
             end_time,
         }

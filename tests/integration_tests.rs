@@ -359,8 +359,8 @@ fn test_ensemble_strategy_backtest() {
     let bars = create_synthetic_data(100, 100.0, 0.001);
 
     // Create multiple model predictions
-    let model1: Vec<f64> = (0..bars.len()).map(|i| ((i as f64 * 0.1).sin() * 0.6)).collect();
-    let model2: Vec<f64> = (0..bars.len()).map(|i| ((i as f64 * 0.15).cos() * 0.5)).collect();
+    let model1: Vec<f64> = (0..bars.len()).map(|i| (i as f64 * 0.1).sin() * 0.6).collect();
+    let model2: Vec<f64> = (0..bars.len()).map(|i| (i as f64 * 0.15).cos() * 0.5).collect();
     let model3: Vec<f64> = (0..bars.len()).map(|i| {
         if i % 20 < 10 { 0.4 } else { -0.3 }
     }).collect();
@@ -596,4 +596,225 @@ fn test_risk_reward_ratio() {
     let result = engine.run(&mut strategy, "RR_TEST").unwrap();
 
     assert!(result.final_equity > 0.0);
+}
+
+#[test]
+fn test_equity_curve_stored_in_result() {
+    let bars = create_synthetic_data(100, 100.0, 0.001);
+
+    let config = BacktestConfig {
+        initial_capital: 100_000.0,
+        show_progress: false,
+        ..Default::default()
+    };
+
+    let mut engine = Engine::new(config);
+    engine.add_data("TEST".to_string(), bars.clone());
+
+    let mut strategy = SmaCrossover::new(5, 20);
+    let result = engine.run(&mut strategy, "TEST").unwrap();
+
+    // Equity curve should be populated
+    assert!(!result.equity_curve.is_empty());
+    assert_eq!(result.equity_curve.len(), bars.len());
+
+    // First point should start at initial capital
+    assert!((result.equity_curve[0].equity - 100_000.0).abs() < 0.01);
+
+    // Last point should match final equity
+    let last_equity = result.equity_curve.last().unwrap().equity;
+    assert!((last_equity - result.final_equity).abs() < 0.01);
+}
+
+#[test]
+fn test_monte_carlo_simulation() {
+    use ralph_backtest::monte_carlo::{MonteCarloConfig, MonteCarloSimulator};
+
+    // Create data with enough price movement to generate trades
+    let bars = create_synthetic_data(500, 100.0, 0.002);
+
+    let config = BacktestConfig {
+        initial_capital: 100_000.0,
+        show_progress: false,
+        ..Default::default()
+    };
+
+    let mut engine = Engine::new(config);
+    engine.add_data("MC_TEST".to_string(), bars);
+
+    // Use momentum strategy which is more likely to generate trades
+    let mut strategy = MomentumStrategy::new(5, 0.0);
+    let result = engine.run(&mut strategy, "MC_TEST").unwrap();
+
+    // Only run Monte Carlo if we have trades
+    if result.trades.iter().filter(|t| t.is_closed()).count() >= 5 {
+        // Run Monte Carlo simulation
+        let mc_config = MonteCarloConfig {
+            num_simulations: 100,
+            confidence_level: 0.95,
+            seed: Some(42),
+            resample_trades: true,
+            shuffle_returns: false,
+        };
+
+        let mut simulator = MonteCarloSimulator::new(mc_config);
+        let mc_result = simulator.simulate_from_result(&result);
+
+        // Verify simulation ran
+        assert_eq!(mc_result.num_simulations, 100);
+
+        // Confidence intervals should be valid
+        assert!(mc_result.return_ci.0 <= mc_result.return_ci.1);
+        assert!(mc_result.max_drawdown_ci.0 <= mc_result.max_drawdown_ci.1);
+
+        // Mean return should be in the confidence interval
+        assert!(mc_result.return_ci.0 <= mc_result.mean_return);
+        assert!(mc_result.mean_return <= mc_result.return_ci.1);
+    }
+}
+
+#[test]
+fn test_regime_detection() {
+    use ralph_backtest::regime::{RegimeConfig, RegimeDetector};
+
+    // Create uptrending data
+    let uptrend_bars = create_synthetic_data(100, 100.0, 0.01); // 1% daily returns
+
+    // Create downtrending data
+    let mut downtrend_bars = Vec::new();
+    let mut price = 100.0;
+    for i in 0..100 {
+        price *= 0.99; // -1% daily returns
+        let noise = ((i as f64 * 0.7).sin()) * 0.5;
+        downtrend_bars.push(Bar::new(
+            Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap()
+                + chrono::Duration::days(i as i64),
+            price - 0.5 + noise,
+            price + 2.0,
+            price - 2.0,
+            price + noise,
+            1_000_000.0,
+        ));
+    }
+
+    let config = RegimeConfig::default();
+    let detector = RegimeDetector::new(config);
+
+    let uptrend_regimes = detector.detect(&uptrend_bars);
+    let downtrend_regimes = detector.detect(&downtrend_bars);
+
+    // After warmup, uptrend should show bullish regimes
+    let bullish_count = uptrend_regimes.iter()
+        .skip(50) // Skip warmup
+        .filter(|r| r.trend.is_bullish())
+        .count();
+    assert!(bullish_count > 20, "Expected mostly bullish regimes in uptrend");
+
+    // After warmup, downtrend should show bearish regimes
+    let bearish_count = downtrend_regimes.iter()
+        .skip(50) // Skip warmup
+        .filter(|r| !r.trend.is_bullish())
+        .count();
+    assert!(bearish_count > 20, "Expected mostly bearish regimes in downtrend");
+}
+
+#[test]
+fn test_parquet_export() {
+    use ralph_backtest::export::{export_features_parquet, export_equity_curve_parquet, export_trades_parquet};
+    use tempfile::TempDir;
+
+    let bars = create_synthetic_data(100, 100.0, 0.001);
+
+    let config = BacktestConfig {
+        initial_capital: 100_000.0,
+        show_progress: false,
+        ..Default::default()
+    };
+
+    let mut engine = Engine::new(config);
+    engine.add_data("PARQUET_TEST".to_string(), bars.clone());
+
+    let mut strategy = SmaCrossover::new(5, 20);
+    let result = engine.run(&mut strategy, "PARQUET_TEST").unwrap();
+
+    // Create temp directory for test files
+    let temp_dir = TempDir::new().unwrap();
+
+    // Export equity curve to parquet
+    let equity_path = temp_dir.path().join("equity.parquet");
+    export_equity_curve_parquet(&result.equity_curve, &equity_path).unwrap();
+    assert!(equity_path.exists());
+    assert!(std::fs::metadata(&equity_path).unwrap().len() > 0);
+
+    // Export trades to parquet
+    let trades_path = temp_dir.path().join("trades.parquet");
+    if !result.trades.is_empty() && result.trades.iter().any(|t| t.is_closed()) {
+        export_trades_parquet(&result.trades, &trades_path).unwrap();
+        assert!(trades_path.exists());
+    }
+
+    // Export features to parquet
+    let feature_config = FeatureConfig::minimal();
+    let extractor = FeatureExtractor::new(feature_config);
+    let (features, column_names) = extractor.extract_matrix(&bars);
+
+    if !features.is_empty() {
+        let features_path = temp_dir.path().join("features.parquet");
+        export_features_parquet(&features, &column_names, &features_path).unwrap();
+        assert!(features_path.exists());
+    }
+}
+
+#[test]
+fn test_streaming_indicators() {
+    use ralph_backtest::streaming::{StreamingSMA, StreamingRSI, StreamingIndicator};
+
+    let bars = create_synthetic_data(100, 100.0, 0.001);
+
+    // Test streaming SMA
+    let mut sma = StreamingSMA::new(20);
+    for bar in &bars {
+        sma.update(bar.close);
+    }
+    assert!(sma.is_ready());
+    assert!(sma.value().is_some());
+
+    // Test streaming RSI
+    let mut rsi = StreamingRSI::new(14);
+    for bar in &bars {
+        rsi.update(bar.close);
+    }
+    assert!(rsi.is_ready());
+    let rsi_value = rsi.value().unwrap();
+    assert!(rsi_value >= 0.0 && rsi_value <= 100.0);
+
+    // Test reset
+    sma.reset();
+    assert!(!sma.is_ready());
+    assert!(sma.value().is_none());
+}
+
+#[test]
+fn test_zero_trade_strategy() {
+    // A strategy that never trades should have zero P&L
+    let bars = create_synthetic_data(100, 100.0, 0.001);
+
+    let config = BacktestConfig {
+        initial_capital: 100_000.0,
+        show_progress: false,
+        ..Default::default()
+    };
+
+    let mut engine = Engine::new(config);
+    engine.add_data("ZERO_TEST".to_string(), bars);
+
+    // Use RSI strategy with impossible thresholds
+    let mut strategy = RsiStrategy::new(14, 5.0, 95.0); // Almost never triggers
+    let result = engine.run(&mut strategy, "ZERO_TEST").unwrap();
+
+    // If no trades, equity should equal initial capital
+    if result.total_trades == 0 {
+        assert!((result.final_equity - 100_000.0).abs() < 0.01);
+        assert!((result.total_return_pct).abs() < 0.01);
+    }
 }

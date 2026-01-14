@@ -24,7 +24,7 @@ A production-quality, high-performance backtesting engine for quantitative tradi
 - **Time series splitting** - proper train/val/test splits with gap
 - **External signals** - backtest ML model predictions
 - **Regime detection** - trend, volatility, and volume regime labels
-- **NPY export** - direct export to NumPy format
+- **Confidence-weighted trading** - position sizing based on model confidence
 
 ### Multi-Asset Support
 - **Portfolio backtesting** - trade multiple assets simultaneously
@@ -37,9 +37,11 @@ A production-quality, high-performance backtesting engine for quantitative tradi
 - **Robustness scoring** - quantify strategy reliability
 
 ### Export & Reporting
-- **Trade logs** - CSV, JSON export of all trades
-- **Equity curves** - timestamped equity history
+- **Trade logs** - CSV, JSON, Parquet export of all trades
+- **Equity curves** - timestamped equity history with drawdowns
 - **Performance reports** - Markdown reports with key metrics
+- **Parquet export** - efficient columnar format for ML workflows
+- **NPY export** - direct export to NumPy format
 
 ## Installation
 
@@ -165,6 +167,37 @@ for (i, regime) in regimes.iter().enumerate() {
     println!("Bar {}: Trend={:?}, Vol={:?}",
         i, regime.trend, regime.volatility);
 }
+```
+
+## Parquet Export
+
+Export features, equity curves, and trades to Parquet format for efficient loading in Python:
+
+```rust
+use ralph_backtest::export::{
+    export_features_parquet,
+    export_equity_curve_parquet,
+    export_trades_parquet,
+};
+
+// Export feature matrix
+let (features, column_names) = extractor.extract_matrix(&bars);
+export_features_parquet(&features, &column_names, "features.parquet")?;
+
+// Export equity curve
+export_equity_curve_parquet(&result.equity_curve, "equity.parquet")?;
+
+// Export trades
+export_trades_parquet(&result.trades, "trades.parquet")?;
+```
+
+Loading in Python:
+```python
+import pandas as pd
+
+features = pd.read_parquet("features.parquet")
+equity = pd.read_parquet("equity.parquet")
+trades = pd.read_parquet("trades.parquet")
 ```
 
 ## Python Integration
