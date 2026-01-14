@@ -1,4 +1,4 @@
-# Ralph Backtest - Example Configuration File
+# Mantis - Example Configuration File
 # Run with: cargo run -- run-config -c examples/backtest.toml
 
 [backtest]

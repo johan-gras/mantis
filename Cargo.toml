@@ -1,11 +1,11 @@
 [package]
-name = "ralph-backtest"
+name = "mantis"
 version = "1.0.0"
 edition = "2021"
 authors = ["Johan"]
-description = "A production-quality CLI backtest engine for quantitative trading"
+description = "Mantis - A high-performance backtesting engine for quantitative trading"
 license = "MIT"
-repository = "https://github.com/johan/ralph-rust-backtest"
+repository = "https://github.com/johan/mantis"
 keywords = ["trading", "backtest", "quantitative", "finance", "cli"]
 categories = ["command-line-utilities", "finance", "simulation"]
 
@@ -56,5 +56,5 @@ codegen-units = 1
 opt-level = 3
 
 [[bin]]
-name = "ralph"
+name = "mantis"
 path = "src/main.rs"

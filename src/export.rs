@@ -9,8 +9,8 @@
 //! # Example
 //!
 //! ```ignore
-//! use ralph_backtest::export::{ExportConfig, Exporter};
-//! use ralph_backtest::engine::BacktestResult;
+//! use mantis::export::{ExportConfig, Exporter};
+//! use mantis::engine::BacktestResult;
 //!
 //! let result: BacktestResult = /* from backtest */;
 //! let exporter = Exporter::new(result);

@@ -10,11 +10,11 @@
 //!
 //! Run with: cargo run --example walkforward
 
-use ralph_backtest::data::{load_csv, DataConfig};
-use ralph_backtest::engine::BacktestConfig;
-use ralph_backtest::strategies::SmaCrossover;
-use ralph_backtest::types::Bar;
-use ralph_backtest::walkforward::{WalkForwardAnalyzer, WalkForwardConfig, WalkForwardMetric};
+use mantis::data::{load_csv, DataConfig};
+use mantis::engine::BacktestConfig;
+use mantis::strategies::SmaCrossover;
+use mantis::types::Bar;
+use mantis::walkforward::{WalkForwardAnalyzer, WalkForwardConfig, WalkForwardMetric};
 use chrono::{TimeZone, Utc};
 
 /// Generate synthetic data with varying trends.
@@ -109,7 +109,7 @@ fn main() {
     let analyzer = WalkForwardAnalyzer::new(wf_config.clone(), backtest_config);
 
     // Strategy factory creates strategies from parameters
-    let strategy_factory = |params: &(usize, usize)| -> Box<dyn ralph_backtest::Strategy> {
+    let strategy_factory = |params: &(usize, usize)| -> Box<dyn mantis::Strategy> {
         Box::new(SmaCrossover::new(params.0, params.1))
     };
 

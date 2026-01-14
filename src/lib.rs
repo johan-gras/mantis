@@ -1,8 +1,8 @@
-//! Ralph Backtest - A production-quality backtesting engine for quantitative trading.
+//! Mantis - A high-performance backtesting engine for quantitative trading.
 //!
 //! # Overview
 //!
-//! Ralph is a high-performance, event-driven backtesting engine written in Rust.
+//! Mantis is a high-performance, event-driven backtesting engine written in Rust.
 //! It provides everything you need to develop, test, and analyze trading strategies:
 //!
 //! - **Fast execution**: Native Rust performance with parallel optimization
@@ -18,7 +18,7 @@
 //! # Quick Start
 //!
 //! ```no_run
-//! use ralph_backtest::{
+//! use mantis::{
 //!     engine::{Engine, BacktestConfig},
 //!     strategies::SmaCrossover,
 //!     data::load_csv,
@@ -48,8 +48,8 @@
 //! Implement the `Strategy` trait to create your own trading strategies:
 //!
 //! ```
-//! use ralph_backtest::strategy::{Strategy, StrategyContext};
-//! use ralph_backtest::types::Signal;
+//! use mantis::strategy::{Strategy, StrategyContext};
+//! use mantis::types::Signal;
 //!
 //! struct MyStrategy {
 //!     threshold: f64,

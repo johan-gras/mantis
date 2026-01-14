@@ -6,8 +6,8 @@
 //! # Example
 //!
 //! ```ignore
-//! use ralph_backtest::multi_asset::{MultiAssetEngine, PortfolioStrategy, AllocationSignal};
-//! use ralph_backtest::engine::BacktestConfig;
+//! use mantis::multi_asset::{MultiAssetEngine, PortfolioStrategy, AllocationSignal};
+//! use mantis::engine::BacktestConfig;
 //!
 //! let config = BacktestConfig::default();
 //! let mut engine = MultiAssetEngine::new(config);

@@ -12,7 +12,7 @@
 //! # Example
 //!
 //! ```ignore
-//! use ralph_backtest::regime::{RegimeDetector, RegimeConfig};
+//! use mantis::regime::{RegimeDetector, RegimeConfig};
 //!
 //! let config = RegimeConfig::default();
 //! let detector = RegimeDetector::new(config);

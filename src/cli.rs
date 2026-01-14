@@ -1,14 +1,14 @@
 //! Command-line interface for the backtest engine.
 
-use ralph_backtest::analytics::ResultFormatter;
-use ralph_backtest::config::BacktestFileConfig;
-use ralph_backtest::data::{load_csv, DataConfig};
-use ralph_backtest::engine::{BacktestConfig, Engine};
-use ralph_backtest::features::{FeatureConfig, FeatureExtractor, TimeSeriesSplitter};
-use ralph_backtest::portfolio::CostModel;
-use ralph_backtest::strategies::{BreakoutStrategy, MacdStrategy, MeanReversion, MomentumStrategy, RsiStrategy, SmaCrossover};
-use ralph_backtest::strategy::Strategy;
-use ralph_backtest::error::Result;
+use mantis::analytics::ResultFormatter;
+use mantis::config::BacktestFileConfig;
+use mantis::data::{load_csv, DataConfig};
+use mantis::engine::{BacktestConfig, Engine};
+use mantis::features::{FeatureConfig, FeatureExtractor, TimeSeriesSplitter};
+use mantis::portfolio::CostModel;
+use mantis::strategies::{BreakoutStrategy, MacdStrategy, MeanReversion, MomentumStrategy, RsiStrategy, SmaCrossover};
+use mantis::strategy::Strategy;
+use mantis::error::Result;
 
 use clap::{Parser, Subcommand, ValueEnum};
 use std::path::PathBuf;
@@ -16,9 +16,9 @@ use std::fs;
 use tracing::{info, Level};
 use tracing_subscriber::FmtSubscriber;
 
-/// Ralph Backtest - A production-quality backtesting engine for quantitative trading.
+/// Mantis - A high-performance backtesting engine for quantitative trading.
 #[derive(Parser)]
-#[command(name = "ralph")]
+#[command(name = "mantis")]
 #[command(author = "Johan")]
 #[command(version = "1.0.0")]
 #[command(about = "A high-performance backtesting engine for trading strategies")]
@@ -372,7 +372,7 @@ fn run_optimization(
     info!("Running parameter optimization...");
 
     // Extract just BacktestResults, discarding the parameter info
-    let mut results: Vec<ralph_backtest::BacktestResult> = match strategy_type {
+    let mut results: Vec<mantis::BacktestResult> = match strategy_type {
         StrategyType::SmaCrossover => {
             // Generate parameter combinations
             let mut params = Vec::new();
@@ -511,8 +511,8 @@ fn print_strategies() {
     println!();
 
     println!("Feature Extraction:");
-    println!("  Use 'ralph features' command to export features for ML training.");
-    println!("  Example: ralph features -d data.csv -o ml_data --feature-config comprehensive");
+    println!("  Use 'mantis features' command to export features for ML training.");
+    println!("  Example: mantis features -d data.csv -o ml_data --feature-config comprehensive");
     println!();
 }
 
@@ -523,7 +523,7 @@ fn init_config(output: &PathBuf) -> Result<()> {
     fs::write(output, example)?;
     println!("Created example configuration file: {}", output.display());
     println!("\nEdit this file to customize your backtest, then run:");
-    println!("  ralph run-config -c {}", output.display());
+    println!("  mantis run-config -c {}", output.display());
     Ok(())
 }
 
@@ -535,7 +535,7 @@ fn run_from_config(config_path: &PathBuf, output: OutputFormat) -> Result<()> {
 
     // Get data path
     let data_path = file_config.data.path.ok_or_else(|| {
-        ralph_backtest::BacktestError::ConfigError("No data path specified in config".to_string())
+        mantis::BacktestError::ConfigError("No data path specified in config".to_string())
     })?;
 
     info!("Loading data from: {}", data_path);
@@ -578,7 +578,7 @@ fn run_from_config(config_path: &PathBuf, output: OutputFormat) -> Result<()> {
             Box::new(MacdStrategy::new(fast, slow, signal))
         }
         other => {
-            return Err(ralph_backtest::BacktestError::ConfigError(
+            return Err(mantis::BacktestError::ConfigError(
                 format!("Unknown strategy: {}", other)
             ));
         }
@@ -714,7 +714,7 @@ mod tests {
     #[test]
     fn test_cli_parse() {
         let cli = Cli::try_parse_from([
-            "ralph",
+            "mantis",
             "run",
             "-d", "test.csv",
             "-s", "TEST",
@@ -725,7 +725,7 @@ mod tests {
 
     #[test]
     fn test_strategies_command() {
-        let cli = Cli::try_parse_from(["ralph", "strategies"]);
+        let cli = Cli::try_parse_from(["mantis", "strategies"]);
         assert!(cli.is_ok());
     }
 }

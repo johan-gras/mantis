@@ -313,7 +313,7 @@ impl BacktestFileConfig {
 
     /// Generate an example configuration file content.
     pub fn example() -> String {
-        r#"# Ralph Backtest Configuration File
+        r#"# Mantis Configuration File
 # This file configures a backtest run
 
 [backtest]

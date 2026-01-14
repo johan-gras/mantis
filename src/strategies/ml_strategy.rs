@@ -11,7 +11,7 @@
 //! Load predictions from a file or array:
 //!
 //! ```ignore
-//! use ralph_backtest::strategies::ExternalSignalStrategy;
+//! use mantis::strategies::ExternalSignalStrategy;
 //!
 //! let predictions = vec![0.0, 0.5, -0.3, 0.8, -0.2]; // From your ML model
 //! let strategy = ExternalSignalStrategy::new(predictions, 0.5);

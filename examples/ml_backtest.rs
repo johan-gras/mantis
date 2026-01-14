@@ -9,12 +9,12 @@
 //!
 //! Run with: cargo run --example ml_backtest
 
-use ralph_backtest::data::{load_csv, DataConfig};
-use ralph_backtest::engine::{BacktestConfig, Engine};
-use ralph_backtest::features::{FeatureConfig, FeatureExtractor, TimeSeriesSplitter};
-use ralph_backtest::strategies::ExternalSignalStrategy;
-use ralph_backtest::analytics::ResultFormatter;
-use ralph_backtest::types::Bar;
+use mantis::data::{load_csv, DataConfig};
+use mantis::engine::{BacktestConfig, Engine};
+use mantis::features::{FeatureConfig, FeatureExtractor, TimeSeriesSplitter};
+use mantis::strategies::ExternalSignalStrategy;
+use mantis::analytics::ResultFormatter;
+use mantis::types::Bar;
 use chrono::{TimeZone, Utc};
 
 /// Generate synthetic data for demonstration.

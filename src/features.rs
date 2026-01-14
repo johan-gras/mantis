@@ -15,8 +15,8 @@
 //! # Example
 //!
 //! ```
-//! use ralph_backtest::features::{FeatureExtractor, FeatureConfig};
-//! use ralph_backtest::data::load_csv;
+//! use mantis::features::{FeatureExtractor, FeatureConfig};
+//! use mantis::data::load_csv;
 //!
 //! let bars = load_csv("data/sample.csv", &Default::default()).unwrap();
 //! let config = FeatureConfig::default();

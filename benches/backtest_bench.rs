@@ -3,11 +3,11 @@
 //! Run with: cargo bench
 
 use criterion::{black_box, criterion_group, criterion_main, Criterion, BenchmarkId};
-use ralph_backtest::data::{atr, bollinger_bands, ema, macd, rsi, sma};
-use ralph_backtest::engine::{BacktestConfig, Engine};
-use ralph_backtest::features::{FeatureConfig, FeatureExtractor};
-use ralph_backtest::strategies::{SmaCrossover, MacdStrategy, RsiStrategy, MomentumStrategy};
-use ralph_backtest::types::Bar;
+use mantis::data::{atr, bollinger_bands, ema, macd, rsi, sma};
+use mantis::engine::{BacktestConfig, Engine};
+use mantis::features::{FeatureConfig, FeatureExtractor};
+use mantis::strategies::{SmaCrossover, MacdStrategy, RsiStrategy, MomentumStrategy};
+use mantis::types::Bar;
 use chrono::{TimeZone, Utc};
 
 /// Generate synthetic bars for benchmarking.
@@ -230,7 +230,7 @@ fn bench_optimization(c: &mut Criterion) {
 
 /// Benchmark streaming indicators.
 fn bench_streaming_indicators(c: &mut Criterion) {
-    use ralph_backtest::streaming::{StreamingSMA, StreamingEMA, StreamingRSI, StreamingIndicator};
+    use mantis::streaming::{StreamingSMA, StreamingEMA, StreamingRSI, StreamingIndicator};
 
     let bars = generate_bars(1000);
 
@@ -274,7 +274,7 @@ fn bench_streaming_indicators(c: &mut Criterion) {
 
 /// Benchmark Monte Carlo simulation.
 fn bench_monte_carlo(c: &mut Criterion) {
-    use ralph_backtest::monte_carlo::{MonteCarloConfig, MonteCarloSimulator};
+    use mantis::monte_carlo::{MonteCarloConfig, MonteCarloSimulator};
 
     let mut group = c.benchmark_group("monte_carlo");
     group.sample_size(10); // Fewer samples for slow benchmarks
@@ -319,7 +319,7 @@ fn bench_monte_carlo(c: &mut Criterion) {
 
 /// Benchmark regime detection.
 fn bench_regime_detection(c: &mut Criterion) {
-    use ralph_backtest::regime::{RegimeConfig, RegimeDetector};
+    use mantis::regime::{RegimeConfig, RegimeDetector};
 
     let mut group = c.benchmark_group("regime");
 
@@ -343,7 +343,7 @@ fn bench_regime_detection(c: &mut Criterion) {
 
 /// Benchmark Parquet export.
 fn bench_parquet_export(c: &mut Criterion) {
-    use ralph_backtest::export::export_features_parquet;
+    use mantis::export::export_features_parquet;
     use tempfile::TempDir;
 
     let mut group = c.benchmark_group("parquet");

@@ -11,9 +11,9 @@
 //!
 //! Run with: cargo run --example feature_export
 
-use ralph_backtest::data::{load_csv, DataConfig};
-use ralph_backtest::features::{FeatureConfig, FeatureExtractor, SequenceBuilder, TimeSeriesSplitter};
-use ralph_backtest::types::Bar;
+use mantis::data::{load_csv, DataConfig};
+use mantis::features::{FeatureConfig, FeatureExtractor, SequenceBuilder, TimeSeriesSplitter};
+use mantis::types::Bar;
 use chrono::{TimeZone, Utc};
 use std::fs;
 
@@ -154,7 +154,7 @@ fn main() {
     println!("\n7. Generating Python loading code...");
     let python_code = r#"
 """
-Load Ralph-exported features for PyTorch training.
+Load Mantis-exported features for PyTorch training.
 
 Usage:
     python load_features.py

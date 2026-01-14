@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-PyTorch Integration Example for Ralph Backtest Engine
+PyTorch Integration Example for Mantis Backtest Engine
 
 This example demonstrates how to:
 1. Export features from the Rust engine for ML training
@@ -11,10 +11,10 @@ Requirements:
     pip install torch numpy pandas
 
 Workflow:
-    1. Use `ralph features --csv` to export features
+    1. Use `mantis features --csv` to export features
     2. Train your model in Python
     3. Export predictions to CSV
-    4. Use `ralph backtest --signals predictions.csv` to run the backtest
+    4. Use `mantis backtest --signals predictions.csv` to run the backtest
 """
 
 import subprocess
@@ -35,11 +35,11 @@ except ImportError as e:
 
 
 # ============================================================================
-# Step 1: Generate Features using Ralph CLI
+# Step 1: Generate Features using Mantis CLI
 # ============================================================================
 
 def export_features(data_path: str, output_path: str = "features.csv"):
-    """Export features from Ralph backtest engine."""
+    """Export features from Mantis backtest engine."""
     cmd = [
         "cargo", "run", "--release", "--",
         "features",
@@ -284,7 +284,7 @@ def generate_predictions(model: nn.Module, features: np.ndarray,
 
 
 def export_predictions(predictions: pd.DataFrame, output_path: str = "predictions.csv"):
-    """Export predictions for Ralph backtest engine."""
+    """Export predictions for Mantis backtest engine."""
     predictions.to_csv(output_path, index=False)
     print(f"Predictions saved to: {output_path}")
     return output_path
@@ -296,7 +296,7 @@ def export_predictions(predictions: pd.DataFrame, output_path: str = "prediction
 
 def run_backtest(data_path: str, signals_path: str,
                  threshold: float = 0.5, output: str = "results.json"):
-    """Run backtest using the Ralph engine with ML predictions."""
+    """Run backtest using the Mantis engine with ML predictions."""
 
     cmd = [
         "cargo", "run", "--release", "--",
@@ -394,7 +394,7 @@ def main():
     """Main example workflow."""
 
     print("=" * 60)
-    print("PyTorch Integration Example for Ralph Backtest")
+    print("PyTorch Integration Example for Mantis Backtest")
     print("=" * 60)
 
     # Create synthetic data for demonstration
@@ -471,7 +471,7 @@ def main():
     print("\n" + "=" * 60)
     print("Example complete!")
     print("=" * 60)
-    print("\nTo run a full backtest with the Ralph engine:")
+    print("\nTo run a full backtest with the Mantis engine:")
     print("  cargo run --release -- backtest --data your_data.csv \\")
     print("      --strategy external-signal --signals predictions.csv \\")
     print("      --threshold 0.001")

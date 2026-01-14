@@ -1,6 +1,8 @@
-# Ralph Backtest Engine
+# Mantis
 
-A production-quality, high-performance backtesting engine for quantitative trading, built in Rust with first-class support for deep learning workflows.
+Mantis - A high-performance backtesting engine for quantitative trading.
+
+A production-quality backtesting engine built in Rust with first-class support for deep learning workflows.
 
 ## Features
 
@@ -47,8 +49,8 @@ A production-quality, high-performance backtesting engine for quantitative tradi
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/ralph-backtest.git
-cd ralph-backtest
+git clone https://github.com/yourusername/mantis.git
+cd mantis
 
 # Build in release mode
 cargo build --release
@@ -89,13 +91,13 @@ cargo run --release -- strategies
 ### Library Usage
 
 ```rust
-use ralph_backtest::{
+use mantis::{
     engine::{Engine, BacktestConfig},
     strategies::SmaCrossover,
     data::load_csv,
 };
 
-fn main() -> ralph_backtest::Result<()> {
+fn main() -> mantis::Result<()> {
     // Create engine with configuration
     let config = BacktestConfig {
         initial_capital: 100_000.0,
@@ -125,7 +127,7 @@ fn main() -> ralph_backtest::Result<()> {
 ### Using External Signals
 
 ```rust
-use ralph_backtest::strategies::ExternalSignalStrategy;
+use mantis::strategies::ExternalSignalStrategy;
 
 // Load predictions from your ML model
 let predictions: Vec<f64> = load_model_predictions();
@@ -142,7 +144,7 @@ let result = engine.run(&mut strategy, "SYMBOL")?;
 ### Feature Extraction for Training
 
 ```rust
-use ralph_backtest::features::{FeatureConfig, FeatureExtractor};
+use mantis::features::{FeatureConfig, FeatureExtractor};
 
 let config = FeatureConfig::comprehensive();
 let extractor = FeatureExtractor::new(config);
@@ -158,7 +160,7 @@ std::fs::write("features.csv", csv)?;
 ### Regime Detection
 
 ```rust
-use ralph_backtest::regime::{RegimeDetector, RegimeConfig};
+use mantis::regime::{RegimeDetector, RegimeConfig};
 
 let detector = RegimeDetector::new(RegimeConfig::default());
 let regimes = detector.detect(&bars);
@@ -174,7 +176,7 @@ for (i, regime) in regimes.iter().enumerate() {
 Export features, equity curves, and trades to Parquet format for efficient loading in Python:
 
 ```rust
-use ralph_backtest::export::{
+use mantis::export::{
     export_features_parquet,
     export_equity_curve_parquet,
     export_trades_parquet,
@@ -214,7 +216,7 @@ model = LSTMPredictor(input_size=n_features)
 model = train_model(model, train_dataset, val_dataset)
 predictions = generate_predictions(model, features)
 
-# Export for Ralph backtest
+# Export for Mantis backtest
 predictions.to_csv("predictions.csv")
 
 # Run backtest
@@ -238,7 +240,7 @@ predictions.to_csv("predictions.csv")
 ## Risk Management
 
 ```rust
-use ralph_backtest::risk::{RiskConfig, StopLoss, TakeProfit};
+use mantis::risk::{RiskConfig, StopLoss, TakeProfit};
 
 let risk_config = RiskConfig {
     stop_loss: StopLoss::Percentage(5.0),     // 5% stop
@@ -252,7 +254,7 @@ let risk_config = RiskConfig {
 ## Monte Carlo Analysis
 
 ```rust
-use ralph_backtest::monte_carlo::{MonteCarloSimulator, MonteCarloConfig};
+use mantis::monte_carlo::{MonteCarloSimulator, MonteCarloConfig};
 
 let config = MonteCarloConfig::default()
     .with_simulations(1000)
@@ -269,7 +271,7 @@ println!("95% CI: [{:.2}%, {:.2}%]",
 ## Multi-Asset Portfolio
 
 ```rust
-use ralph_backtest::multi_asset::{MultiAssetEngine, EqualWeightStrategy};
+use mantis::multi_asset::{MultiAssetEngine, EqualWeightStrategy};
 
 let mut engine = MultiAssetEngine::new(config);
 engine.add_data("AAPL", aapl_bars);

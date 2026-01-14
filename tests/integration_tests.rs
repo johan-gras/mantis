@@ -1,17 +1,17 @@
 //! Integration tests for the backtest engine.
 
-use ralph_backtest::data::{load_csv, DataConfig};
-use ralph_backtest::engine::{BacktestConfig, Engine};
-use ralph_backtest::features::{FeatureConfig, FeatureExtractor, SequenceBuilder, TimeSeriesSplitter};
-use ralph_backtest::portfolio::CostModel;
-use ralph_backtest::risk::{RiskConfig, StopLoss, TakeProfit};
-use ralph_backtest::strategies::{
+use mantis::data::{load_csv, DataConfig};
+use mantis::engine::{BacktestConfig, Engine};
+use mantis::features::{FeatureConfig, FeatureExtractor, SequenceBuilder, TimeSeriesSplitter};
+use mantis::portfolio::CostModel;
+use mantis::risk::{RiskConfig, StopLoss, TakeProfit};
+use mantis::strategies::{
     MacdStrategy, MomentumStrategy, RsiStrategy, SmaCrossover,
     ExternalSignalStrategy, ClassificationStrategy, EnsembleSignalStrategy,
     BreakoutStrategy,
 };
-use ralph_backtest::types::Bar;
-use ralph_backtest::walkforward::{WalkForwardAnalyzer, WalkForwardConfig, WalkForwardMetric};
+use mantis::types::Bar;
+use mantis::walkforward::{WalkForwardAnalyzer, WalkForwardConfig, WalkForwardMetric};
 use chrono::{TimeZone, Utc};
 
 /// Create synthetic test data with a trend and some noise.
@@ -260,7 +260,7 @@ fn test_short_selling_disabled() {
 
     // All trades should be long-only
     for trade in &result.trades {
-        assert!(trade.quantity >= 0.0 || trade.side == ralph_backtest::types::Side::Sell);
+        assert!(trade.quantity >= 0.0 || trade.side == mantis::types::Side::Sell);
     }
 }
 
@@ -556,7 +556,7 @@ fn test_multiple_strategies_comparison() {
     };
 
     // Test multiple strategies on the same data
-    let strategies: Vec<Box<dyn ralph_backtest::Strategy>> = vec![
+    let strategies: Vec<Box<dyn mantis::Strategy>> = vec![
         Box::new(SmaCrossover::new(10, 30)),
         Box::new(MacdStrategy::default_params()),
         Box::new(RsiStrategy::new(14, 30.0, 70.0)),
@@ -628,7 +628,7 @@ fn test_equity_curve_stored_in_result() {
 
 #[test]
 fn test_monte_carlo_simulation() {
-    use ralph_backtest::monte_carlo::{MonteCarloConfig, MonteCarloSimulator};
+    use mantis::monte_carlo::{MonteCarloConfig, MonteCarloSimulator};
 
     // Create data with enough price movement to generate trades
     let bars = create_synthetic_data(500, 100.0, 0.002);
@@ -675,7 +675,7 @@ fn test_monte_carlo_simulation() {
 
 #[test]
 fn test_regime_detection() {
-    use ralph_backtest::regime::{RegimeConfig, RegimeDetector};
+    use mantis::regime::{RegimeConfig, RegimeDetector};
 
     // Create uptrending data
     let uptrend_bars = create_synthetic_data(100, 100.0, 0.01); // 1% daily returns
@@ -720,7 +720,7 @@ fn test_regime_detection() {
 
 #[test]
 fn test_parquet_export() {
-    use ralph_backtest::export::{export_features_parquet, export_equity_curve_parquet, export_trades_parquet};
+    use mantis::export::{export_features_parquet, export_equity_curve_parquet, export_trades_parquet};
     use tempfile::TempDir;
 
     let bars = create_synthetic_data(100, 100.0, 0.001);
@@ -767,7 +767,7 @@ fn test_parquet_export() {
 
 #[test]
 fn test_streaming_indicators() {
-    use ralph_backtest::streaming::{StreamingSMA, StreamingRSI, StreamingIndicator};
+    use mantis::streaming::{StreamingSMA, StreamingRSI, StreamingIndicator};
 
     let bars = create_synthetic_data(100, 100.0, 0.001);
 

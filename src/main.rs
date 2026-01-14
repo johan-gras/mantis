@@ -1,4 +1,4 @@
-//! Ralph Backtest CLI entry point.
+//! Mantis CLI entry point.
 
 mod cli;
 

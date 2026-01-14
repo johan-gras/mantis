@@ -7,7 +7,7 @@
 //! # Example
 //!
 //! ```ignore
-//! use ralph_backtest::streaming::{StreamingSMA, StreamingRSI, StreamingIndicator};
+//! use mantis::streaming::{StreamingSMA, StreamingRSI, StreamingIndicator};
 //!
 //! let mut sma = StreamingSMA::new(20);
 //! let mut rsi = StreamingRSI::new(14);

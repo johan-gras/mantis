@@ -9,8 +9,8 @@
 //! # Example
 //!
 //! ```ignore
-//! use ralph_backtest::monte_carlo::{MonteCarloSimulator, MonteCarloConfig};
-//! use ralph_backtest::engine::BacktestResult;
+//! use mantis::monte_carlo::{MonteCarloSimulator, MonteCarloConfig};
+//! use mantis::engine::BacktestResult;
 //!
 //! let result: BacktestResult = /* from backtest */;
 //! let config = MonteCarloConfig::default();

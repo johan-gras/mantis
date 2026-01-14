@@ -7,7 +7,7 @@ MAX_ITER=${1:-100}
 ITER=0
 
 echo "╔══════════════════════════════════════════════════════════╗"
-echo "║  RALPH RUST BACKTEST - OPEN ENDED                        ║"
+echo "║  MANTIS - OPEN ENDED                                     ║"
 echo "║  Max iterations: $MAX_ITER                                       ║"
 echo "║  Claude: $CLAUDE_PATH"
 echo "╚══════════════════════════════════════════════════════════╝"
@@ -51,7 +51,7 @@ while [ $ITER -lt $MAX_ITER ]; do
     
     # Commit whatever changed
     git add -A
-    git commit -m "ralph: iteration $ITER" 2>/dev/null || echo "(no changes to commit)"
+    git commit -m "mantis: iteration $ITER" 2>/dev/null || echo "(no changes to commit)"
     
     # Brief pause
     sleep 1
