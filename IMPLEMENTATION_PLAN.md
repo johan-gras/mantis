@@ -4,7 +4,7 @@
 
 | Metric | Status |
 |--------|--------|
-| **Tests** | 215 passing (185 unit + 2 CLI + 28 integration + 3 doc-tests) |
+| **Tests** | 238 passing (203 unit + 2 CLI + 28 integration + 5 doc-tests) |
 | **Clippy** | 0 errors (PASSING) |
 | **Cargo fmt** | PASSING |
 
@@ -102,54 +102,33 @@ These features are explicitly required in the spec but not implemented.
 - CLI support via `mantis quality -d data.csv -I 86400` command (interval in seconds)
 - Tests: `test_detect_gaps`, `test_detect_gaps_no_gaps`, `test_fill_gaps_forward_fill`, `test_fill_gaps_backward_fill`, `test_fill_gaps_linear`, `test_data_quality_report`, `test_data_quality_report_clean_data`
 
-### 2.5 Corporate Actions Support
+### 2.5 Corporate Actions Support - COMPLETE
 
 **Spec requirement:** "Corporate actions support (splits, dividends)" (backtest-engine.md line 21)
 
 **Location:** `src/data.rs`, `src/types.rs`
 
-**Current state:** Not implemented at all
-
-**Implementation tasks:**
-1. Add corporate action types to `src/types.rs`:
-   ```rust
-   pub enum CorporateActionType {
-       Split { ratio: f64 },           // e.g., 2.0 for 2-for-1 split
-       ReverseSplit { ratio: f64 },    // e.g., 0.1 for 1-for-10 reverse
-       Dividend { amount: f64, div_type: DividendType },
-       SpinOff { ratio: f64, symbol: String },
-   }
-
-   pub enum DividendType {
-       Cash,
-       Stock,
-       Special,
-   }
-
-   pub struct CorporateAction {
-       pub symbol: String,
-       pub action_type: CorporateActionType,
-       pub ex_date: DateTime<Utc>,
-       pub record_date: Option<DateTime<Utc>>,
-       pub pay_date: Option<DateTime<Utc>>,
-   }
-   ```
-
-2. Add adjustment functions in `src/data.rs`:
-   ```rust
-   pub fn adjust_for_splits(bars: &mut [Bar], splits: &[CorporateAction])
-   pub fn adjust_for_dividends(bars: &mut [Bar], dividends: &[CorporateAction], method: DividendAdjustMethod)
-   pub fn apply_adjustment_factor(bars: &mut [Bar], factors: &[(DateTime<Utc>, f64)])
-   ```
-
-3. Add `adjustment_factor: Option<f64>` field to `Bar` struct (optional)
-
-4. Support corporate actions file loading:
-   ```rust
-   pub fn load_corporate_actions(path: impl AsRef<Path>) -> Result<Vec<CorporateAction>>
-   ```
-
-5. CLI integration: `mantis backtest --data prices.csv --adjustments splits.csv`
+**Implementation Summary:**
+- `DividendType` enum with Cash, Stock, Special variants
+- `CorporateActionType` enum with Split, ReverseSplit, Dividend, SpinOff variants
+- `CorporateAction` struct with symbol, action_type, ex_date, record_date, pay_date fields
+- `DividendAdjustMethod` enum with Proportional, Absolute, None methods
+- Builder methods: `CorporateAction::split()`, `reverse_split()`, `cash_dividend()`, `dividend()`, `spin_off()`
+- Fluent setters: `with_record_date()`, `with_pay_date()`
+- Helper methods: `adjustment_factor()`, `requires_price_adjustment()`, `is_dividend()`, `dividend_amount()`
+- `adjust_for_splits()` - adjusts prices for stock splits (divides pre-split prices by ratio, multiplies volume)
+- `adjust_for_dividends()` - adjusts prices for dividends (proportional or absolute methods)
+- `apply_adjustment_factor()` - applies custom adjustment factors to bars
+- `load_corporate_actions()` - loads corporate actions from CSV files with flexible column naming
+- `filter_actions_for_symbol()` - filters actions for a specific symbol
+- `cumulative_adjustment_factor()` - calculates cumulative adjustment factor for a timestamp
+- Re-exported in `lib.rs` for public API access
+- Tests: `test_corporate_action_split`, `test_corporate_action_reverse_split`, `test_corporate_action_dividend`,
+  `test_corporate_action_special_dividend`, `test_corporate_action_spinoff`, `test_corporate_action_serialization`,
+  `test_dividend_type_default`, `test_adjust_for_splits`, `test_adjust_for_reverse_split`,
+  `test_adjust_for_dividends_proportional`, `test_adjust_for_dividends_absolute`, `test_adjust_for_dividends_none`,
+  `test_apply_adjustment_factor`, `test_cumulative_adjustment_factor`, `test_filter_actions_for_symbol`,
+  `test_load_corporate_actions`, `test_adjust_for_splits_empty`, `test_multiple_splits`
 
 ### 2.6 Multi-Asset Class Support
 
@@ -554,7 +533,7 @@ All clippy errors fixed and code formatted. Verification passes.
 3. ~~Fix drawdown analysis (3.2)~~ - COMPLETE
 
 ### Phase 4: Asset Classes and Corporate Actions
-1. Add corporate actions support (2.5)
+1. ~~Add corporate actions support (2.5)~~ - COMPLETE
 2. Add asset class differentiation (2.6)
 
 ### Phase 5: Polish
@@ -588,7 +567,7 @@ The following spec requirements are fully implemented and verified:
 - [x] Configuration via files and arguments
 - [x] Progress reporting (indicatif progress bars)
 - [x] Output in multiple formats
-- [x] Comprehensive test coverage (205 tests)
+- [x] Comprehensive test coverage (238 tests)
 - [x] Stop-loss, take-profit, trailing stops (`src/risk.rs`)
 - [x] Position sizing (risk-based, volatility-based, Kelly)
 - [x] Monte Carlo simulation (`src/monte_carlo.rs`)
@@ -603,6 +582,7 @@ The following spec requirements are fully implemented and verified:
 - [x] Benchmark comparison metrics (alpha, beta, tracking error, information ratio, correlation, capture ratios)
 - [x] Actual daily returns from equity curve (meaningful volatility calculations)
 - [x] Proper drawdown analysis from equity curve (DrawdownPeriod, DrawdownAnalysis, Ulcer Index)
+- [x] Corporate actions support (splits, dividends, reverse splits, spin-offs)
 
 ---
 

@@ -1493,6 +1493,468 @@ pub fn unalign_series(aligned: &[AlignedBars], symbol: &str) -> Vec<Bar> {
         .collect()
 }
 
+// =============================================================================
+// Corporate Actions Adjustment
+// =============================================================================
+
+use crate::types::{CorporateAction, CorporateActionType, DividendAdjustMethod, DividendType};
+
+/// Adjust bars for stock splits.
+///
+/// This function adjusts historical prices by dividing by the split ratio for all
+/// bars before the ex-date. This makes pre-split prices comparable to post-split prices.
+///
+/// For a 4-for-1 split, pre-split prices are divided by 4.
+/// For a 1-for-10 reverse split (ratio = 0.1), pre-split prices are divided by 0.1 (multiplied by 10).
+///
+/// # Arguments
+/// * `bars` - Mutable slice of bars to adjust (should be sorted by timestamp)
+/// * `splits` - Slice of corporate actions (only Split and ReverseSplit are processed)
+///
+/// # Example
+/// ```
+/// use mantis::data::adjust_for_splits;
+/// use mantis::types::{Bar, CorporateAction};
+/// use chrono::{TimeZone, Utc};
+///
+/// let mut bars = vec![
+///     Bar::new(Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap(), 400.0, 410.0, 390.0, 405.0, 1000.0),
+///     Bar::new(Utc.with_ymd_and_hms(2024, 1, 10, 0, 0, 0).unwrap(), 100.0, 105.0, 98.0, 102.0, 4000.0),
+/// ];
+///
+/// let splits = vec![
+///     CorporateAction::split("AAPL", 4.0, Utc.with_ymd_and_hms(2024, 1, 5, 0, 0, 0).unwrap()),
+/// ];
+///
+/// adjust_for_splits(&mut bars, &splits);
+/// // Pre-split bar (Jan 1) prices are now divided by 4
+/// assert!((bars[0].close - 101.25).abs() < 0.01);
+/// ```
+pub fn adjust_for_splits(bars: &mut [Bar], splits: &[CorporateAction]) {
+    // Filter to only split/reverse split actions
+    let split_actions: Vec<&CorporateAction> = splits
+        .iter()
+        .filter(|a| a.requires_price_adjustment())
+        .collect();
+
+    if split_actions.is_empty() || bars.is_empty() {
+        return;
+    }
+
+    // Sort actions by ex_date descending (process most recent first)
+    let mut sorted_actions = split_actions;
+    sorted_actions.sort_by(|a, b| b.ex_date.cmp(&a.ex_date));
+
+    for action in sorted_actions {
+        let ratio = action.adjustment_factor();
+        if (ratio - 1.0).abs() < f64::EPSILON || ratio <= 0.0 {
+            continue;
+        }
+
+        // Adjust all bars before the ex-date
+        for bar in bars.iter_mut() {
+            if bar.timestamp < action.ex_date {
+                bar.open /= ratio;
+                bar.high /= ratio;
+                bar.low /= ratio;
+                bar.close /= ratio;
+                // Volume is multiplied by ratio (more shares = more volume)
+                bar.volume *= ratio;
+            }
+        }
+    }
+}
+
+/// Adjust bars for dividend payments.
+///
+/// This function adjusts historical prices to account for dividend payments,
+/// making pre-dividend prices comparable to post-dividend prices.
+///
+/// # Arguments
+/// * `bars` - Mutable slice of bars to adjust (should be sorted by timestamp)
+/// * `dividends` - Slice of corporate actions (only Dividend types are processed)
+/// * `method` - Method to use for adjustment
+///
+/// # Adjustment Methods
+/// * `Proportional` - Standard method: multiply pre-ex-date prices by (1 - dividend/close_before_ex)
+/// * `Absolute` - Subtract the dividend amount from all pre-ex-date prices
+/// * `None` - No adjustment
+pub fn adjust_for_dividends(
+    bars: &mut [Bar],
+    dividends: &[CorporateAction],
+    method: DividendAdjustMethod,
+) {
+    if method == DividendAdjustMethod::None {
+        return;
+    }
+
+    // Filter to only dividend actions
+    let div_actions: Vec<&CorporateAction> = dividends.iter().filter(|a| a.is_dividend()).collect();
+
+    if div_actions.is_empty() || bars.is_empty() {
+        return;
+    }
+
+    // Sort actions by ex_date descending (process most recent first)
+    let mut sorted_actions = div_actions;
+    sorted_actions.sort_by(|a, b| b.ex_date.cmp(&a.ex_date));
+
+    for action in sorted_actions {
+        let dividend = match action.dividend_amount() {
+            Some(d) if d > 0.0 => d,
+            _ => continue,
+        };
+
+        // Find the close price just before the ex-date for proportional adjustment
+        let close_before_ex = match method {
+            DividendAdjustMethod::Proportional => {
+                // Find the last bar before ex-date by searching from the end
+                bars.iter()
+                    .rev()
+                    .find(|b| b.timestamp < action.ex_date)
+                    .map(|b| b.close)
+            }
+            _ => None,
+        };
+
+        // Calculate adjustment factor for proportional method
+        let adjustment_factor = match (method, close_before_ex) {
+            (DividendAdjustMethod::Proportional, Some(close)) if close > dividend => {
+                (close - dividend) / close
+            }
+            (DividendAdjustMethod::Proportional, _) => 1.0, // Skip if close not found or dividend >= close
+            _ => 1.0,
+        };
+
+        // Adjust all bars before the ex-date
+        for bar in bars.iter_mut() {
+            if bar.timestamp < action.ex_date {
+                match method {
+                    DividendAdjustMethod::Proportional => {
+                        bar.open *= adjustment_factor;
+                        bar.high *= adjustment_factor;
+                        bar.low *= adjustment_factor;
+                        bar.close *= adjustment_factor;
+                    }
+                    DividendAdjustMethod::Absolute => {
+                        bar.open -= dividend;
+                        bar.high -= dividend;
+                        bar.low -= dividend;
+                        bar.close -= dividend;
+                    }
+                    DividendAdjustMethod::None => {}
+                }
+                // Volume is not affected by dividend adjustments
+            }
+        }
+    }
+}
+
+/// Apply a list of adjustment factors to bars.
+///
+/// Each factor is applied to all bars before the specified timestamp.
+/// Factors are cumulative - if there are multiple factors, they are multiplied together.
+///
+/// # Arguments
+/// * `bars` - Mutable slice of bars to adjust
+/// * `factors` - Slice of (timestamp, factor) pairs. Bars before each timestamp are divided by the factor.
+///
+/// # Example
+/// ```
+/// use mantis::data::apply_adjustment_factor;
+/// use mantis::types::Bar;
+/// use chrono::{TimeZone, Utc};
+///
+/// let mut bars = vec![
+///     Bar::new(Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap(), 100.0, 105.0, 95.0, 102.0, 1000.0),
+/// ];
+///
+/// let factors = vec![
+///     (Utc.with_ymd_and_hms(2024, 1, 10, 0, 0, 0).unwrap(), 2.0),
+/// ];
+///
+/// apply_adjustment_factor(&mut bars, &factors);
+/// assert!((bars[0].close - 51.0).abs() < 0.01);
+/// ```
+pub fn apply_adjustment_factor(bars: &mut [Bar], factors: &[(chrono::DateTime<chrono::Utc>, f64)]) {
+    if factors.is_empty() || bars.is_empty() {
+        return;
+    }
+
+    // Sort factors by timestamp descending (process most recent first)
+    let mut sorted_factors: Vec<_> = factors.to_vec();
+    sorted_factors.sort_by(|a, b| b.0.cmp(&a.0));
+
+    for (timestamp, factor) in sorted_factors {
+        if (factor - 1.0).abs() < f64::EPSILON || factor <= 0.0 {
+            continue;
+        }
+
+        for bar in bars.iter_mut() {
+            if bar.timestamp < timestamp {
+                bar.open /= factor;
+                bar.high /= factor;
+                bar.low /= factor;
+                bar.close /= factor;
+                bar.volume *= factor;
+            }
+        }
+    }
+}
+
+/// CSV row for corporate actions file.
+#[derive(Debug, Deserialize)]
+struct CorporateActionRow {
+    #[serde(alias = "Symbol", alias = "symbol", alias = "ticker", alias = "Ticker")]
+    symbol: String,
+    #[serde(alias = "Type", alias = "type", alias = "action", alias = "Action")]
+    action_type: String,
+    #[serde(
+        alias = "ExDate",
+        alias = "ex_date",
+        alias = "Date",
+        alias = "date",
+        alias = "ex-date"
+    )]
+    ex_date: String,
+    #[serde(
+        alias = "Value",
+        alias = "value",
+        alias = "amount",
+        alias = "Amount",
+        alias = "ratio",
+        alias = "Ratio",
+        default
+    )]
+    value: f64,
+    #[serde(
+        alias = "RecordDate",
+        alias = "record_date",
+        alias = "record-date",
+        default
+    )]
+    record_date: Option<String>,
+    #[serde(alias = "PayDate", alias = "pay_date", alias = "pay-date", default)]
+    pay_date: Option<String>,
+    #[serde(
+        alias = "NewSymbol",
+        alias = "new_symbol",
+        alias = "new-symbol",
+        default
+    )]
+    new_symbol: Option<String>,
+}
+
+/// Load corporate actions from a CSV file.
+///
+/// Expected CSV columns:
+/// - symbol: Stock symbol
+/// - action_type: One of "split", "reverse_split", "dividend", "special_dividend", "stock_dividend", "spinoff"
+/// - ex_date: Ex-date in parseable date format
+/// - value: Split ratio or dividend amount
+/// - record_date: Optional record date
+/// - pay_date: Optional pay date
+/// - new_symbol: New symbol for spin-offs
+///
+/// # Example CSV
+/// ```csv
+/// symbol,type,ex_date,value
+/// AAPL,split,2020-08-31,4.0
+/// MSFT,dividend,2024-02-14,0.75
+/// GE,spinoff,2024-04-02,0.25
+/// ```
+pub fn load_corporate_actions(path: impl AsRef<Path>) -> Result<Vec<CorporateAction>> {
+    let path = path.as_ref();
+    info!("Loading corporate actions from: {}", path.display());
+
+    let mut reader = ReaderBuilder::new()
+        .has_headers(true)
+        .flexible(true)
+        .from_path(path)?;
+
+    let mut actions = Vec::new();
+
+    for (row_num, result) in reader.deserialize().enumerate() {
+        let row: CorporateActionRow = match result {
+            Ok(r) => r,
+            Err(e) => {
+                warn!("Skipping row {}: {}", row_num + 1, e);
+                continue;
+            }
+        };
+
+        let ex_date = match parse_datetime(&row.ex_date, None) {
+            Ok(d) => d,
+            Err(e) => {
+                warn!("Skipping row {} - invalid ex_date: {}", row_num + 1, e);
+                continue;
+            }
+        };
+
+        let record_date = row
+            .record_date
+            .as_ref()
+            .and_then(|s| parse_datetime(s, None).ok());
+        let pay_date = row
+            .pay_date
+            .as_ref()
+            .and_then(|s| parse_datetime(s, None).ok());
+
+        let action_type = row.action_type.to_lowercase();
+        let action = match action_type.as_str() {
+            "split" | "stock_split" | "stock-split" => {
+                if row.value <= 0.0 {
+                    warn!(
+                        "Skipping row {} - invalid split ratio: {}",
+                        row_num + 1,
+                        row.value
+                    );
+                    continue;
+                }
+                CorporateAction {
+                    symbol: row.symbol,
+                    action_type: CorporateActionType::Split { ratio: row.value },
+                    ex_date,
+                    record_date,
+                    pay_date,
+                }
+            }
+            "reverse_split" | "reverse-split" | "reversesplit" => {
+                if row.value <= 0.0 {
+                    warn!(
+                        "Skipping row {} - invalid reverse split ratio: {}",
+                        row_num + 1,
+                        row.value
+                    );
+                    continue;
+                }
+                CorporateAction {
+                    symbol: row.symbol,
+                    action_type: CorporateActionType::ReverseSplit { ratio: row.value },
+                    ex_date,
+                    record_date,
+                    pay_date,
+                }
+            }
+            "dividend" | "cash_dividend" | "cash-dividend" => {
+                if row.value <= 0.0 {
+                    warn!(
+                        "Skipping row {} - invalid dividend amount: {}",
+                        row_num + 1,
+                        row.value
+                    );
+                    continue;
+                }
+                CorporateAction {
+                    symbol: row.symbol,
+                    action_type: CorporateActionType::Dividend {
+                        amount: row.value,
+                        div_type: DividendType::Cash,
+                    },
+                    ex_date,
+                    record_date,
+                    pay_date,
+                }
+            }
+            "special_dividend" | "special-dividend" | "specialdividend" => {
+                if row.value <= 0.0 {
+                    warn!(
+                        "Skipping row {} - invalid special dividend amount: {}",
+                        row_num + 1,
+                        row.value
+                    );
+                    continue;
+                }
+                CorporateAction {
+                    symbol: row.symbol,
+                    action_type: CorporateActionType::Dividend {
+                        amount: row.value,
+                        div_type: DividendType::Special,
+                    },
+                    ex_date,
+                    record_date,
+                    pay_date,
+                }
+            }
+            "stock_dividend" | "stock-dividend" | "stockdividend" => {
+                if row.value <= 0.0 {
+                    warn!(
+                        "Skipping row {} - invalid stock dividend amount: {}",
+                        row_num + 1,
+                        row.value
+                    );
+                    continue;
+                }
+                CorporateAction {
+                    symbol: row.symbol,
+                    action_type: CorporateActionType::Dividend {
+                        amount: row.value,
+                        div_type: DividendType::Stock,
+                    },
+                    ex_date,
+                    record_date,
+                    pay_date,
+                }
+            }
+            "spinoff" | "spin_off" | "spin-off" => {
+                let new_symbol = row.new_symbol.unwrap_or_default();
+                if new_symbol.is_empty() {
+                    warn!("Skipping row {} - spinoff missing new_symbol", row_num + 1);
+                    continue;
+                }
+                CorporateAction {
+                    symbol: row.symbol,
+                    action_type: CorporateActionType::SpinOff {
+                        ratio: row.value,
+                        new_symbol,
+                    },
+                    ex_date,
+                    record_date,
+                    pay_date,
+                }
+            }
+            _ => {
+                warn!(
+                    "Skipping row {} - unknown action type: {}",
+                    row_num + 1,
+                    row.action_type
+                );
+                continue;
+            }
+        };
+
+        actions.push(action);
+    }
+
+    // Sort by ex_date
+    actions.sort_by_key(|a| a.ex_date);
+
+    info!("Loaded {} corporate actions", actions.len());
+    Ok(actions)
+}
+
+/// Filter corporate actions for a specific symbol.
+pub fn filter_actions_for_symbol<'a>(
+    actions: &'a [CorporateAction],
+    symbol: &str,
+) -> Vec<&'a CorporateAction> {
+    actions.iter().filter(|a| a.symbol == symbol).collect()
+}
+
+/// Calculate cumulative adjustment factor for a bar based on all subsequent corporate actions.
+///
+/// This is useful for converting an unadjusted price to an adjusted price.
+pub fn cumulative_adjustment_factor(
+    bar_timestamp: chrono::DateTime<chrono::Utc>,
+    actions: &[CorporateAction],
+) -> f64 {
+    actions
+        .iter()
+        .filter(|a| a.requires_price_adjustment() && a.ex_date > bar_timestamp)
+        .map(|a| a.adjustment_factor())
+        .product()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2257,5 +2719,422 @@ mod tests {
         // Jan 1 should not be complete
         let jan1 = &aligned[0];
         assert!(!jan1.is_complete());
+    }
+
+    // =========================================================================
+    // Corporate Actions Tests
+    // =========================================================================
+
+    fn create_split_test_bars() -> Vec<Bar> {
+        // Create bars spanning a 4-for-1 split on Jan 5
+        vec![
+            Bar::new(
+                Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap(),
+                400.0,
+                420.0,
+                390.0,
+                410.0,
+                1000.0,
+            ),
+            Bar::new(
+                Utc.with_ymd_and_hms(2024, 1, 2, 0, 0, 0).unwrap(),
+                410.0,
+                430.0,
+                400.0,
+                420.0,
+                1100.0,
+            ),
+            Bar::new(
+                Utc.with_ymd_and_hms(2024, 1, 3, 0, 0, 0).unwrap(),
+                420.0,
+                440.0,
+                410.0,
+                432.0,
+                1200.0,
+            ),
+            // After split on Jan 5
+            Bar::new(
+                Utc.with_ymd_and_hms(2024, 1, 8, 0, 0, 0).unwrap(),
+                108.0,
+                112.0,
+                105.0,
+                110.0,
+                4500.0,
+            ),
+            Bar::new(
+                Utc.with_ymd_and_hms(2024, 1, 9, 0, 0, 0).unwrap(),
+                110.0,
+                115.0,
+                108.0,
+                112.0,
+                4800.0,
+            ),
+        ]
+    }
+
+    #[test]
+    fn test_adjust_for_splits() {
+        let mut bars = create_split_test_bars();
+        let splits = vec![CorporateAction::split(
+            "AAPL",
+            4.0,
+            Utc.with_ymd_and_hms(2024, 1, 5, 0, 0, 0).unwrap(),
+        )];
+
+        adjust_for_splits(&mut bars, &splits);
+
+        // Pre-split bars (Jan 1-3) should be divided by 4
+        assert!((bars[0].close - 102.5).abs() < 0.01); // 410 / 4
+        assert!((bars[1].close - 105.0).abs() < 0.01); // 420 / 4
+        assert!((bars[2].close - 108.0).abs() < 0.01); // 432 / 4
+
+        // Pre-split volume should be multiplied by 4
+        assert!((bars[0].volume - 4000.0).abs() < 0.01);
+
+        // Post-split bars should remain unchanged
+        assert!((bars[3].close - 110.0).abs() < 0.01);
+        assert!((bars[4].close - 112.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_adjust_for_reverse_split() {
+        let mut bars = vec![
+            Bar::new(
+                Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap(),
+                1.0,
+                1.2,
+                0.9,
+                1.1,
+                10000.0,
+            ),
+            Bar::new(
+                Utc.with_ymd_and_hms(2024, 1, 5, 0, 0, 0).unwrap(),
+                10.0,
+                12.0,
+                9.0,
+                11.0,
+                1000.0,
+            ),
+        ];
+
+        let splits = vec![CorporateAction::reverse_split(
+            "SIRI",
+            0.1, // 1-for-10 reverse split
+            Utc.with_ymd_and_hms(2024, 1, 3, 0, 0, 0).unwrap(),
+        )];
+
+        adjust_for_splits(&mut bars, &splits);
+
+        // Pre-split price should be divided by 0.1 (multiplied by 10)
+        assert!((bars[0].close - 11.0).abs() < 0.01); // 1.1 / 0.1
+                                                      // Pre-split volume should be multiplied by 0.1
+        assert!((bars[0].volume - 1000.0).abs() < 0.01); // 10000 * 0.1
+
+        // Post-split should remain unchanged
+        assert!((bars[1].close - 11.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_adjust_for_dividends_proportional() {
+        let mut bars = vec![
+            Bar::new(
+                Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap(),
+                100.0,
+                105.0,
+                98.0,
+                102.0,
+                1000.0,
+            ),
+            Bar::new(
+                Utc.with_ymd_and_hms(2024, 1, 2, 0, 0, 0).unwrap(),
+                102.0,
+                108.0,
+                101.0,
+                106.0,
+                1100.0,
+            ),
+            // Ex-date is Jan 3
+            Bar::new(
+                Utc.with_ymd_and_hms(2024, 1, 3, 0, 0, 0).unwrap(),
+                105.0,
+                110.0,
+                104.0,
+                108.0,
+                1200.0,
+            ),
+        ];
+
+        let dividends = vec![CorporateAction::cash_dividend(
+            "MSFT",
+            2.0, // $2 dividend per share
+            Utc.with_ymd_and_hms(2024, 1, 3, 0, 0, 0).unwrap(),
+        )];
+
+        adjust_for_dividends(&mut bars, &dividends, DividendAdjustMethod::Proportional);
+
+        // Adjustment factor = (106 - 2) / 106 = 0.9811...
+        let factor = (106.0 - 2.0) / 106.0;
+
+        // Pre-ex bars should be adjusted
+        assert!((bars[0].close - 102.0 * factor).abs() < 0.01);
+        assert!((bars[1].close - 106.0 * factor).abs() < 0.01);
+
+        // Post-ex bar should remain unchanged
+        assert!((bars[2].close - 108.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_adjust_for_dividends_absolute() {
+        let mut bars = vec![
+            Bar::new(
+                Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap(),
+                100.0,
+                105.0,
+                98.0,
+                102.0,
+                1000.0,
+            ),
+            Bar::new(
+                Utc.with_ymd_and_hms(2024, 1, 3, 0, 0, 0).unwrap(),
+                105.0,
+                110.0,
+                104.0,
+                108.0,
+                1200.0,
+            ),
+        ];
+
+        let dividends = vec![CorporateAction::cash_dividend(
+            "MSFT",
+            2.0,
+            Utc.with_ymd_and_hms(2024, 1, 2, 0, 0, 0).unwrap(),
+        )];
+
+        adjust_for_dividends(&mut bars, &dividends, DividendAdjustMethod::Absolute);
+
+        // Pre-ex bar should have $2 subtracted
+        assert!((bars[0].close - 100.0).abs() < 0.01); // 102 - 2
+
+        // Post-ex bar should remain unchanged
+        assert!((bars[1].close - 108.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_adjust_for_dividends_none() {
+        let mut bars = create_test_bars();
+        let original_close = bars[0].close;
+
+        let dividends = vec![CorporateAction::cash_dividend(
+            "MSFT",
+            2.0,
+            Utc.with_ymd_and_hms(2024, 1, 3, 0, 0, 0).unwrap(),
+        )];
+
+        adjust_for_dividends(&mut bars, &dividends, DividendAdjustMethod::None);
+
+        // No adjustment should be made
+        assert!((bars[0].close - original_close).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_apply_adjustment_factor() {
+        let mut bars = vec![
+            Bar::new(
+                Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap(),
+                100.0,
+                105.0,
+                95.0,
+                102.0,
+                1000.0,
+            ),
+            Bar::new(
+                Utc.with_ymd_and_hms(2024, 1, 10, 0, 0, 0).unwrap(),
+                50.0,
+                55.0,
+                48.0,
+                52.0,
+                2000.0,
+            ),
+        ];
+
+        let factors = vec![(Utc.with_ymd_and_hms(2024, 1, 5, 0, 0, 0).unwrap(), 2.0)];
+
+        apply_adjustment_factor(&mut bars, &factors);
+
+        // Bar before factor date should be divided by 2
+        assert!((bars[0].close - 51.0).abs() < 0.01);
+        assert!((bars[0].volume - 2000.0).abs() < 0.01);
+
+        // Bar after factor date should remain unchanged
+        assert!((bars[1].close - 52.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_cumulative_adjustment_factor() {
+        let actions = vec![
+            CorporateAction::split(
+                "AAPL",
+                4.0,
+                Utc.with_ymd_and_hms(2024, 6, 1, 0, 0, 0).unwrap(),
+            ),
+            CorporateAction::split(
+                "AAPL",
+                7.0,
+                Utc.with_ymd_and_hms(2020, 8, 31, 0, 0, 0).unwrap(),
+            ),
+        ];
+
+        // Before both splits
+        let factor = cumulative_adjustment_factor(
+            Utc.with_ymd_and_hms(2020, 1, 1, 0, 0, 0).unwrap(),
+            &actions,
+        );
+        assert!((factor - 28.0).abs() < 0.01); // 4 * 7
+
+        // After first split, before second
+        let factor = cumulative_adjustment_factor(
+            Utc.with_ymd_and_hms(2023, 1, 1, 0, 0, 0).unwrap(),
+            &actions,
+        );
+        assert!((factor - 4.0).abs() < 0.01); // Only the 2024 split
+
+        // After both splits
+        let factor = cumulative_adjustment_factor(
+            Utc.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap(),
+            &actions,
+        );
+        assert!((factor - 1.0).abs() < 0.01); // No adjustment
+    }
+
+    #[test]
+    fn test_filter_actions_for_symbol() {
+        let actions = vec![
+            CorporateAction::split(
+                "AAPL",
+                4.0,
+                Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap(),
+            ),
+            CorporateAction::cash_dividend(
+                "MSFT",
+                0.75,
+                Utc.with_ymd_and_hms(2024, 1, 2, 0, 0, 0).unwrap(),
+            ),
+            CorporateAction::split(
+                "AAPL",
+                2.0,
+                Utc.with_ymd_and_hms(2024, 1, 3, 0, 0, 0).unwrap(),
+            ),
+        ];
+
+        let aapl_actions = filter_actions_for_symbol(&actions, "AAPL");
+        assert_eq!(aapl_actions.len(), 2);
+
+        let msft_actions = filter_actions_for_symbol(&actions, "MSFT");
+        assert_eq!(msft_actions.len(), 1);
+
+        let goog_actions = filter_actions_for_symbol(&actions, "GOOG");
+        assert_eq!(goog_actions.len(), 0);
+    }
+
+    #[test]
+    fn test_load_corporate_actions() {
+        let mut file = NamedTempFile::with_suffix(".csv").unwrap();
+        writeln!(file, "symbol,type,ex_date,value,new_symbol").unwrap();
+        writeln!(file, "AAPL,split,2020-08-31,4.0,").unwrap();
+        writeln!(file, "MSFT,dividend,2024-02-14,0.75,").unwrap();
+        writeln!(file, "GE,spinoff,2024-04-02,0.25,GEV").unwrap();
+        writeln!(file, "SIRI,reverse_split,2024-03-15,0.1,").unwrap();
+
+        let actions = load_corporate_actions(file.path()).unwrap();
+
+        assert_eq!(actions.len(), 4);
+
+        // Check split
+        assert_eq!(actions[0].symbol, "AAPL");
+        assert!(actions[0].requires_price_adjustment());
+        assert!((actions[0].adjustment_factor() - 4.0).abs() < f64::EPSILON);
+
+        // Check dividend
+        assert_eq!(actions[1].symbol, "MSFT");
+        assert!(actions[1].is_dividend());
+        assert!((actions[1].dividend_amount().unwrap() - 0.75).abs() < f64::EPSILON);
+
+        // Check reverse split
+        assert_eq!(actions[2].symbol, "SIRI");
+        assert!(actions[2].requires_price_adjustment());
+        assert!((actions[2].adjustment_factor() - 0.1).abs() < f64::EPSILON);
+
+        // Check spinoff
+        assert_eq!(actions[3].symbol, "GE");
+        match &actions[3].action_type {
+            CorporateActionType::SpinOff { ratio, new_symbol } => {
+                assert!((*ratio - 0.25).abs() < f64::EPSILON);
+                assert_eq!(new_symbol, "GEV");
+            }
+            _ => panic!("Expected SpinOff action type"),
+        }
+    }
+
+    #[test]
+    fn test_adjust_for_splits_empty() {
+        let mut bars = create_test_bars();
+        let original_close = bars[0].close;
+
+        // Empty actions
+        adjust_for_splits(&mut bars, &[]);
+        assert!((bars[0].close - original_close).abs() < f64::EPSILON);
+
+        // Only dividend actions (no splits)
+        let dividends = vec![CorporateAction::cash_dividend(
+            "AAPL",
+            1.0,
+            Utc.with_ymd_and_hms(2024, 1, 5, 0, 0, 0).unwrap(),
+        )];
+        adjust_for_splits(&mut bars, &dividends);
+        assert!((bars[0].close - original_close).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_multiple_splits() {
+        let mut bars = vec![
+            Bar::new(
+                Utc.with_ymd_and_hms(2020, 1, 1, 0, 0, 0).unwrap(),
+                280.0,
+                290.0,
+                275.0,
+                285.0,
+                1000.0,
+            ),
+            Bar::new(
+                Utc.with_ymd_and_hms(2024, 7, 1, 0, 0, 0).unwrap(),
+                180.0,
+                185.0,
+                175.0,
+                182.0,
+                5000.0,
+            ),
+        ];
+
+        // Two splits: 7-for-1 in 2020, then 4-for-1 in 2024
+        let splits = vec![
+            CorporateAction::split(
+                "AAPL",
+                7.0,
+                Utc.with_ymd_and_hms(2020, 8, 31, 0, 0, 0).unwrap(),
+            ),
+            CorporateAction::split(
+                "AAPL",
+                4.0,
+                Utc.with_ymd_and_hms(2024, 6, 1, 0, 0, 0).unwrap(),
+            ),
+        ];
+
+        adjust_for_splits(&mut bars, &splits);
+
+        // Bar from 2020 should be adjusted for both splits: 285 / 7 / 4 = 10.18
+        assert!((bars[0].close - (285.0 / 7.0 / 4.0)).abs() < 0.01);
+
+        // Bar from July 2024 (after the June 2024 split) should remain unchanged
+        assert!((bars[1].close - 182.0).abs() < 0.01);
     }
 }

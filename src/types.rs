@@ -341,6 +341,207 @@ pub enum Signal {
     Hold,
 }
 
+// =============================================================================
+// Corporate Actions
+// =============================================================================
+
+/// Type of dividend payment.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Default)]
+pub enum DividendType {
+    /// Regular cash dividend.
+    #[default]
+    Cash,
+    /// Stock dividend (shares instead of cash).
+    Stock,
+    /// Special one-time dividend.
+    Special,
+}
+
+/// Type of corporate action affecting share price and/or quantity.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum CorporateActionType {
+    /// Stock split - ratio > 1 means more shares (e.g., 2.0 for 2-for-1 split).
+    /// Price is divided by ratio, quantity multiplied by ratio.
+    Split {
+        /// Split ratio (e.g., 2.0 for 2-for-1 split, 3.0 for 3-for-1).
+        ratio: f64,
+    },
+    /// Reverse split - ratio < 1 means fewer shares (e.g., 0.1 for 1-for-10 reverse).
+    /// Price is divided by ratio, quantity multiplied by ratio.
+    ReverseSplit {
+        /// Reverse split ratio (e.g., 0.1 for 1-for-10 reverse split).
+        ratio: f64,
+    },
+    /// Dividend payment.
+    Dividend {
+        /// Dividend amount per share.
+        amount: f64,
+        /// Type of dividend.
+        div_type: DividendType,
+    },
+    /// Spin-off creates new company shares from existing company.
+    SpinOff {
+        /// Ratio of new shares received per existing share.
+        ratio: f64,
+        /// Symbol of the new spun-off company.
+        new_symbol: String,
+    },
+}
+
+/// A corporate action event with timing information.
+///
+/// Corporate actions affect historical price data and must be accounted for
+/// when backtesting to avoid look-ahead bias and ensure accurate returns.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CorporateAction {
+    /// Symbol this action applies to.
+    pub symbol: String,
+    /// Type of corporate action.
+    pub action_type: CorporateActionType,
+    /// Ex-dividend/ex-split date - the date on or after which the stock trades
+    /// without the entitlement to the dividend/split.
+    pub ex_date: DateTime<Utc>,
+    /// Record date - shareholders as of this date receive the action.
+    /// Optional as not all corporate actions have explicit record dates.
+    pub record_date: Option<DateTime<Utc>>,
+    /// Payment/effective date - when the action takes effect.
+    /// For dividends, when payment is made. For splits, when new shares appear.
+    pub pay_date: Option<DateTime<Utc>>,
+}
+
+impl CorporateAction {
+    /// Create a new stock split action.
+    pub fn split(symbol: impl Into<String>, ratio: f64, ex_date: DateTime<Utc>) -> Self {
+        Self {
+            symbol: symbol.into(),
+            action_type: CorporateActionType::Split { ratio },
+            ex_date,
+            record_date: None,
+            pay_date: None,
+        }
+    }
+
+    /// Create a new reverse split action.
+    pub fn reverse_split(symbol: impl Into<String>, ratio: f64, ex_date: DateTime<Utc>) -> Self {
+        Self {
+            symbol: symbol.into(),
+            action_type: CorporateActionType::ReverseSplit { ratio },
+            ex_date,
+            record_date: None,
+            pay_date: None,
+        }
+    }
+
+    /// Create a new cash dividend action.
+    pub fn cash_dividend(symbol: impl Into<String>, amount: f64, ex_date: DateTime<Utc>) -> Self {
+        Self {
+            symbol: symbol.into(),
+            action_type: CorporateActionType::Dividend {
+                amount,
+                div_type: DividendType::Cash,
+            },
+            ex_date,
+            record_date: None,
+            pay_date: None,
+        }
+    }
+
+    /// Create a new dividend action with specified type.
+    pub fn dividend(
+        symbol: impl Into<String>,
+        amount: f64,
+        div_type: DividendType,
+        ex_date: DateTime<Utc>,
+    ) -> Self {
+        Self {
+            symbol: symbol.into(),
+            action_type: CorporateActionType::Dividend { amount, div_type },
+            ex_date,
+            record_date: None,
+            pay_date: None,
+        }
+    }
+
+    /// Create a new spin-off action.
+    pub fn spin_off(
+        symbol: impl Into<String>,
+        ratio: f64,
+        new_symbol: impl Into<String>,
+        ex_date: DateTime<Utc>,
+    ) -> Self {
+        Self {
+            symbol: symbol.into(),
+            action_type: CorporateActionType::SpinOff {
+                ratio,
+                new_symbol: new_symbol.into(),
+            },
+            ex_date,
+            record_date: None,
+            pay_date: None,
+        }
+    }
+
+    /// Set the record date.
+    pub fn with_record_date(mut self, record_date: DateTime<Utc>) -> Self {
+        self.record_date = Some(record_date);
+        self
+    }
+
+    /// Set the pay date.
+    pub fn with_pay_date(mut self, pay_date: DateTime<Utc>) -> Self {
+        self.pay_date = Some(pay_date);
+        self
+    }
+
+    /// Get the adjustment factor for this action.
+    ///
+    /// For splits: returns the ratio (e.g., 2.0 for 2-for-1 split).
+    /// For reverse splits: returns the ratio (e.g., 0.1 for 1-for-10).
+    /// For dividends and spin-offs: returns 1.0 (no direct price adjustment).
+    pub fn adjustment_factor(&self) -> f64 {
+        match &self.action_type {
+            CorporateActionType::Split { ratio } => *ratio,
+            CorporateActionType::ReverseSplit { ratio } => *ratio,
+            CorporateActionType::Dividend { .. } => 1.0,
+            CorporateActionType::SpinOff { .. } => 1.0,
+        }
+    }
+
+    /// Check if this action requires price adjustment (splits only).
+    pub fn requires_price_adjustment(&self) -> bool {
+        matches!(
+            self.action_type,
+            CorporateActionType::Split { .. } | CorporateActionType::ReverseSplit { .. }
+        )
+    }
+
+    /// Check if this is a dividend action.
+    pub fn is_dividend(&self) -> bool {
+        matches!(self.action_type, CorporateActionType::Dividend { .. })
+    }
+
+    /// Get dividend amount if this is a dividend action.
+    pub fn dividend_amount(&self) -> Option<f64> {
+        match &self.action_type {
+            CorporateActionType::Dividend { amount, .. } => Some(*amount),
+            _ => None,
+        }
+    }
+}
+
+/// Method for adjusting prices for dividends.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum DividendAdjustMethod {
+    /// Subtract dividend from prices before ex-date (proportional adjustment).
+    /// This is the standard method used by most data providers.
+    #[default]
+    Proportional,
+    /// Subtract the absolute dividend amount from prices.
+    Absolute,
+    /// No adjustment for dividends.
+    None,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -436,5 +637,101 @@ mod tests {
 
         assert!((position.unrealized_pnl - 1000.0).abs() < f64::EPSILON);
         assert!(position.is_long());
+    }
+
+    // =========================================================================
+    // Corporate Actions Tests
+    // =========================================================================
+
+    #[test]
+    fn test_corporate_action_split() {
+        let ex_date = Utc.with_ymd_and_hms(2024, 6, 10, 0, 0, 0).unwrap();
+        let action = CorporateAction::split("AAPL", 4.0, ex_date);
+
+        assert_eq!(action.symbol, "AAPL");
+        assert_eq!(action.ex_date, ex_date);
+        assert!((action.adjustment_factor() - 4.0).abs() < f64::EPSILON);
+        assert!(action.requires_price_adjustment());
+        assert!(!action.is_dividend());
+        assert!(action.dividend_amount().is_none());
+    }
+
+    #[test]
+    fn test_corporate_action_reverse_split() {
+        let ex_date = Utc.with_ymd_and_hms(2024, 3, 15, 0, 0, 0).unwrap();
+        let action = CorporateAction::reverse_split("SIRI", 0.1, ex_date);
+
+        assert_eq!(action.symbol, "SIRI");
+        assert!((action.adjustment_factor() - 0.1).abs() < f64::EPSILON);
+        assert!(action.requires_price_adjustment());
+    }
+
+    #[test]
+    fn test_corporate_action_dividend() {
+        let ex_date = Utc.with_ymd_and_hms(2024, 2, 9, 0, 0, 0).unwrap();
+        let record_date = Utc.with_ymd_and_hms(2024, 2, 12, 0, 0, 0).unwrap();
+        let pay_date = Utc.with_ymd_and_hms(2024, 2, 15, 0, 0, 0).unwrap();
+
+        let action = CorporateAction::cash_dividend("MSFT", 0.75, ex_date)
+            .with_record_date(record_date)
+            .with_pay_date(pay_date);
+
+        assert_eq!(action.symbol, "MSFT");
+        assert!((action.adjustment_factor() - 1.0).abs() < f64::EPSILON);
+        assert!(!action.requires_price_adjustment());
+        assert!(action.is_dividend());
+        assert!((action.dividend_amount().unwrap() - 0.75).abs() < f64::EPSILON);
+        assert_eq!(action.record_date, Some(record_date));
+        assert_eq!(action.pay_date, Some(pay_date));
+    }
+
+    #[test]
+    fn test_corporate_action_special_dividend() {
+        let ex_date = Utc.with_ymd_and_hms(2024, 12, 1, 0, 0, 0).unwrap();
+        let action = CorporateAction::dividend("COST", 15.0, DividendType::Special, ex_date);
+
+        assert!(action.is_dividend());
+        match &action.action_type {
+            CorporateActionType::Dividend { amount, div_type } => {
+                assert!((*amount - 15.0).abs() < f64::EPSILON);
+                assert_eq!(*div_type, DividendType::Special);
+            }
+            _ => panic!("Expected Dividend action type"),
+        }
+    }
+
+    #[test]
+    fn test_corporate_action_spinoff() {
+        let ex_date = Utc.with_ymd_and_hms(2024, 4, 3, 0, 0, 0).unwrap();
+        let action = CorporateAction::spin_off("GE", 0.25, "GEV", ex_date);
+
+        assert_eq!(action.symbol, "GE");
+        assert!(!action.requires_price_adjustment());
+        assert!(!action.is_dividend());
+
+        match &action.action_type {
+            CorporateActionType::SpinOff { ratio, new_symbol } => {
+                assert!((*ratio - 0.25).abs() < f64::EPSILON);
+                assert_eq!(new_symbol, "GEV");
+            }
+            _ => panic!("Expected SpinOff action type"),
+        }
+    }
+
+    #[test]
+    fn test_corporate_action_serialization() {
+        let ex_date = Utc.with_ymd_and_hms(2024, 6, 10, 0, 0, 0).unwrap();
+        let action = CorporateAction::split("AAPL", 4.0, ex_date);
+
+        let json = serde_json::to_string(&action).unwrap();
+        let deserialized: CorporateAction = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(action, deserialized);
+    }
+
+    #[test]
+    fn test_dividend_type_default() {
+        let default_type = DividendType::default();
+        assert_eq!(default_type, DividendType::Cash);
     }
 }

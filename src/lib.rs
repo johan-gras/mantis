@@ -121,10 +121,15 @@ pub use analytics::{
 pub use engine::{BacktestConfig, BacktestResult, Engine};
 pub use error::{BacktestError, Result};
 pub use strategy::Strategy;
-pub use types::{Bar, Order, Side, Signal, Trade};
+pub use types::{
+    Bar, CorporateAction, CorporateActionType, DividendAdjustMethod, DividendType, Order, Side,
+    Signal, Trade,
+};
 
 // Data handling re-exports
 pub use data::{
-    align_series, data_quality_report, detect_gaps, fill_gaps, resample, unalign_series, AlignMode,
+    adjust_for_dividends, adjust_for_splits, align_series, apply_adjustment_factor,
+    cumulative_adjustment_factor, data_quality_report, detect_gaps, fill_gaps,
+    filter_actions_for_symbol, load_corporate_actions, resample, unalign_series, AlignMode,
     AlignedBars, DataGap, DataQualityReport, FillMethod, ResampleInterval,
 };
