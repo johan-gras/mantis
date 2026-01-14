@@ -4,7 +4,7 @@
 
 | Metric | Status |
 |--------|--------|
-| **Tests** | 176 passing (143 unit + 2 CLI + 28 integration + 3 doc-tests) |
+| **Tests** | 182 passing (149 unit + 2 CLI + 28 integration + 3 doc-tests) |
 | **Clippy** | 0 errors (PASSING) |
 | **Cargo fmt** | PASSING |
 
@@ -61,37 +61,20 @@ These features are explicitly required in the spec but not implemented.
 
 5. Add benchmark column to export functions in `src/export.rs`
 
-### 2.2 Parquet Data Loading
+### 2.2 Parquet Data Loading - COMPLETE
 
 **Spec requirement:** "Support for multiple data formats (CSV, Parquet)" (backtest-engine.md line 18)
 
 **Location:** `src/data.rs`
 
-**Current state:** Parquet EXPORT works (in `export.rs`), but no Parquet LOADING
-
-**Implementation tasks:**
-1. Add `load_parquet` function to `src/data.rs`:
-   ```rust
-   pub fn load_parquet(path: impl AsRef<Path>, config: &DataConfig) -> Result<Vec<Bar>>
-   ```
-
-2. Use existing `arrow` and `parquet` crate dependencies (already in Cargo.toml)
-
-3. Support both OHLCV and OHLCV+timestamp column schemas
-
-4. Handle different timestamp formats:
-   - Unix milliseconds
-   - ISO 8601 strings
-   - Arrow Timestamp type
-
-5. Integrate with `DataManager`:
-   ```rust
-   impl DataManager {
-       pub fn load_parquet(&mut self, symbol: impl Into<String>, path: impl AsRef<Path>) -> Result<()>
-   }
-   ```
-
-6. Add CLI support: `mantis backtest --data data.parquet --format parquet`
+**Implementation Summary:**
+- `load_parquet()` function in `src/data.rs` that loads OHLCV data from Parquet files
+- Support for multiple column naming conventions (timestamp/date/time, open/Open/o, etc.)
+- Support for multiple timestamp formats (Arrow Timestamp types, Unix timestamps, ISO strings)
+- `load_data()` auto-detect function that chooses format based on file extension
+- DataManager methods: `load_parquet()`, `load_parquet_with_config()`, updated `load()` to auto-detect
+- CLI support via `--format` option (auto/csv/parquet) on the Run command
+- Comprehensive tests: `test_load_parquet`, `test_load_parquet_matches_csv`, `test_load_data_auto_detect`, `test_data_format_detection`, `test_data_manager_parquet`, `test_data_manager_auto_detect`
 
 ### 2.3 Time-Series Alignment and Resampling
 
@@ -641,7 +624,7 @@ fn get_mean_reversion_param_ranges() -> Vec<ParamRange> {
 All clippy errors fixed and code formatted. Verification passes.
 
 ### Phase 2: Core Data Features
-1. Implement Parquet loading (2.2)
+1. ~~Implement Parquet loading (2.2)~~ - COMPLETE
 2. Implement time-series alignment/resampling (2.3)
 3. Implement missing data handling (2.4)
 
@@ -672,6 +655,7 @@ The following spec requirements are fully implemented and verified:
 - [x] Transaction cost modeling (commissions, slippage)
 - [x] Support for fractional shares and various lot sizes
 - [x] CSV data loading with flexible date parsing
+- [x] Parquet data loading with auto-detection
 - [x] Sharpe ratio, Sortino ratio, max drawdown, Calmar ratio
 - [x] Equity curve generation and storage
 - [x] Trade-level statistics

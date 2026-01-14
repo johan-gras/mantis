@@ -2,7 +2,7 @@
 
 use mantis::analytics::ResultFormatter;
 use mantis::config::BacktestFileConfig;
-use mantis::data::{load_csv, DataConfig};
+use mantis::data::{load_csv, load_data, load_parquet, DataConfig};
 use mantis::engine::{BacktestConfig, Engine};
 use mantis::error::Result;
 use mantis::features::{FeatureConfig, FeatureExtractor, TimeSeriesSplitter};
@@ -42,7 +42,7 @@ pub struct Cli {
 pub enum Commands {
     /// Run a backtest with a built-in strategy
     Run {
-        /// Path to CSV data file
+        /// Path to data file (CSV or Parquet)
         #[arg(short, long)]
         data: PathBuf,
 
@@ -89,6 +89,10 @@ pub enum Commands {
         /// Momentum lookback period
         #[arg(long, default_value = "20")]
         lookback: usize,
+
+        /// Data file format (auto-detects from extension if not specified)
+        #[arg(short, long, value_enum, default_value = "auto")]
+        format: DataFormatArg,
     },
 
     /// Optimize strategy parameters
@@ -198,6 +202,29 @@ pub enum FeatureConfigType {
     Comprehensive,
 }
 
+#[derive(Debug, Copy, Clone, PartialEq, Eq, ValueEnum)]
+pub enum DataFormatArg {
+    /// Auto-detect based on file extension
+    Auto,
+    /// Force CSV format
+    Csv,
+    /// Force Parquet format
+    Parquet,
+}
+
+/// Load data based on format argument.
+fn load_data_with_format(
+    path: &PathBuf,
+    config: &DataConfig,
+    format: DataFormatArg,
+) -> Result<Vec<mantis::types::Bar>> {
+    match format {
+        DataFormatArg::Auto => load_data(path, config),
+        DataFormatArg::Csv => load_csv(path, config),
+        DataFormatArg::Parquet => load_parquet(path, config),
+    }
+}
+
 impl Cli {
     /// Initialize logging based on verbosity level.
     pub fn init_logging(&self) {
@@ -237,6 +264,7 @@ pub fn run() -> Result<()> {
             slow_period,
             rsi_period,
             lookback,
+            format,
         } => run_backtest(
             data,
             symbol,
@@ -250,6 +278,7 @@ pub fn run() -> Result<()> {
             *slow_period,
             *rsi_period,
             *lookback,
+            *format,
             cli.output,
         ),
 
@@ -304,10 +333,11 @@ fn run_backtest(
     slow_period: usize,
     rsi_period: usize,
     lookback: usize,
+    format: DataFormatArg,
     output: OutputFormat,
 ) -> Result<()> {
     info!("Loading data from: {}", data_path.display());
-    let bars = load_csv(data_path, &DataConfig::default())?;
+    let bars = load_data_with_format(data_path, &DataConfig::default(), format)?;
 
     let cost_model = CostModel {
         commission_pct: commission / 100.0,

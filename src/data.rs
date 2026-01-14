@@ -6,6 +6,7 @@ use chrono::{DateTime, NaiveDate, NaiveDateTime, TimeZone, Utc};
 use csv::ReaderBuilder;
 use serde::Deserialize;
 use std::collections::HashMap;
+use std::fs::File;
 use std::path::Path;
 use tracing::{debug, info, warn};
 
@@ -212,6 +213,377 @@ pub fn load_csv(path: impl AsRef<Path>, config: &DataConfig) -> Result<Vec<Bar>>
     Ok(bars)
 }
 
+/// Load OHLCV data from a Parquet file.
+///
+/// Supports multiple column naming conventions:
+/// - Date/timestamp columns: "timestamp", "date", "time", "datetime", "Date", "Timestamp"
+/// - OHLCV columns: standard variations (Open/open/o, High/high/h, etc.)
+///
+/// Timestamp handling:
+/// - Arrow Timestamp types (milliseconds, microseconds, nanoseconds)
+/// - Unix timestamps (milliseconds or seconds as Int64)
+/// - ISO 8601 strings
+pub fn load_parquet(path: impl AsRef<Path>, config: &DataConfig) -> Result<Vec<Bar>> {
+    use arrow::array::{Array, Float64Array, RecordBatchReader};
+    use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
+
+    let path = path.as_ref();
+    info!("Loading Parquet data from: {}", path.display());
+
+    let file = File::open(path)?;
+    let builder = ParquetRecordBatchReaderBuilder::try_new(file)
+        .map_err(|e| BacktestError::DataError(format!("Failed to open parquet file: {}", e)))?;
+
+    let reader = builder
+        .build()
+        .map_err(|e| BacktestError::DataError(format!("Failed to build parquet reader: {}", e)))?;
+
+    let schema = reader.schema();
+    debug!("Parquet schema: {:?}", schema);
+
+    // Find column indices by matching various common names
+    let timestamp_names = [
+        "timestamp",
+        "date",
+        "time",
+        "datetime",
+        "Date",
+        "Timestamp",
+        "Time",
+        "Datetime",
+    ];
+    let open_names = ["open", "Open", "o", "O"];
+    let high_names = ["high", "High", "h", "H"];
+    let low_names = ["low", "Low", "l", "L"];
+    let close_names = [
+        "close",
+        "Close",
+        "c",
+        "C",
+        "adj_close",
+        "Adj Close",
+        "Adj_Close",
+    ];
+    let volume_names = ["volume", "Volume", "v", "V", "vol", "Vol"];
+
+    fn find_column_index(schema: &arrow::datatypes::Schema, names: &[&str]) -> Option<usize> {
+        for name in names {
+            if let Ok(idx) = schema.index_of(name) {
+                return Some(idx);
+            }
+        }
+        None
+    }
+
+    let ts_idx = find_column_index(&schema, &timestamp_names).ok_or_else(|| {
+        BacktestError::DataError("No timestamp column found in parquet file".to_string())
+    })?;
+    let open_idx = find_column_index(&schema, &open_names).ok_or_else(|| {
+        BacktestError::DataError("No open column found in parquet file".to_string())
+    })?;
+    let high_idx = find_column_index(&schema, &high_names).ok_or_else(|| {
+        BacktestError::DataError("No high column found in parquet file".to_string())
+    })?;
+    let low_idx = find_column_index(&schema, &low_names).ok_or_else(|| {
+        BacktestError::DataError("No low column found in parquet file".to_string())
+    })?;
+    let close_idx = find_column_index(&schema, &close_names).ok_or_else(|| {
+        BacktestError::DataError("No close column found in parquet file".to_string())
+    })?;
+    let volume_idx = find_column_index(&schema, &volume_names); // Volume is optional
+
+    debug!(
+        "Column indices - timestamp: {}, open: {}, high: {}, low: {}, close: {}, volume: {:?}",
+        ts_idx, open_idx, high_idx, low_idx, close_idx, volume_idx
+    );
+
+    let mut bars = Vec::new();
+    let mut skipped = 0;
+    let mut row_num = 0;
+
+    for batch_result in reader {
+        let batch = batch_result.map_err(|e| {
+            BacktestError::DataError(format!("Failed to read parquet batch: {}", e))
+        })?;
+
+        let ts_col = batch.column(ts_idx);
+        let open_col = batch.column(open_idx);
+        let high_col = batch.column(high_idx);
+        let low_col = batch.column(low_idx);
+        let close_col = batch.column(close_idx);
+        let volume_col = volume_idx.map(|idx| batch.column(idx));
+
+        // Cast numeric columns to Float64
+        let open_array = open_col.as_any().downcast_ref::<Float64Array>();
+        let high_array = high_col.as_any().downcast_ref::<Float64Array>();
+        let low_array = low_col.as_any().downcast_ref::<Float64Array>();
+        let close_array = close_col.as_any().downcast_ref::<Float64Array>();
+        let volume_array = volume_col.and_then(|col| col.as_any().downcast_ref::<Float64Array>());
+
+        // Handle missing Float64 arrays by trying Int64 and casting
+        let (open_vals, high_vals, low_vals, close_vals, vol_vals) = (
+            get_f64_values(open_col.as_ref()),
+            get_f64_values(high_col.as_ref()),
+            get_f64_values(low_col.as_ref()),
+            get_f64_values(close_col.as_ref()),
+            volume_col.map(|col| get_f64_values(col.as_ref())),
+        );
+
+        for i in 0..batch.num_rows() {
+            row_num += 1;
+
+            // Parse timestamp based on column type
+            let timestamp =
+                match parse_arrow_timestamp(ts_col.as_ref(), i, config.date_format.as_deref()) {
+                    Ok(ts) => ts,
+                    Err(e) => {
+                        if config.skip_invalid {
+                            debug!("Skipping row {} due to timestamp error: {}", row_num, e);
+                            skipped += 1;
+                            continue;
+                        } else {
+                            return Err(e);
+                        }
+                    }
+                };
+
+            let open = open_vals.get(i).copied().or_else(|| {
+                open_array.and_then(|a| if a.is_null(i) { None } else { Some(a.value(i)) })
+            });
+            let high = high_vals.get(i).copied().or_else(|| {
+                high_array.and_then(|a| if a.is_null(i) { None } else { Some(a.value(i)) })
+            });
+            let low = low_vals.get(i).copied().or_else(|| {
+                low_array.and_then(|a| if a.is_null(i) { None } else { Some(a.value(i)) })
+            });
+            let close = close_vals.get(i).copied().or_else(|| {
+                close_array.and_then(|a| if a.is_null(i) { None } else { Some(a.value(i)) })
+            });
+            let volume = vol_vals
+                .as_ref()
+                .and_then(|v| v.get(i).copied())
+                .or_else(|| {
+                    volume_array.and_then(|a| if a.is_null(i) { None } else { Some(a.value(i)) })
+                })
+                .unwrap_or(0.0);
+
+            let (open, high, low, close) = match (open, high, low, close) {
+                (Some(o), Some(h), Some(l), Some(c)) => (o, h, l, c),
+                _ => {
+                    if config.skip_invalid {
+                        debug!("Skipping row {} due to missing OHLC values", row_num);
+                        skipped += 1;
+                        continue;
+                    } else {
+                        return Err(BacktestError::DataError(format!(
+                            "Missing OHLC values at row {}",
+                            row_num
+                        )));
+                    }
+                }
+            };
+
+            let bar = Bar::new(timestamp, open, high, low, close, volume);
+
+            if config.validate_bars && !bar.validate() {
+                if config.skip_invalid {
+                    debug!(
+                        "Skipping row {} due to invalid bar data: {:?}",
+                        row_num, bar
+                    );
+                    skipped += 1;
+                    continue;
+                } else {
+                    return Err(BacktestError::DataError(format!(
+                        "Invalid bar data at row {}: {:?}",
+                        row_num, bar
+                    )));
+                }
+            }
+
+            bars.push(bar);
+        }
+    }
+
+    if skipped > 0 {
+        warn!("Skipped {} invalid rows", skipped);
+    }
+
+    // Sort by timestamp
+    bars.sort_by_key(|b| b.timestamp);
+
+    // Check for duplicates
+    let original_len = bars.len();
+    bars.dedup_by_key(|b| b.timestamp);
+    if bars.len() < original_len {
+        warn!("Removed {} duplicate timestamps", original_len - bars.len());
+    }
+
+    info!(
+        "Loaded {} bars from {} to {}",
+        bars.len(),
+        bars.first()
+            .map(|b| b.timestamp.to_string())
+            .unwrap_or_default(),
+        bars.last()
+            .map(|b| b.timestamp.to_string())
+            .unwrap_or_default()
+    );
+
+    if bars.is_empty() {
+        return Err(BacktestError::NoData);
+    }
+
+    Ok(bars)
+}
+
+/// Extract f64 values from an Arrow array (supports Float64 and Int64).
+fn get_f64_values(array: &dyn arrow::array::Array) -> Vec<f64> {
+    use arrow::array::{Array, Float64Array, Int64Array};
+
+    if let Some(f64_arr) = array.as_any().downcast_ref::<Float64Array>() {
+        (0..f64_arr.len())
+            .filter_map(|i| {
+                if f64_arr.is_null(i) {
+                    None
+                } else {
+                    Some(f64_arr.value(i))
+                }
+            })
+            .collect()
+    } else if let Some(i64_arr) = array.as_any().downcast_ref::<Int64Array>() {
+        (0..i64_arr.len())
+            .filter_map(|i| {
+                if i64_arr.is_null(i) {
+                    None
+                } else {
+                    Some(i64_arr.value(i) as f64)
+                }
+            })
+            .collect()
+    } else {
+        Vec::new()
+    }
+}
+
+/// Parse a timestamp from an Arrow array at the given index.
+fn parse_arrow_timestamp(
+    array: &dyn arrow::array::Array,
+    idx: usize,
+    date_format: Option<&str>,
+) -> Result<DateTime<Utc>> {
+    use arrow::array::{
+        Int64Array, StringArray, TimestampMicrosecondArray, TimestampMillisecondArray,
+        TimestampNanosecondArray, TimestampSecondArray,
+    };
+
+    if array.is_null(idx) {
+        return Err(BacktestError::DataError(format!(
+            "Null timestamp at index {}",
+            idx
+        )));
+    }
+
+    // Try Arrow timestamp types first
+    if let Some(ts_millis) = array.as_any().downcast_ref::<TimestampMillisecondArray>() {
+        let millis = ts_millis.value(idx);
+        return DateTime::from_timestamp_millis(millis).ok_or_else(|| {
+            BacktestError::DataError(format!("Invalid timestamp millis: {}", millis))
+        });
+    }
+
+    if let Some(ts_micros) = array.as_any().downcast_ref::<TimestampMicrosecondArray>() {
+        let micros = ts_micros.value(idx);
+        let secs = micros / 1_000_000;
+        let nanos = ((micros % 1_000_000) * 1000) as u32;
+        return DateTime::from_timestamp(secs, nanos).ok_or_else(|| {
+            BacktestError::DataError(format!("Invalid timestamp micros: {}", micros))
+        });
+    }
+
+    if let Some(ts_nanos) = array.as_any().downcast_ref::<TimestampNanosecondArray>() {
+        let nanos = ts_nanos.value(idx);
+        let secs = nanos / 1_000_000_000;
+        let subsec_nanos = (nanos % 1_000_000_000) as u32;
+        return DateTime::from_timestamp(secs, subsec_nanos).ok_or_else(|| {
+            BacktestError::DataError(format!("Invalid timestamp nanos: {}", nanos))
+        });
+    }
+
+    if let Some(ts_secs) = array.as_any().downcast_ref::<TimestampSecondArray>() {
+        let secs = ts_secs.value(idx);
+        return DateTime::from_timestamp(secs, 0).ok_or_else(|| {
+            BacktestError::DataError(format!("Invalid timestamp seconds: {}", secs))
+        });
+    }
+
+    // Try Int64 as Unix timestamp (assume milliseconds if > 1e12, else seconds)
+    if let Some(int_arr) = array.as_any().downcast_ref::<Int64Array>() {
+        let val = int_arr.value(idx);
+        if val > 1_000_000_000_000 {
+            // Milliseconds
+            return DateTime::from_timestamp_millis(val).ok_or_else(|| {
+                BacktestError::DataError(format!("Invalid timestamp millis: {}", val))
+            });
+        } else {
+            // Seconds
+            return DateTime::from_timestamp(val, 0).ok_or_else(|| {
+                BacktestError::DataError(format!("Invalid timestamp seconds: {}", val))
+            });
+        }
+    }
+
+    // Try string parsing
+    if let Some(str_arr) = array.as_any().downcast_ref::<StringArray>() {
+        let s = str_arr.value(idx);
+        return parse_datetime(s, date_format);
+    }
+
+    Err(BacktestError::DataError(format!(
+        "Unsupported timestamp column type: {:?}",
+        array.data_type()
+    )))
+}
+
+/// Detect input file format based on extension.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DataFormat {
+    Csv,
+    Parquet,
+}
+
+impl DataFormat {
+    /// Detect format from file extension.
+    pub fn from_path(path: impl AsRef<Path>) -> Option<Self> {
+        let ext = path.as_ref().extension()?.to_str()?.to_lowercase();
+        match ext.as_str() {
+            "csv" => Some(DataFormat::Csv),
+            "parquet" | "pq" => Some(DataFormat::Parquet),
+            _ => None,
+        }
+    }
+}
+
+/// Load OHLCV data from a file, auto-detecting format based on extension.
+///
+/// Supports CSV and Parquet formats. Format is determined by file extension:
+/// - `.csv` -> CSV format
+/// - `.parquet` or `.pq` -> Parquet format
+pub fn load_data(path: impl AsRef<Path>, config: &DataConfig) -> Result<Vec<Bar>> {
+    let path = path.as_ref();
+    let format = DataFormat::from_path(path).ok_or_else(|| {
+        BacktestError::DataError(format!(
+            "Unknown file format for: {}. Supported: .csv, .parquet, .pq",
+            path.display()
+        ))
+    })?;
+
+    match format {
+        DataFormat::Csv => load_csv(path, config),
+        DataFormat::Parquet => load_parquet(path, config),
+    }
+}
+
 /// Multi-symbol data container.
 #[derive(Debug, Default)]
 pub struct DataManager {
@@ -224,21 +596,51 @@ impl DataManager {
         Self::default()
     }
 
-    /// Load data for a symbol from a CSV file.
+    /// Load data for a symbol from a file (auto-detects CSV or Parquet format).
     pub fn load(&mut self, symbol: impl Into<String>, path: impl AsRef<Path>) -> Result<()> {
-        let bars = load_csv(path, &DataConfig::default())?;
+        let bars = load_data(path, &DataConfig::default())?;
         self.data.insert(symbol.into(), bars);
         Ok(())
     }
 
-    /// Load data with custom configuration.
+    /// Load data with custom configuration (auto-detects CSV or Parquet format).
     pub fn load_with_config(
         &mut self,
         symbol: impl Into<String>,
         path: impl AsRef<Path>,
         config: &DataConfig,
     ) -> Result<()> {
-        let bars = load_csv(path, config)?;
+        let bars = load_data(path, config)?;
+        self.data.insert(symbol.into(), bars);
+        Ok(())
+    }
+
+    /// Load data for a symbol from a CSV file.
+    pub fn load_csv(&mut self, symbol: impl Into<String>, path: impl AsRef<Path>) -> Result<()> {
+        let bars = load_csv(path, &DataConfig::default())?;
+        self.data.insert(symbol.into(), bars);
+        Ok(())
+    }
+
+    /// Load data for a symbol from a Parquet file.
+    pub fn load_parquet(
+        &mut self,
+        symbol: impl Into<String>,
+        path: impl AsRef<Path>,
+    ) -> Result<()> {
+        let bars = load_parquet(path, &DataConfig::default())?;
+        self.data.insert(symbol.into(), bars);
+        Ok(())
+    }
+
+    /// Load Parquet data with custom configuration.
+    pub fn load_parquet_with_config(
+        &mut self,
+        symbol: impl Into<String>,
+        path: impl AsRef<Path>,
+        config: &DataConfig,
+    ) -> Result<()> {
+        let bars = load_parquet(path, config)?;
         self.data.insert(symbol.into(), bars);
         Ok(())
     }
@@ -571,7 +973,7 @@ mod tests {
     use tempfile::NamedTempFile;
 
     fn create_test_csv() -> NamedTempFile {
-        let mut file = NamedTempFile::new().unwrap();
+        let mut file = NamedTempFile::with_suffix(".csv").unwrap();
         writeln!(file, "Date,Open,High,Low,Close,Volume").unwrap();
         writeln!(file, "2024-01-01,100,105,98,102,1000").unwrap();
         writeln!(file, "2024-01-02,102,108,101,107,1200").unwrap();
@@ -772,5 +1174,156 @@ mod tests {
         assert!(macd_line.is_finite());
         assert!(signal_line.is_finite());
         assert!((histogram - (macd_line - signal_line)).abs() < 0.0001);
+    }
+
+    /// Helper to create a parquet file with OHLCV data for testing.
+    fn create_test_parquet() -> tempfile::NamedTempFile {
+        use arrow::array::{Float64Array, TimestampMillisecondArray};
+        use arrow::datatypes::{DataType, Field, Schema, TimeUnit};
+        use arrow::record_batch::RecordBatch;
+        use parquet::arrow::ArrowWriter;
+        use std::sync::Arc;
+
+        let file = tempfile::NamedTempFile::with_suffix(".parquet").unwrap();
+
+        // Create schema
+        let schema = Arc::new(Schema::new(vec![
+            Field::new(
+                "timestamp",
+                DataType::Timestamp(TimeUnit::Millisecond, None),
+                false,
+            ),
+            Field::new("open", DataType::Float64, false),
+            Field::new("high", DataType::Float64, false),
+            Field::new("low", DataType::Float64, false),
+            Field::new("close", DataType::Float64, false),
+            Field::new("volume", DataType::Float64, false),
+        ]));
+
+        // Create data arrays
+        let timestamps: Vec<i64> = vec![
+            Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0)
+                .unwrap()
+                .timestamp_millis(),
+            Utc.with_ymd_and_hms(2024, 1, 2, 0, 0, 0)
+                .unwrap()
+                .timestamp_millis(),
+            Utc.with_ymd_and_hms(2024, 1, 3, 0, 0, 0)
+                .unwrap()
+                .timestamp_millis(),
+            Utc.with_ymd_and_hms(2024, 1, 4, 0, 0, 0)
+                .unwrap()
+                .timestamp_millis(),
+            Utc.with_ymd_and_hms(2024, 1, 5, 0, 0, 0)
+                .unwrap()
+                .timestamp_millis(),
+        ];
+
+        let arrays: Vec<Arc<dyn arrow::array::Array>> = vec![
+            Arc::new(TimestampMillisecondArray::from(timestamps)),
+            Arc::new(Float64Array::from(vec![100.0, 102.0, 107.0, 108.0, 104.0])),
+            Arc::new(Float64Array::from(vec![105.0, 108.0, 110.0, 109.0, 106.0])),
+            Arc::new(Float64Array::from(vec![98.0, 101.0, 105.0, 103.0, 100.0])),
+            Arc::new(Float64Array::from(vec![102.0, 107.0, 108.0, 104.0, 105.0])),
+            Arc::new(Float64Array::from(vec![
+                1000.0, 1200.0, 1100.0, 900.0, 1000.0,
+            ])),
+        ];
+
+        let batch = RecordBatch::try_new(schema.clone(), arrays).unwrap();
+
+        // Write to parquet
+        let file_handle = File::create(file.path()).unwrap();
+        let mut writer = ArrowWriter::try_new(file_handle, schema, None).unwrap();
+        writer.write(&batch).unwrap();
+        writer.close().unwrap();
+
+        file
+    }
+
+    #[test]
+    fn test_load_parquet() {
+        let file = create_test_parquet();
+        let bars = load_parquet(file.path(), &DataConfig::default()).unwrap();
+
+        assert_eq!(bars.len(), 5);
+        assert_eq!(bars[0].open, 100.0);
+        assert_eq!(bars[0].high, 105.0);
+        assert_eq!(bars[0].low, 98.0);
+        assert_eq!(bars[0].close, 102.0);
+        assert_eq!(bars[0].volume, 1000.0);
+        assert_eq!(bars[4].close, 105.0);
+    }
+
+    #[test]
+    fn test_load_parquet_matches_csv() {
+        // Test that parquet loading gives same results as CSV loading
+        let csv_file = create_test_csv();
+        let parquet_file = create_test_parquet();
+
+        let csv_bars = load_csv(csv_file.path(), &DataConfig::default()).unwrap();
+        let parquet_bars = load_parquet(parquet_file.path(), &DataConfig::default()).unwrap();
+
+        assert_eq!(csv_bars.len(), parquet_bars.len());
+        for (csv_bar, parquet_bar) in csv_bars.iter().zip(parquet_bars.iter()) {
+            assert_eq!(csv_bar.open, parquet_bar.open);
+            assert_eq!(csv_bar.high, parquet_bar.high);
+            assert_eq!(csv_bar.low, parquet_bar.low);
+            assert_eq!(csv_bar.close, parquet_bar.close);
+            assert_eq!(csv_bar.volume, parquet_bar.volume);
+        }
+    }
+
+    #[test]
+    fn test_load_data_auto_detect() {
+        // Test CSV auto-detection
+        let csv_file = create_test_csv();
+        let csv_bars = load_data(csv_file.path(), &DataConfig::default()).unwrap();
+        assert_eq!(csv_bars.len(), 5);
+
+        // Test Parquet auto-detection
+        let parquet_file = create_test_parquet();
+        let parquet_bars = load_data(parquet_file.path(), &DataConfig::default()).unwrap();
+        assert_eq!(parquet_bars.len(), 5);
+    }
+
+    #[test]
+    fn test_data_format_detection() {
+        assert_eq!(DataFormat::from_path("data.csv"), Some(DataFormat::Csv));
+        assert_eq!(
+            DataFormat::from_path("data.parquet"),
+            Some(DataFormat::Parquet)
+        );
+        assert_eq!(DataFormat::from_path("data.pq"), Some(DataFormat::Parquet));
+        assert_eq!(DataFormat::from_path("data.txt"), None);
+        assert_eq!(DataFormat::from_path("data"), None);
+    }
+
+    #[test]
+    fn test_data_manager_parquet() {
+        let parquet_file = create_test_parquet();
+        let mut dm = DataManager::new();
+        dm.load_parquet("TEST", parquet_file.path()).unwrap();
+
+        assert!(dm.contains("TEST"));
+        assert_eq!(dm.get("TEST").unwrap().len(), 5);
+    }
+
+    #[test]
+    fn test_data_manager_auto_detect() {
+        // Test with parquet file using auto-detect load
+        let parquet_file = create_test_parquet();
+        let mut dm = DataManager::new();
+        dm.load("TEST_PARQUET", parquet_file.path()).unwrap();
+
+        assert!(dm.contains("TEST_PARQUET"));
+        assert_eq!(dm.get("TEST_PARQUET").unwrap().len(), 5);
+
+        // Test with CSV file using auto-detect load
+        let csv_file = create_test_csv();
+        dm.load("TEST_CSV", csv_file.path()).unwrap();
+
+        assert!(dm.contains("TEST_CSV"));
+        assert_eq!(dm.get("TEST_CSV").unwrap().len(), 5);
     }
 }
