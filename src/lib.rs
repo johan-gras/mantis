@@ -101,11 +101,16 @@ pub mod config;
 pub mod data;
 pub mod engine;
 pub mod error;
+pub mod export;
 pub mod features;
+pub mod monte_carlo;
+pub mod multi_asset;
 pub mod portfolio;
+pub mod regime;
 pub mod risk;
 pub mod strategy;
 pub mod strategies;
+pub mod streaming;
 pub mod types;
 pub mod walkforward;
 
