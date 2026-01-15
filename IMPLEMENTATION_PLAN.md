@@ -4,7 +4,7 @@
 >
 > Items marked `[NOT STARTED]` were previously claimed as partial but verified to have no implementation.
 >
-> **Recent Changes**: Options Pricing Models and Greeks Calculation now complete with Black-Scholes pricing, full Greeks calculation (Delta, Gamma, Theta, Vega, Rho), and put-call parity validation (18 tests passing). Experiment Tracking complete with SQLite-based storage, automatic backtest logging, hyperparameter/metrics capture, CLI commands for experiment management, and query/filter capabilities. Transaction Cost Sensitivity analysis complete with comprehensive testing framework (0x-20x cost multipliers, Sharpe/return degradation, breakeven analysis). Overfitting Detection fully implemented with OOS Sharpe threshold checking, parameter stability testing, and n_trials integration into deflated Sharpe ratio. Black-Litterman portfolio optimization complete with comprehensive investor views support. All core portfolio construction methods (equal weight, inverse volatility, risk parity, mean-variance, HRP, Black-Litterman) are now complete.
+> **Recent Changes**: Multi-Timeframe Strategy Interface now complete with TimeframeManager for maintaining multiple resampled bar series, strategy access to multiple timeframes via StrategyContext, lazy evaluation, and comprehensive test coverage (12 tests). Options Pricing Models and Greeks Calculation complete with Black-Scholes pricing, full Greeks calculation (Delta, Gamma, Theta, Vega, Rho), and put-call parity validation (18 tests passing). Experiment Tracking complete with SQLite-based storage, automatic backtest logging, hyperparameter/metrics capture, CLI commands for experiment management, and query/filter capabilities. Transaction Cost Sensitivity analysis complete with comprehensive testing framework (0x-20x cost multipliers, Sharpe/return degradation, breakeven analysis). Overfitting Detection fully implemented with OOS Sharpe threshold checking, parameter stability testing, and n_trials integration into deflated Sharpe ratio. Black-Litterman portfolio optimization complete with comprehensive investor views support. All core portfolio construction methods (equal weight, inverse volatility, risk parity, mean-variance, HRP, Black-Litterman) are now complete.
 
 ## Current Status Summary
 
@@ -333,15 +333,21 @@ Items are organized by category and prioritized within each category. Priority r
 - Standard timeframes: 1m, 5m, 15m, 30m, 1h, 4h, 1d, 1w, 1M
 - OHLCV aggregation (open=first, high=max, low=min, close=last, volume=sum)
 
-### [PARTIAL ~20%] [HIGH] Multi-Timeframe Strategy Interface
-- **Status**: Verified - only resampling works, no strategy interface
-- **IMPLEMENTED**: Time-series resampling (minute to monthly)
-- **MISSING**:
-  - Strategy access to multiple timeframes simultaneously
-  - Automatic temporal alignment across timeframes
+### [COMPLETE] [HIGH] Multi-Timeframe Strategy Interface
+- **IMPLEMENTED**:
+  - TimeframeManager struct for maintaining multiple resampled bar series
+  - Strategy access to multiple timeframes via StrategyContext
+  - requested_timeframes() method in Strategy trait
+  - Engine integration to create and pass TimeframeManager
   - Lazy evaluation (only compute requested timeframes)
-  - Historical lookback at each timeframe
-  - Cross-timeframe indicator calculation
+  - MultiTimeframeStrategy example (Daily trend + hourly entries)
+  - Comprehensive test coverage (8 unit tests + 4 strategy tests)
+- **Location**: src/timeframe.rs (new module), src/strategy.rs (extended), src/engine.rs (integration)
+- **Tests**: 12 new tests in src/timeframe.rs and src/strategies/multi_timeframe.rs
+- **MISSING**:
+  - Custom timeframe support (non-standard intervals)
+  - Partial bar handling (incomplete bar detection)
+  - Timezone-aware alignment (DST transitions)
 
 ### [MISSING] [MEDIUM] Custom Timeframe Support
 - Non-standard intervals (7m, 33m, etc.)
@@ -927,7 +933,7 @@ Items are organized by category and prioritized within each category. Priority r
 ### Phase 3: Advanced Trading Features [HIGH]
 1. Live trading mode with broker integration
 2. ~~Options pricing and Greeks~~ (COMPLETE - Black-Scholes, Greeks, put-call parity)
-3. Multi-timeframe strategy interface
+3. ~~Multi-timeframe strategy interface~~ (COMPLETE - TimeframeManager, multiple timeframe access)
 4. Portfolio optimization methods
 5. Execution algorithms (TWAP, VWAP, POV)
 
@@ -984,7 +990,7 @@ cargo doc --no-deps --open
 | Data Handling | 6 | 1 | 1 | 6 | 14 |
 | Position Management | 8 | 1 | 0 | 4 | 13 |
 | ML Integration | 6 | 1 | 0 | 4 | 11 |
-| Multi-Timeframe | 1 | 1 | 0 | 3 | 5 |
+| Multi-Timeframe | 2 | 0 | 0 | 3 | 5 |
 | Multi-Asset Portfolio | 5 | 1 | 0 | 3 | 9 |
 | Options & Derivatives | 3 | 0 | 0 | 6 | 9 |
 | Risk & Validation | 4 | 2 | 0 | 3 | 9 |
@@ -995,7 +1001,7 @@ cargo doc --no-deps --open
 | CLI & Configuration | 3 | 1 | 0 | 4 | 8 |
 | Execution Realism | 2 | 1 | 0 | 3 | 6 |
 | Reproducibility | 2 | 2 | 0 | 0 | 4 |
-| **TOTAL** | **49** | **7** | **4** | **67** | **127** |
+| **TOTAL** | **50** | **6** | **4** | **67** | **127** |
 
 **Estimated Completion: ~42%** (core backtesting solid; Options Pricing Models and Greeks Calculation now complete with Black-Scholes and full Greeks support; Experiment Tracking, Cross-Sectional Features, CPCV, Overfitting Detection, and Transaction Cost Sensitivity complete; all major portfolio construction methods complete including Black-Litterman; ONNX inference architecture complete but blocked by ort crate instability; live trading and Python bindings not started)
 

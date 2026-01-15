@@ -303,6 +303,7 @@ mod tests {
             equity: 100000.0,
             symbol: "TEST",
             volume_profile: None,
+            timeframe_manager: None,
         };
 
         let signal = strategy.on_bar(&ctx);

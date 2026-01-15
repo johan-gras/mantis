@@ -23,12 +23,16 @@
 //! - [`ConfidenceWeightedStrategy`]: Position sizing based on model confidence
 //! - [`TimestampedSignalStrategy`]: Signals indexed by timestamp
 //! - [`EnsembleSignalStrategy`]: Combine multiple model predictions
+//!
+//! Multi-Timeframe Strategies:
+//! - [`MultiTimeframeStrategy`]: Daily trend + hourly entry timing
 
 mod breakout;
 mod macd_strategy;
 mod mean_reversion;
 mod ml_strategy;
 mod momentum;
+mod multi_timeframe;
 mod rsi_strategy;
 mod sma_crossover;
 
@@ -40,5 +44,6 @@ pub use ml_strategy::{
     ExternalSignalStrategy, TimestampedSignalStrategy,
 };
 pub use momentum::{MomentumStrategy, RocStrategy};
+pub use multi_timeframe::MultiTimeframeStrategy;
 pub use rsi_strategy::{RsiDivergence, RsiStrategy};
 pub use sma_crossover::SmaCrossover;

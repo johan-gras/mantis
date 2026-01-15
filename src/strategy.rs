@@ -1,5 +1,7 @@
 //! Strategy trait and related utilities.
 
+use crate::data::ResampleInterval;
+use crate::timeframe::TimeframeManager;
 use crate::types::{Bar, Order, Signal, VolumeProfile};
 
 /// Context provided to strategies during backtest execution.
@@ -7,7 +9,7 @@ use crate::types::{Bar, Order, Signal, VolumeProfile};
 pub struct StrategyContext<'a> {
     /// Current bar index.
     pub bar_index: usize,
-    /// Current and historical bars up to this point.
+    /// Current and historical bars up to this point (base timeframe).
     pub bars: &'a [Bar],
     /// Current position quantity (positive for long, negative for short, zero for flat).
     pub position: f64,
@@ -19,6 +21,8 @@ pub struct StrategyContext<'a> {
     pub symbol: &'a str,
     /// Historical volume statistics for the symbol when available.
     pub volume_profile: Option<VolumeProfile>,
+    /// Multi-timeframe manager (optional, for strategies requesting multiple timeframes).
+    pub(crate) timeframe_manager: Option<&'a TimeframeManager>,
 }
 
 impl<'a> StrategyContext<'a> {
@@ -83,6 +87,82 @@ impl<'a> StrategyContext<'a> {
     pub fn volume_profile(&self) -> Option<VolumeProfile> {
         self.volume_profile
     }
+
+    // ========== Multi-Timeframe Support ==========
+
+    /// Get bars at a specific timeframe up to the current timestamp.
+    ///
+    /// Returns all bars at the requested timeframe whose timestamps are
+    /// less than or equal to the current bar's timestamp.
+    ///
+    /// # Arguments
+    /// * `interval` - The timeframe to query (e.g., Hour(1), Day, etc.)
+    ///
+    /// # Returns
+    /// Slice of bars at the requested timeframe, or None if:
+    /// - Multi-timeframe is not enabled for this strategy
+    /// - The requested timeframe was not pre-registered
+    ///
+    /// # Example
+    /// ```ignore
+    /// // In your strategy's on_bar method
+    /// if let Some(hourly_bars) = ctx.bars_at(ResampleInterval::Hour(1)) {
+    ///     let hourly_close = hourly_bars.last().unwrap().close;
+    ///     // Use hourly trend for decision making
+    /// }
+    /// ```
+    pub fn bars_at(&self, interval: ResampleInterval) -> Option<&[Bar]> {
+        let manager = self.timeframe_manager?;
+        manager.get_bars_up_to(interval, self.bar_index)
+    }
+
+    /// Get the current bar at a specific timeframe.
+    ///
+    /// Returns the most recent bar at the requested timeframe whose timestamp
+    /// is less than or equal to the current bar's timestamp.
+    ///
+    /// # Arguments
+    /// * `interval` - The timeframe to query
+    ///
+    /// # Returns
+    /// Reference to the current bar, or None if not available
+    ///
+    /// # Example
+    /// ```ignore
+    /// if let Some(daily_bar) = ctx.current_bar_at(ResampleInterval::Day) {
+    ///     println!("Daily trend: close = {}", daily_bar.close);
+    /// }
+    /// ```
+    pub fn current_bar_at(&self, interval: ResampleInterval) -> Option<&Bar> {
+        let manager = self.timeframe_manager?;
+        manager.get_current_bar(interval, self.bar_index)
+    }
+
+    /// Get a bar at a specific timeframe with lookback.
+    ///
+    /// # Arguments
+    /// * `interval` - The timeframe to query
+    /// * `lookback` - How many bars to look back (0 = current, 1 = previous, etc.)
+    ///
+    /// # Returns
+    /// Reference to the bar, or None if not available
+    ///
+    /// # Example
+    /// ```ignore
+    /// // Get the hourly bar from 2 hours ago
+    /// if let Some(bar) = ctx.bar_at_timeframe(ResampleInterval::Hour(1), 2) {
+    ///     println!("2 hours ago: close = {}", bar.close);
+    /// }
+    /// ```
+    pub fn bar_at_timeframe(&self, interval: ResampleInterval, lookback: usize) -> Option<&Bar> {
+        let manager = self.timeframe_manager?;
+        manager.get_bar_at(interval, self.bar_index, lookback)
+    }
+
+    /// Check if multi-timeframe support is enabled for this strategy.
+    pub fn has_multi_timeframe(&self) -> bool {
+        self.timeframe_manager.is_some()
+    }
 }
 
 /// Trait that all trading strategies must implement.
@@ -115,6 +195,29 @@ pub trait Strategy: Send + Sync {
 
     /// Get strategy parameters as key-value pairs for logging.
     fn parameters(&self) -> Vec<(String, String)> {
+        vec![]
+    }
+
+    /// Request additional timeframes for multi-timeframe strategies.
+    ///
+    /// Strategies that need to access multiple timeframes should implement this method
+    /// to specify which timeframes they need. The engine will pre-resample and cache
+    /// these timeframes for efficient access during backtesting.
+    ///
+    /// # Returns
+    /// Vector of timeframes to pre-compute. Empty vector (default) means single-timeframe.
+    ///
+    /// # Example
+    /// ```ignore
+    /// // Strategy that uses daily trend + hourly entries
+    /// fn requested_timeframes(&self) -> Vec<ResampleInterval> {
+    ///     vec![
+    ///         ResampleInterval::Hour(1),
+    ///         ResampleInterval::Day,
+    ///     ]
+    /// }
+    /// ```
+    fn requested_timeframes(&self) -> Vec<ResampleInterval> {
         vec![]
     }
 }
@@ -200,6 +303,7 @@ mod tests {
             equity: 20000.0,
             symbol: "TEST",
             volume_profile: None,
+            timeframe_manager: None,
         };
 
         assert!(ctx.has_position());
@@ -230,6 +334,7 @@ mod tests {
             equity: 10000.0,
             symbol: "TEST",
             volume_profile: None,
+            timeframe_manager: None,
         };
 
         let signal = strategy.on_bar(&ctx);

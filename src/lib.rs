@@ -121,6 +121,7 @@ pub mod risk;
 pub mod strategies;
 pub mod strategy;
 pub mod streaming;
+pub mod timeframe;
 pub mod types;
 pub mod walkforward;
 
@@ -148,3 +149,6 @@ pub use data::{
     filter_actions_for_symbol, load_corporate_actions, resample, unalign_series, AlignMode,
     AlignedBars, DataGap, DataQualityReport, FillMethod, ResampleInterval,
 };
+
+// Multi-timeframe support
+pub use timeframe::TimeframeManager;

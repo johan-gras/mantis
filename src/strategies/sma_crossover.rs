@@ -171,6 +171,7 @@ mod tests {
                 equity: 100000.0,
                 symbol: "TEST",
                 volume_profile: None,
+                timeframe_manager: None,
             };
 
             last_signal = strategy.on_bar(&ctx);

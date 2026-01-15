@@ -1068,7 +1068,7 @@ pub fn cci(bars: &[Bar], period: usize) -> Option<f64> {
 // =============================================================================
 
 /// Interval for resampling time-series data.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ResampleInterval {
     /// Minute intervals (e.g., 5, 15, 30 minutes).
     Minute(u32),

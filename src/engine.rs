@@ -6,6 +6,7 @@ use crate::metadata::{compute_config_hash, generate_experiment_id, GitInfo};
 use crate::portfolio::{CostModel, Portfolio};
 use crate::risk::{RiskConfig, StopLoss, TrailingStop};
 use crate::strategy::{Strategy, StrategyContext};
+use crate::timeframe::TimeframeManager;
 use crate::types::{
     Bar, EquityPoint, ExecutionPrice, LotSelectionMethod, Order, OrderType, Side, Signal, Trade,
     VolumeProfile,
@@ -238,6 +239,23 @@ impl Engine {
         // Initialize strategy
         strategy.init();
 
+        // Check if strategy requests additional timeframes
+        let requested_timeframes = strategy.requested_timeframes();
+        let timeframe_manager = if !requested_timeframes.is_empty() {
+            info!(
+                "Strategy requested {} additional timeframes: {:?}",
+                requested_timeframes.len(),
+                requested_timeframes
+            );
+            let mut manager = TimeframeManager::new(bars.clone());
+            for interval in requested_timeframes {
+                manager.request_timeframe(interval)?;
+            }
+            Some(manager)
+        } else {
+            None
+        };
+
         // Create portfolio
         let mut portfolio =
             Portfolio::with_cost_model(self.config.initial_capital, self.config.cost_model.clone());
@@ -364,6 +382,7 @@ impl Engine {
                 equity: portfolio.equity(&prices),
                 symbol,
                 volume_profile,
+                timeframe_manager: timeframe_manager.as_ref(),
             };
 
             self.handle_pending_orders(&mut pending_orders, bar, strategy, &ctx, &mut portfolio)?;
