@@ -360,7 +360,8 @@ pub fn implied_volatility(
     option_type: OptionType,
 ) -> Option<f64> {
     // Input validation
-    if market_price <= 0.0 || underlying_price <= 0.0 || strike <= 0.0 || time_to_expiration <= 0.0 {
+    if market_price <= 0.0 || underlying_price <= 0.0 || strike <= 0.0 || time_to_expiration <= 0.0
+    {
         return None;
     }
 
@@ -397,7 +398,8 @@ pub fn implied_volatility(
     // Initial guess using Brenner-Subrahmanyam approximation for ATM options
     let initial_guess = if (underlying_price / strike - 1.0).abs() < 0.1 {
         // ATM approximation: σ ≈ sqrt(2π/T) * (C/S)
-        ((2.0 * PI / time_to_expiration).sqrt() * (market_price / underlying_price)).clamp(MIN_VOL, MAX_VOL)
+        ((2.0 * PI / time_to_expiration).sqrt() * (market_price / underlying_price))
+            .clamp(MIN_VOL, MAX_VOL)
     } else if (market_price - intrinsic).abs() < 0.01 {
         // Deep ITM option with very little time value - use low volatility guess
         0.10
@@ -523,7 +525,14 @@ fn brent_method_iv(
     max_iterations: usize,
 ) -> Option<f64> {
     let price_at = |vol: f64| -> f64 {
-        black_scholes(underlying_price, strike, time_to_expiration, risk_free_rate, vol, option_type)
+        black_scholes(
+            underlying_price,
+            strike,
+            time_to_expiration,
+            risk_free_rate,
+            vol,
+            option_type,
+        )
     };
 
     let mut fa = price_at(a) - target_price;
@@ -1223,14 +1232,36 @@ mod tests {
             let call_iv = implied_volatility(call_price, s, k, t, r, OptionType::Call);
             let put_iv = implied_volatility(put_price, s, k, t, r, OptionType::Put);
 
-            assert!(call_iv.is_some(), "Failed to solve IV for call at strike {}: price = {}", k, call_price);
-            assert!(put_iv.is_some(), "Failed to solve IV for put at strike {}: price = {}", k, put_price);
+            assert!(
+                call_iv.is_some(),
+                "Failed to solve IV for call at strike {}: price = {}",
+                k,
+                call_price
+            );
+            assert!(
+                put_iv.is_some(),
+                "Failed to solve IV for put at strike {}: price = {}",
+                k,
+                put_price
+            );
 
             let call_vol = call_iv.unwrap();
             let put_vol = put_iv.unwrap();
 
-            assert!((call_vol - sigma).abs() < 0.001, "Call IV mismatch at strike {}: expected {}, got {}", k, sigma, call_vol);
-            assert!((put_vol - sigma).abs() < 0.001, "Put IV mismatch at strike {}: expected {}, got {}", k, sigma, put_vol);
+            assert!(
+                (call_vol - sigma).abs() < 0.001,
+                "Call IV mismatch at strike {}: expected {}, got {}",
+                k,
+                sigma,
+                call_vol
+            );
+            assert!(
+                (put_vol - sigma).abs() < 0.001,
+                "Put IV mismatch at strike {}: expected {}, got {}",
+                k,
+                sigma,
+                put_vol
+            );
         }
     }
 
@@ -1252,6 +1283,10 @@ mod tests {
         let duration = start.elapsed();
 
         assert!(implied_vol.is_some());
-        assert!(duration.as_millis() < 10, "IV solver took too long: {:?}", duration);
+        assert!(
+            duration.as_millis() < 10,
+            "IV solver took too long: {:?}",
+            duration
+        );
     }
 }
