@@ -43,6 +43,9 @@ pub enum BacktestError {
 
     #[error("Optimization error: {0}")]
     OptimizationError(String),
+
+    #[error("Portfolio constraint violation: {0}")]
+    ConstraintViolation(String),
 }
 
 /// Result type alias for backtest operations.

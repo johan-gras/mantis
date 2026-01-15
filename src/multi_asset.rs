@@ -59,6 +59,279 @@ impl Allocation {
     }
 }
 
+/// Portfolio-level constraints for risk management and diversification.
+///
+/// These constraints are enforced at the portfolio level to prevent concentration risk,
+/// over-leverage, and excessive turnover.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PortfolioConstraints {
+    /// Maximum position size per symbol as fraction of portfolio (e.g., 0.10 = 10%).
+    pub max_position_size: Option<f64>,
+
+    /// Minimum position size per symbol as fraction of portfolio (e.g., 0.01 = 1%).
+    pub min_position_size: Option<f64>,
+
+    /// Maximum leverage (e.g., 1.0 = no leverage, 2.0 = 2x leverage).
+    pub max_leverage: f64,
+
+    /// Minimum number of holdings to maintain diversification.
+    pub min_holdings: Option<usize>,
+
+    /// Maximum number of holdings.
+    pub max_holdings: Option<usize>,
+
+    /// Maximum turnover per rebalance as fraction of portfolio (e.g., 0.20 = 20%).
+    /// Prevents excessive trading costs.
+    pub max_turnover: Option<f64>,
+
+    /// Maximum correlation between any two holdings (e.g., 0.95).
+    /// Used to prevent concentration in highly correlated assets.
+    pub max_correlation: Option<f64>,
+
+    /// Sector exposure limits (sector name -> max weight).
+    /// Example: {"Technology": 0.30} means max 30% in tech sector.
+    pub sector_limits: HashMap<String, f64>,
+
+    /// Symbol-specific overrides for max position size.
+    /// Takes precedence over global max_position_size.
+    pub symbol_limits: HashMap<String, f64>,
+}
+
+impl Default for PortfolioConstraints {
+    fn default() -> Self {
+        Self {
+            max_position_size: Some(0.25), // 25% max per position
+            min_position_size: None,
+            max_leverage: 1.0, // No leverage by default
+            min_holdings: None,
+            max_holdings: None,
+            max_turnover: None,
+            max_correlation: None,
+            sector_limits: HashMap::new(),
+            symbol_limits: HashMap::new(),
+        }
+    }
+}
+
+impl PortfolioConstraints {
+    /// Create constraints with no limits (except leverage = 1.0).
+    pub fn none() -> Self {
+        Self {
+            max_position_size: None,
+            min_position_size: None,
+            max_leverage: 1.0,
+            min_holdings: None,
+            max_holdings: None,
+            max_turnover: None,
+            max_correlation: None,
+            sector_limits: HashMap::new(),
+            symbol_limits: HashMap::new(),
+        }
+    }
+
+    /// Create reasonable default constraints for a diversified portfolio.
+    pub fn moderate() -> Self {
+        Self {
+            max_position_size: Some(0.20), // 20% max
+            min_position_size: Some(0.02), // 2% min
+            max_leverage: 1.0,
+            min_holdings: Some(5),
+            max_holdings: Some(30),
+            max_turnover: Some(0.30), // 30% turnover limit
+            max_correlation: Some(0.95),
+            sector_limits: HashMap::new(),
+            symbol_limits: HashMap::new(),
+        }
+    }
+
+    /// Create strict constraints for conservative portfolio management.
+    pub fn strict() -> Self {
+        Self {
+            max_position_size: Some(0.10), // 10% max
+            min_position_size: Some(0.05), // 5% min
+            max_leverage: 1.0,
+            min_holdings: Some(10),
+            max_holdings: Some(20),
+            max_turnover: Some(0.15), // 15% turnover limit
+            max_correlation: Some(0.90),
+            sector_limits: HashMap::new(),
+            symbol_limits: HashMap::new(),
+        }
+    }
+
+    /// Set max position size for a specific symbol.
+    pub fn with_symbol_limit(mut self, symbol: impl Into<String>, limit: f64) -> Self {
+        self.symbol_limits.insert(symbol.into(), limit.clamp(0.0, 1.0));
+        self
+    }
+
+    /// Set max exposure for a sector.
+    pub fn with_sector_limit(mut self, sector: impl Into<String>, limit: f64) -> Self {
+        self.sector_limits.insert(sector.into(), limit.clamp(0.0, 1.0));
+        self
+    }
+
+    /// Validate proposed weights against constraints.
+    ///
+    /// Returns `Ok(())` if all constraints are satisfied, or an error describing the violation.
+    pub fn validate_weights(
+        &self,
+        weights: &HashMap<String, f64>,
+        symbol_sectors: &HashMap<String, String>,
+    ) -> Result<()> {
+        let total_weight: f64 = weights.values().sum();
+
+        // Check leverage (total weight > 1.0 indicates leverage)
+        if total_weight > self.max_leverage {
+            return Err(BacktestError::ConstraintViolation(format!(
+                "Total weight {:.2}% exceeds max leverage {:.2}",
+                total_weight * 100.0,
+                self.max_leverage * 100.0
+            )));
+        }
+
+        // Check number of holdings
+        let num_holdings = weights.values().filter(|&&w| w > 1e-6).count();
+
+        if let Some(min) = self.min_holdings {
+            if num_holdings < min {
+                return Err(BacktestError::ConstraintViolation(format!(
+                    "Number of holdings {} is below minimum {}",
+                    num_holdings, min
+                )));
+            }
+        }
+
+        if let Some(max) = self.max_holdings {
+            if num_holdings > max {
+                return Err(BacktestError::ConstraintViolation(format!(
+                    "Number of holdings {} exceeds maximum {}",
+                    num_holdings, max
+                )));
+            }
+        }
+
+        // Check position size limits
+        for (symbol, &weight) in weights.iter() {
+            // Skip negligible weights
+            if weight < 1e-6 {
+                continue;
+            }
+
+            // Check symbol-specific limit first
+            let max_weight = self.symbol_limits.get(symbol)
+                .copied()
+                .or(self.max_position_size);
+
+            if let Some(max) = max_weight {
+                if weight > max {
+                    return Err(BacktestError::ConstraintViolation(format!(
+                        "Position size {:.2}% for {} exceeds maximum {:.2}%",
+                        weight * 100.0,
+                        symbol,
+                        max * 100.0
+                    )));
+                }
+            }
+
+            if let Some(min) = self.min_position_size {
+                if weight < min {
+                    return Err(BacktestError::ConstraintViolation(format!(
+                        "Position size {:.2}% for {} is below minimum {:.2}%",
+                        weight * 100.0,
+                        symbol,
+                        min * 100.0
+                    )));
+                }
+            }
+        }
+
+        // Check sector exposure limits
+        if !self.sector_limits.is_empty() {
+            let mut sector_exposure: HashMap<String, f64> = HashMap::new();
+
+            for (symbol, &weight) in weights.iter() {
+                if let Some(sector) = symbol_sectors.get(symbol) {
+                    *sector_exposure.entry(sector.clone()).or_insert(0.0) += weight;
+                }
+            }
+
+            for (sector, &exposure) in sector_exposure.iter() {
+                if let Some(&limit) = self.sector_limits.get(sector) {
+                    if exposure > limit {
+                        return Err(BacktestError::ConstraintViolation(format!(
+                            "Sector {} exposure {:.2}% exceeds limit {:.2}%",
+                            sector,
+                            exposure * 100.0,
+                            limit * 100.0
+                        )));
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Calculate turnover between current and proposed weights.
+    ///
+    /// Turnover is the sum of absolute differences in weights, divided by 2.
+    pub fn calculate_turnover(
+        current_weights: &HashMap<String, f64>,
+        proposed_weights: &HashMap<String, f64>,
+    ) -> f64 {
+        let mut total_diff = 0.0;
+
+        // Get all unique symbols
+        let all_symbols: std::collections::HashSet<_> = current_weights
+            .keys()
+            .chain(proposed_weights.keys())
+            .collect();
+
+        for symbol in all_symbols {
+            let current = current_weights.get(symbol).copied().unwrap_or(0.0);
+            let proposed = proposed_weights.get(symbol).copied().unwrap_or(0.0);
+            total_diff += (proposed - current).abs();
+        }
+
+        // Divide by 2 because buying and selling are counted separately
+        total_diff / 2.0
+    }
+
+    /// Validate turnover constraint.
+    pub fn validate_turnover(
+        &self,
+        current_weights: &HashMap<String, f64>,
+        proposed_weights: &HashMap<String, f64>,
+    ) -> Result<()> {
+        if let Some(max_turnover) = self.max_turnover {
+            let turnover = Self::calculate_turnover(current_weights, proposed_weights);
+
+            if turnover > max_turnover {
+                return Err(BacktestError::ConstraintViolation(format!(
+                    "Turnover {:.2}% exceeds maximum {:.2}%",
+                    turnover * 100.0,
+                    max_turnover * 100.0
+                )));
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Validate all constraints for a rebalance operation.
+    pub fn validate_rebalance(
+        &self,
+        current_weights: &HashMap<String, f64>,
+        proposed_weights: &HashMap<String, f64>,
+        symbol_sectors: &HashMap<String, String>,
+    ) -> Result<()> {
+        self.validate_weights(proposed_weights, symbol_sectors)?;
+        self.validate_turnover(current_weights, proposed_weights)?;
+        Ok(())
+    }
+}
+
 /// Signal generated by a portfolio strategy.
 #[derive(Debug, Clone)]
 pub enum AllocationSignal {
@@ -457,6 +730,8 @@ pub struct MultiAssetResult {
 pub struct MultiAssetEngine {
     config: BacktestConfig,
     data: DataManager,
+    constraints: Option<PortfolioConstraints>,
+    symbol_sectors: HashMap<String, String>,
 }
 
 impl MultiAssetEngine {
@@ -465,7 +740,28 @@ impl MultiAssetEngine {
         Self {
             config,
             data: DataManager::new(),
+            constraints: None,
+            symbol_sectors: HashMap::new(),
         }
+    }
+
+    /// Set portfolio constraints for the engine.
+    pub fn with_constraints(mut self, constraints: PortfolioConstraints) -> Self {
+        self.constraints = Some(constraints);
+        self
+    }
+
+    /// Set sector classification for symbols.
+    ///
+    /// Example: engine.set_symbol_sector("AAPL", "Technology");
+    pub fn set_symbol_sector(&mut self, symbol: impl Into<String>, sector: impl Into<String>) {
+        self.symbol_sectors.insert(symbol.into(), sector.into());
+    }
+
+    /// Set multiple sector classifications at once.
+    pub fn with_sectors(mut self, sectors: HashMap<String, String>) -> Self {
+        self.symbol_sectors = sectors;
+        self
     }
 
     /// Add data for a symbol.
@@ -791,12 +1087,47 @@ impl MultiAssetEngine {
         prices: &HashMap<String, f64>,
         equity: f64,
     ) -> Result<()> {
+        // If constraints are set, validate them before executing
+        if let Some(ref constraints) = self.constraints {
+            // Calculate current weights
+            let current_weights = self.calculate_current_weights(portfolio, prices, equity);
+
+            // Validate the rebalance
+            constraints.validate_rebalance(&current_weights, target_weights, &self.symbol_sectors)?;
+        }
+
         let allocations: HashMap<String, Allocation> = target_weights
             .iter()
             .map(|(s, w)| (s.clone(), Allocation::new(*w)))
             .collect();
 
         self.execute_allocations(portfolio, &allocations, prices, equity)
+    }
+
+    /// Calculate current portfolio weights.
+    fn calculate_current_weights(
+        &self,
+        portfolio: &Portfolio,
+        prices: &HashMap<String, f64>,
+        equity: f64,
+    ) -> HashMap<String, f64> {
+        if equity <= 0.0 {
+            return HashMap::new();
+        }
+
+        let mut weights = HashMap::new();
+        for (symbol, position) in portfolio.positions() {
+            if let Some(&price) = prices.get(symbol) {
+                let position_value = position.quantity.abs() * price;
+                let weight = position_value / equity;
+                if weight > 1e-6 {
+                    // Only include non-negligible weights
+                    weights.insert(symbol.clone(), weight);
+                }
+            }
+        }
+
+        weights
     }
 
     /// Exit all positions.
@@ -3164,5 +3495,334 @@ mod tests {
         // Relaxed assertion: just check result is valid
         println!("HRP Backtest Result: {} trades", result.total_trades);
         println!("Final equity: {}, Initial: {}", result.final_equity, result.initial_capital);
+    }
+
+    // Portfolio Constraints Tests
+
+    #[test]
+    fn test_portfolio_constraints_default() {
+        let constraints = PortfolioConstraints::default();
+        assert_eq!(constraints.max_position_size, Some(0.25));
+        assert_eq!(constraints.max_leverage, 1.0);
+    }
+
+    #[test]
+    fn test_portfolio_constraints_moderate() {
+        let constraints = PortfolioConstraints::moderate();
+        assert_eq!(constraints.max_position_size, Some(0.20));
+        assert_eq!(constraints.min_position_size, Some(0.02));
+        assert_eq!(constraints.min_holdings, Some(5));
+        assert_eq!(constraints.max_holdings, Some(30));
+    }
+
+    #[test]
+    fn test_portfolio_constraints_strict() {
+        let constraints = PortfolioConstraints::strict();
+        assert_eq!(constraints.max_position_size, Some(0.10));
+        assert_eq!(constraints.min_position_size, Some(0.05));
+        assert_eq!(constraints.min_holdings, Some(10));
+        assert_eq!(constraints.max_holdings, Some(20));
+    }
+
+    #[test]
+    fn test_portfolio_constraints_builder() {
+        let constraints = PortfolioConstraints::default()
+            .with_symbol_limit("AAPL", 0.15)
+            .with_sector_limit("Technology", 0.30);
+
+        assert_eq!(constraints.symbol_limits.get("AAPL"), Some(&0.15));
+        assert_eq!(constraints.sector_limits.get("Technology"), Some(&0.30));
+    }
+
+    #[test]
+    fn test_validate_weights_max_position_size() {
+        let constraints = PortfolioConstraints {
+            max_position_size: Some(0.20),
+            ..Default::default()
+        };
+
+        let mut weights = HashMap::new();
+        weights.insert("AAPL".to_string(), 0.25); // Exceeds 20%
+        weights.insert("GOOGL".to_string(), 0.15);
+
+        let result = constraints.validate_weights(&weights, &HashMap::new());
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("exceeds maximum"));
+    }
+
+    #[test]
+    fn test_validate_weights_min_position_size() {
+        let constraints = PortfolioConstraints {
+            min_position_size: Some(0.05),
+            ..Default::default()
+        };
+
+        let mut weights = HashMap::new();
+        weights.insert("AAPL".to_string(), 0.03); // Below 5%
+        weights.insert("GOOGL".to_string(), 0.10);
+
+        let result = constraints.validate_weights(&weights, &HashMap::new());
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("below minimum"));
+    }
+
+    #[test]
+    fn test_validate_weights_leverage() {
+        let constraints = PortfolioConstraints {
+            max_leverage: 1.0,
+            ..Default::default()
+        };
+
+        let mut weights = HashMap::new();
+        weights.insert("AAPL".to_string(), 0.60);
+        weights.insert("GOOGL".to_string(), 0.50); // Total 1.1 > 1.0
+
+        let result = constraints.validate_weights(&weights, &HashMap::new());
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("leverage"));
+    }
+
+    #[test]
+    fn test_validate_weights_min_holdings() {
+        let constraints = PortfolioConstraints {
+            min_holdings: Some(3),
+            ..Default::default()
+        };
+
+        let mut weights = HashMap::new();
+        weights.insert("AAPL".to_string(), 0.50);
+        weights.insert("GOOGL".to_string(), 0.50); // Only 2 holdings
+
+        let result = constraints.validate_weights(&weights, &HashMap::new());
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("below minimum"));
+    }
+
+    #[test]
+    fn test_validate_weights_max_holdings() {
+        let constraints = PortfolioConstraints {
+            max_holdings: Some(2),
+            ..Default::default()
+        };
+
+        let mut weights = HashMap::new();
+        weights.insert("AAPL".to_string(), 0.33);
+        weights.insert("GOOGL".to_string(), 0.33);
+        weights.insert("MSFT".to_string(), 0.33); // 3 holdings > 2
+
+        let result = constraints.validate_weights(&weights, &HashMap::new());
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("exceeds maximum"));
+    }
+
+    #[test]
+    fn test_validate_weights_sector_limits() {
+        // Create constraints with sector limit and no position size limit
+        let mut constraints = PortfolioConstraints {
+            max_position_size: None, // Disable position size check
+            sector_limits: HashMap::new(),
+            ..Default::default()
+        };
+        constraints.sector_limits.insert("Technology".to_string(), 0.50);
+
+        let mut weights = HashMap::new();
+        weights.insert("AAPL".to_string(), 0.30);
+        weights.insert("GOOGL".to_string(), 0.25); // Total tech: 55% > 50%
+        weights.insert("JPM".to_string(), 0.45);
+
+        let mut sectors = HashMap::new();
+        sectors.insert("AAPL".to_string(), "Technology".to_string());
+        sectors.insert("GOOGL".to_string(), "Technology".to_string());
+        sectors.insert("JPM".to_string(), "Finance".to_string());
+
+        let result = constraints.validate_weights(&weights, &sectors);
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("Sector") || err_msg.contains("Technology"), "Error message: {}", err_msg);
+    }
+
+    #[test]
+    fn test_validate_weights_symbol_limits() {
+        let constraints = PortfolioConstraints::default()
+            .with_symbol_limit("AAPL", 0.10);
+
+        let mut weights = HashMap::new();
+        weights.insert("AAPL".to_string(), 0.15); // Exceeds symbol-specific limit
+        weights.insert("GOOGL".to_string(), 0.20); // Within global limit
+
+        let result = constraints.validate_weights(&weights, &HashMap::new());
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("AAPL"));
+    }
+
+    #[test]
+    fn test_calculate_turnover() {
+        let mut current = HashMap::new();
+        current.insert("AAPL".to_string(), 0.30);
+        current.insert("GOOGL".to_string(), 0.40);
+        current.insert("MSFT".to_string(), 0.30);
+
+        let mut proposed = HashMap::new();
+        proposed.insert("AAPL".to_string(), 0.40); // +10%
+        proposed.insert("GOOGL".to_string(), 0.30); // -10%
+        proposed.insert("MSFT".to_string(), 0.30); // No change
+
+        let turnover = PortfolioConstraints::calculate_turnover(&current, &proposed);
+        // Total change: |0.10| + |-0.10| + |0.0| = 0.20, divided by 2 = 0.10
+        assert!((turnover - 0.10).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_validate_turnover() {
+        let constraints = PortfolioConstraints {
+            max_turnover: Some(0.10),
+            ..Default::default()
+        };
+
+        let mut current = HashMap::new();
+        current.insert("AAPL".to_string(), 0.30);
+        current.insert("GOOGL".to_string(), 0.40);
+        current.insert("MSFT".to_string(), 0.30);
+
+        let mut proposed = HashMap::new();
+        proposed.insert("AAPL".to_string(), 0.50); // +20%
+        proposed.insert("GOOGL".to_string(), 0.20); // -20%
+        proposed.insert("MSFT".to_string(), 0.30); // No change
+        // Turnover = 0.20 > 0.10
+
+        let result = constraints.validate_turnover(&current, &proposed);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("Turnover"));
+    }
+
+    #[test]
+    fn test_validate_rebalance() {
+        let constraints = PortfolioConstraints {
+            max_position_size: Some(0.40),
+            max_turnover: Some(0.30),
+            ..Default::default()
+        };
+
+        let mut current = HashMap::new();
+        current.insert("AAPL".to_string(), 0.50);
+        current.insert("GOOGL".to_string(), 0.50);
+
+        let mut proposed = HashMap::new();
+        proposed.insert("AAPL".to_string(), 0.60);
+        proposed.insert("GOOGL".to_string(), 0.40);
+
+        let result = constraints.validate_rebalance(&current, &proposed, &HashMap::new());
+        // Should fail on max_position_size (AAPL at 60% > 40%)
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_multi_asset_engine_with_constraints() {
+        let config = BacktestConfig {
+            initial_capital: 100_000.0,
+            show_progress: false,
+            ..Default::default()
+        };
+
+        // Create constraints that should NOT be violated
+        let constraints = PortfolioConstraints {
+            max_position_size: Some(0.60), // Generous limit
+            min_holdings: Some(2),
+            ..Default::default()
+        };
+
+        let mut engine = MultiAssetEngine::new(config).with_constraints(constraints);
+
+        let bars1 = create_test_bars(100, 100.0, 0.001);
+        let bars2 = create_test_bars(100, 50.0, 0.002);
+
+        engine.add_data("ASSET1", bars1);
+        engine.add_data("ASSET2", bars2);
+
+        let mut strategy = EqualWeightStrategy::new(20);
+        let result = engine.run(&mut strategy);
+
+        // Should succeed as equal weight with 2 assets should satisfy constraints
+        assert!(result.is_ok());
+        let result = result.unwrap();
+        assert!(result.final_equity > 0.0);
+    }
+
+    #[test]
+    fn test_multi_asset_engine_constraint_violation() {
+        let config = BacktestConfig {
+            initial_capital: 100_000.0,
+            show_progress: false,
+            ..Default::default()
+        };
+
+        // Create strict constraints that will be violated
+        let constraints = PortfolioConstraints {
+            max_position_size: Some(0.40), // 40% max per position
+            ..Default::default()
+        };
+
+        let mut engine = MultiAssetEngine::new(config).with_constraints(constraints);
+
+        let bars1 = create_test_bars(100, 100.0, 0.001);
+        let bars2 = create_test_bars(100, 50.0, 0.002);
+
+        engine.add_data("ASSET1", bars1);
+        engine.add_data("ASSET2", bars2);
+
+        // Equal weight with 2 assets = 50% each, violates 40% limit
+        let mut strategy = EqualWeightStrategy::new(20);
+        let result = engine.run(&mut strategy);
+
+        // Should fail due to constraint violation
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("constraint") || err.to_string().contains("exceeds"));
+    }
+
+    #[test]
+    fn test_multi_asset_engine_with_sector_constraints() {
+        let config = BacktestConfig {
+            initial_capital: 100_000.0,
+            show_progress: false,
+            ..Default::default()
+        };
+
+        // Create constraints with sector limit but allow large position sizes
+        let mut constraints = PortfolioConstraints {
+            max_position_size: Some(0.50), // Allow 50% per position
+            min_holdings: Some(2),
+            sector_limits: HashMap::new(),
+            ..Default::default()
+        };
+        constraints.sector_limits.insert("Technology".to_string(), 0.60);
+
+        let mut engine = MultiAssetEngine::new(config).with_constraints(constraints);
+
+        engine.set_symbol_sector("AAPL", "Technology");
+        engine.set_symbol_sector("GOOGL", "Technology");
+        engine.set_symbol_sector("JPM", "Finance");
+
+        let bars1 = create_test_bars(100, 100.0, 0.001);
+        let bars2 = create_test_bars(100, 50.0, 0.002);
+        let bars3 = create_test_bars(100, 75.0, 0.0015);
+
+        engine.add_data("AAPL", bars1);
+        engine.add_data("GOOGL", bars2);
+        engine.add_data("JPM", bars3);
+
+        // Equal weight = 33.3% each, tech total = 66.6% > 60% limit
+        let mut strategy = EqualWeightStrategy::new(20);
+        let result = engine.run(&mut strategy);
+
+        // Should fail due to sector constraint violation
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        let err_msg = err.to_string();
+        assert!(
+            err_msg.contains("Sector") || err_msg.contains("Technology"),
+            "Expected sector constraint error, got: {}",
+            err_msg
+        );
     }
 }

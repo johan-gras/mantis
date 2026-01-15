@@ -380,12 +380,23 @@ Items are organized by category and prioritized within each category. Priority r
   - Target volatility portfolios
   - Max diversification portfolios
 
-### [MISSING] [HIGH] Portfolio Constraints
-- Maximum position size per symbol
-- Maximum sector exposure
-- Maximum leverage
-- Minimum number of holdings
-- Turnover constraints
+### [COMPLETE] Portfolio Constraints
+- **IMPLEMENTED**:
+  - Maximum position size per symbol (global and symbol-specific)
+  - Minimum position size per symbol
+  - Maximum sector exposure with sector classification
+  - Maximum leverage enforcement
+  - Minimum and maximum number of holdings
+  - Turnover constraints (max turnover per rebalance)
+  - Portfolio constraint validation in MultiAssetEngine
+  - Three preset constraint profiles: default(), moderate(), strict()
+  - Builder pattern for custom constraints
+  - Comprehensive test coverage (17 new tests)
+- **Architecture**:
+  - `PortfolioConstraints` struct in `src/multi_asset.rs`
+  - Validation before order execution in rebalance operations
+  - Clear error messages on constraint violations
+  - Symbol-to-sector mapping support
 
 ### [MISSING] [HIGH] Rebalancing Rules
 - Periodic rebalancing (daily, weekly, monthly)
@@ -932,7 +943,7 @@ cargo doc --no-deps --open
 | Position Management | 8 | 1 | 0 | 4 | 13 |
 | ML Integration | 6 | 1 | 0 | 4 | 11 |
 | Multi-Timeframe | 1 | 1 | 0 | 3 | 5 |
-| Multi-Asset Portfolio | 3 | 1 | 0 | 5 | 9 |
+| Multi-Asset Portfolio | 4 | 1 | 0 | 4 | 9 |
 | Options & Derivatives | 0 | 1 | 0 | 8 | 9 |
 | Risk & Validation | 2 | 3 | 0 | 4 | 9 |
 | Performance Analytics | 4 | 0 | 0 | 5 | 9 |
@@ -942,9 +953,9 @@ cargo doc --no-deps --open
 | CLI & Configuration | 3 | 1 | 0 | 4 | 8 |
 | Execution Realism | 2 | 1 | 0 | 3 | 6 |
 | Reproducibility | 0 | 2 | 0 | 2 | 4 |
-| **TOTAL** | **39** | **13** | **4** | **71** | **127** |
+| **TOTAL** | **40** | **13** | **4** | **70** | **127** |
 
-**Estimated Completion: ~38%** (core backtesting solid; Cross-Sectional Features and CPCV now complete; inverse volatility, risk parity, mean-variance optimization, and Hierarchical Risk Parity (HRP) portfolio strategies complete; ONNX inference architecture complete but blocked by ort crate instability; live trading and Python bindings not started)
+**Estimated Completion: ~40%** (core backtesting solid; Cross-Sectional Features and CPCV now complete; inverse volatility, risk parity, mean-variance optimization, Hierarchical Risk Parity (HRP), and Portfolio Constraints complete; ONNX inference architecture complete but blocked by ort crate instability; live trading and Python bindings not started)
 
 ---
 
