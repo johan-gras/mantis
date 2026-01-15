@@ -1,7 +1,7 @@
 //! Data loading and management for the backtest engine.
 
 use crate::error::{BacktestError, Result};
-use crate::types::{AssetConfig, Bar};
+use crate::types::{AssetConfig, Bar, VolumeProfile};
 use chrono::{DateTime, NaiveDate, NaiveDateTime, TimeZone, Utc};
 use csv::ReaderBuilder;
 use serde::Deserialize;
@@ -585,19 +585,10 @@ pub fn load_data(path: impl AsRef<Path>, config: &DataConfig) -> Result<Vec<Bar>
 }
 
 /// Multi-symbol data container.
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct DataManager {
     data: HashMap<String, Vec<Bar>>,
     asset_configs: HashMap<String, AssetConfig>,
-}
-
-impl Default for DataManager {
-    fn default() -> Self {
-        Self {
-            data: HashMap::new(),
-            asset_configs: HashMap::new(),
-        }
-    }
 }
 
 impl DataManager {
@@ -685,6 +676,23 @@ impl DataManager {
     /// Return the asset configurations for all loaded symbols.
     pub fn asset_configs(&self) -> &HashMap<String, AssetConfig> {
         &self.asset_configs
+    }
+
+    /// Compute the volume profile for a specific symbol.
+    pub fn volume_profile(&self, symbol: &str) -> Option<VolumeProfile> {
+        self.data
+            .get(symbol)
+            .and_then(|bars| VolumeProfile::from_bars(bars))
+    }
+
+    /// Compute volume profiles for all loaded symbols.
+    pub fn volume_profiles(&self) -> HashMap<String, VolumeProfile> {
+        self.data
+            .iter()
+            .filter_map(|(symbol, bars)| {
+                VolumeProfile::from_bars(bars).map(|profile| (symbol.clone(), profile))
+            })
+            .collect()
     }
 
     /// Get data for a symbol.

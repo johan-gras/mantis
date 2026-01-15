@@ -333,6 +333,7 @@ mod tests {
                 cash: 100000.0,
                 equity: 100000.0,
                 symbol: "TEST",
+                volume_profile: None,
             };
             let _ = strategy.on_bar(&ctx);
         }

@@ -4,7 +4,7 @@
 
 use crate::engine::BacktestConfig;
 use crate::error::{BacktestError, Result};
-use crate::portfolio::{CostModel, CryptoCost, ForexCost, FuturesCost};
+use crate::portfolio::{CostModel, CryptoCost, ForexCost, FuturesCost, MarketImpactModel};
 use crate::risk::{RiskConfig, StopLoss, TakeProfit};
 use chrono::{NaiveDate, TimeZone, Utc};
 use serde::{Deserialize, Serialize};
@@ -270,6 +270,7 @@ impl BacktestFileConfig {
             futures: FuturesCost::default(),
             crypto: CryptoCost::default(),
             forex: ForexCost::default(),
+            market_impact: MarketImpactModel::None,
         };
 
         let stop_loss = match self.risk.stop_loss_type.to_lowercase().as_str() {

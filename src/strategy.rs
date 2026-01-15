@@ -1,6 +1,6 @@
 //! Strategy trait and related utilities.
 
-use crate::types::{Bar, Order, Signal};
+use crate::types::{Bar, Order, Signal, VolumeProfile};
 
 /// Context provided to strategies during backtest execution.
 #[derive(Debug)]
@@ -17,6 +17,8 @@ pub struct StrategyContext<'a> {
     pub equity: f64,
     /// Symbol being traded.
     pub symbol: &'a str,
+    /// Historical volume statistics for the symbol when available.
+    pub volume_profile: Option<VolumeProfile>,
 }
 
 impl<'a> StrategyContext<'a> {
@@ -75,6 +77,11 @@ impl<'a> StrategyContext<'a> {
     /// Check if we're flat (no position).
     pub fn is_flat(&self) -> bool {
         !self.has_position()
+    }
+
+    /// Get the configured volume profile for this symbol, if available.
+    pub fn volume_profile(&self) -> Option<VolumeProfile> {
+        self.volume_profile
     }
 }
 
@@ -192,6 +199,7 @@ mod tests {
             cash: 10000.0,
             equity: 20000.0,
             symbol: "TEST",
+            volume_profile: None,
         };
 
         assert!(ctx.has_position());
@@ -221,6 +229,7 @@ mod tests {
             cash: 10000.0,
             equity: 10000.0,
             symbol: "TEST",
+            volume_profile: None,
         };
 
         let signal = strategy.on_bar(&ctx);

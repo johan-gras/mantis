@@ -3,6 +3,7 @@
 use crate::error::{BacktestError, Result};
 use crate::types::{
     AssetClass, AssetConfig, Bar, EquityPoint, Order, OrderType, Position, Side, Trade,
+    VolumeProfile,
 };
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -66,6 +67,41 @@ impl Default for ForexCost {
     }
 }
 
+/// Available market impact models for execution pricing.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub enum MarketImpactModel {
+    /// Disable market impact adjustments.
+    #[default]
+    None,
+    /// Linear model where impact grows directly with relative order size.
+    Linear { coefficient: f64 },
+    /// Square-root model, commonly used for large orders.
+    SquareRoot { coefficient: f64 },
+    /// Almgren-Chriss implementation using volatility and temporary/permanent impact.
+    AlmgrenChriss { sigma: f64, eta: f64, gamma: f64 },
+}
+
+impl MarketImpactModel {
+    fn impact(&self, order_size: f64, avg_volume: f64, price: f64) -> f64 {
+        if order_size <= 0.0 || avg_volume <= f64::EPSILON {
+            return 0.0;
+        }
+
+        let relative_size = (order_size / avg_volume).abs();
+        match self {
+            MarketImpactModel::None => 0.0,
+            MarketImpactModel::Linear { coefficient } => price * coefficient * relative_size,
+            MarketImpactModel::SquareRoot { coefficient } => {
+                price * coefficient * relative_size.sqrt()
+            }
+            MarketImpactModel::AlmgrenChriss { sigma, eta, gamma } => {
+                let sqrt_component = relative_size.sqrt();
+                price * (eta * relative_size + gamma * sigma * sqrt_component)
+            }
+        }
+    }
+}
+
 /// Configuration for trade execution costs.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CostModel {
@@ -83,6 +119,9 @@ pub struct CostModel {
     pub crypto: CryptoCost,
     /// Forex spread/swap settings.
     pub forex: ForexCost,
+    /// Market impact model configuration.
+    #[serde(default)]
+    pub market_impact: MarketImpactModel,
 }
 
 impl Default for CostModel {
@@ -95,6 +134,7 @@ impl Default for CostModel {
             futures: FuturesCost::default(),
             crypto: CryptoCost::default(),
             forex: ForexCost::default(),
+            market_impact: MarketImpactModel::default(),
         }
     }
 }
@@ -110,6 +150,7 @@ impl CostModel {
             futures: FuturesCost::default(),
             crypto: CryptoCost::default(),
             forex: ForexCost::default(),
+            market_impact: MarketImpactModel::None,
         }
     }
 
@@ -131,6 +172,11 @@ impl CostModel {
     /// Get execution price after slippage.
     pub fn execution_price(&self, price: f64, side: Side) -> f64 {
         price + self.calculate_slippage(price, side)
+    }
+
+    /// Calculate additional market impact adjustment in absolute price terms.
+    pub fn calculate_market_impact(&self, order_size: f64, avg_volume: f64, price: f64) -> f64 {
+        self.market_impact.impact(order_size, avg_volume, price)
     }
 
     /// Apply additional spread adjustments for certain asset classes.
@@ -218,6 +264,8 @@ pub struct Portfolio {
     pub fractional_shares: bool,
     /// Instrument-specific metadata.
     asset_configs: HashMap<String, AssetConfig>,
+    /// Rolling volume statistics for each symbol.
+    volume_profiles: HashMap<String, VolumeProfile>,
     /// Margin set aside for futures positions.
     margin_reserve: HashMap<String, f64>,
 }
@@ -236,6 +284,7 @@ impl Portfolio {
             allow_short: true,
             fractional_shares: true,
             asset_configs: HashMap::new(),
+            volume_profiles: HashMap::new(),
             margin_reserve: HashMap::new(),
         }
     }
@@ -253,6 +302,7 @@ impl Portfolio {
             allow_short: true,
             fractional_shares: true,
             asset_configs: HashMap::new(),
+            volume_profiles: HashMap::new(),
             margin_reserve: HashMap::new(),
         }
     }
@@ -272,6 +322,23 @@ impl Portfolio {
         for config in configs.values() {
             self.set_asset_config(config.clone());
         }
+    }
+
+    /// Set or override a volume profile for a symbol.
+    pub fn set_volume_profile(&mut self, symbol: impl Into<String>, profile: VolumeProfile) {
+        self.volume_profiles.insert(symbol.into(), profile);
+    }
+
+    /// Bulk update volume profiles.
+    pub fn set_volume_profiles(&mut self, profiles: &HashMap<String, VolumeProfile>) {
+        for (symbol, profile) in profiles {
+            self.volume_profiles.insert(symbol.clone(), *profile);
+        }
+    }
+
+    /// Get the volume profile for a symbol if configured.
+    pub fn volume_profile(&self, symbol: &str) -> Option<&VolumeProfile> {
+        self.volume_profiles.get(symbol)
     }
 
     fn asset_config_for(&self, symbol: &str) -> AssetConfig {
@@ -381,10 +448,27 @@ impl Portfolio {
         let price_with_spread = self
             .cost_model
             .apply_asset_spread(base_price, order.side, &asset);
-        let exec_price = asset.normalize_price(
-            self.cost_model
-                .execution_price(price_with_spread, order.side),
-        );
+        let mut exec_price = self
+            .cost_model
+            .execution_price(price_with_spread, order.side);
+
+        if let Some(profile) = self.volume_profiles.get(&order.symbol) {
+            let reference_volume = profile.reference_volume();
+            if reference_volume > 0.0 {
+                let impact = self.cost_model.calculate_market_impact(
+                    quantity,
+                    reference_volume,
+                    price_with_spread,
+                );
+                let signed_impact = match order.side {
+                    Side::Buy => impact,
+                    Side::Sell => -impact,
+                };
+                exec_price += signed_impact;
+            }
+        }
+
+        let exec_price = asset.normalize_price(exec_price);
         let notional = exec_price * quantity * asset.notional_multiplier();
         let mut commission = self.cost_model.calculate_commission(notional);
         commission +=
@@ -403,6 +487,7 @@ impl Portfolio {
         )
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn execute_spot_order(
         &mut self,
         order: &Order,
@@ -424,6 +509,7 @@ impl Portfolio {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn spot_buy(
         &mut self,
         order: &Order,
@@ -519,6 +605,7 @@ impl Portfolio {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn spot_sell(
         &mut self,
         order: &Order,
@@ -613,6 +700,7 @@ impl Portfolio {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn execute_future_order(
         &mut self,
         order: &Order,
@@ -1016,7 +1104,7 @@ pub struct PortfolioSummary {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::{AssetClass, AssetConfig, Bar};
+    use crate::types::{AssetClass, AssetConfig, Bar, VolumeProfile};
     use chrono::{TimeZone, Utc};
 
     fn sample_bar() -> Bar {
@@ -1028,6 +1116,10 @@ mod tests {
             102.0,
             1000.0,
         )
+    }
+
+    fn sample_volume_profile() -> VolumeProfile {
+        VolumeProfile::new(1_000.0, 100.0)
     }
 
     #[test]
@@ -1066,6 +1158,33 @@ mod tests {
         assert!(portfolio.has_position("AAPL"));
         assert_eq!(portfolio.position_qty("AAPL"), 100.0);
         assert_eq!(portfolio.cash, 90000.0); // 100000 - 100*100
+    }
+
+    #[test]
+    fn test_market_impact_buy_adjusts_execution_price() {
+        let mut cost_model = CostModel::zero();
+        cost_model.market_impact = MarketImpactModel::Linear { coefficient: 0.01 };
+        let mut portfolio = Portfolio::with_cost_model(100000.0, cost_model);
+        portfolio.set_volume_profile("AAPL", sample_volume_profile());
+
+        let bar = sample_bar();
+        // 50 / 100 = 0.5, impact = 100 * 0.01 * 0.5 = 0.5
+        let order = Order::market("AAPL", Side::Buy, 50.0, bar.timestamp);
+        let trade = portfolio.execute_order(&order, &bar).unwrap().unwrap();
+        assert!((trade.entry_price - 100.5).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_market_impact_sell_direction() {
+        let mut cost_model = CostModel::zero();
+        cost_model.market_impact = MarketImpactModel::Linear { coefficient: 0.01 };
+        let mut portfolio = Portfolio::with_cost_model(100000.0, cost_model);
+        portfolio.set_volume_profile("AAPL", sample_volume_profile());
+
+        let bar = sample_bar();
+        let order = Order::market("AAPL", Side::Sell, 50.0, bar.timestamp);
+        let trade = portfolio.execute_order(&order, &bar).unwrap().unwrap();
+        assert!((trade.entry_price - 99.5).abs() < 1e-6);
     }
 
     #[test]

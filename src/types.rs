@@ -1,8 +1,8 @@
 //! Core data types for the backtest engine.
 
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, NaiveDate, Utc};
 use serde::{Deserialize, Serialize};
-use std::fmt;
+use std::{collections::HashMap, fmt};
 
 /// OHLCV bar representing a single time period of market data.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -15,10 +15,61 @@ pub struct Bar {
     pub volume: f64,
 }
 
+/// Rolling volume statistics used for execution modeling.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Default)]
+pub struct VolumeProfile {
+    pub avg_daily_volume: f64,
+    pub avg_bar_volume: f64,
+}
+
+impl VolumeProfile {
+    /// Create a new volume profile from explicit averages.
+    pub fn new(avg_daily_volume: f64, avg_bar_volume: f64) -> Self {
+        Self {
+            avg_daily_volume,
+            avg_bar_volume,
+        }
+    }
+
+    /// Build a volume profile from historical bars.
+    pub fn from_bars(bars: &[Bar]) -> Option<Self> {
+        if bars.is_empty() {
+            return None;
+        }
+
+        let total_volume: f64 = bars.iter().map(|b| b.volume).sum();
+        let avg_bar_volume = total_volume / bars.len() as f64;
+
+        let mut daily_totals: HashMap<NaiveDate, f64> = HashMap::new();
+        for bar in bars {
+            let date = bar.timestamp.date_naive();
+            *daily_totals.entry(date).or_default() += bar.volume;
+        }
+
+        let avg_daily_volume = if daily_totals.is_empty() {
+            0.0
+        } else {
+            daily_totals.values().sum::<f64>() / daily_totals.len() as f64
+        };
+
+        Some(Self::new(avg_daily_volume, avg_bar_volume))
+    }
+
+    /// Return the best-effort reference volume for impact calculations.
+    pub fn reference_volume(&self) -> f64 {
+        if self.avg_bar_volume > 0.0 {
+            self.avg_bar_volume
+        } else {
+            self.avg_daily_volume
+        }
+    }
+}
+
 /// Supported asset classes in the engine.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub enum AssetClass {
     /// Traditional equities where notional = price * quantity.
+    #[default]
     Equity,
     /// Exchange-traded futures contracts with multipliers and margin.
     Future {
@@ -35,12 +86,6 @@ pub enum AssetClass {
     Forex { pip_size: f64, lot_size: f64 },
     /// Listed options referencing an underlying symbol.
     Option { underlying: String, multiplier: f64 },
-}
-
-impl Default for AssetClass {
-    fn default() -> Self {
-        AssetClass::Equity
-    }
 }
 
 impl AssetClass {
@@ -660,10 +705,46 @@ pub enum DividendAdjustMethod {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::TimeZone;
+    use chrono::{Duration, TimeZone};
 
     fn sample_timestamp() -> DateTime<Utc> {
         Utc.with_ymd_and_hms(2024, 1, 15, 9, 30, 0).unwrap()
+    }
+
+    #[test]
+    fn test_volume_profile_from_bars() {
+        let bars = vec![
+            Bar::new(sample_timestamp(), 100.0, 102.0, 98.0, 101.0, 1000.0),
+            Bar::new(
+                sample_timestamp() + Duration::hours(1),
+                101.0,
+                103.0,
+                99.0,
+                102.0,
+                2000.0,
+            ),
+            Bar::new(
+                sample_timestamp() + Duration::days(1),
+                103.0,
+                105.0,
+                102.0,
+                104.0,
+                3000.0,
+            ),
+        ];
+
+        let profile = VolumeProfile::from_bars(&bars).unwrap();
+        assert!((profile.avg_bar_volume - 2000.0).abs() < f64::EPSILON);
+        assert!((profile.avg_daily_volume - 3000.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_volume_profile_reference_volume() {
+        let profile = VolumeProfile::new(10_000.0, 0.0);
+        assert!((profile.reference_volume() - 10_000.0).abs() < f64::EPSILON);
+
+        let profile = VolumeProfile::new(10_000.0, 1_000.0);
+        assert!((profile.reference_volume() - 1_000.0).abs() < f64::EPSILON);
     }
 
     #[test]

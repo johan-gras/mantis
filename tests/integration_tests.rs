@@ -4,7 +4,7 @@ use chrono::{TimeZone, Utc};
 use mantis::data::{load_csv, DataConfig};
 use mantis::engine::{BacktestConfig, Engine};
 use mantis::features::{FeatureConfig, FeatureExtractor, SequenceBuilder, TimeSeriesSplitter};
-use mantis::portfolio::{CostModel, CryptoCost, ForexCost, FuturesCost};
+use mantis::portfolio::{CostModel, CryptoCost, ForexCost, FuturesCost, MarketImpactModel};
 use mantis::risk::{RiskConfig, StopLoss, TakeProfit};
 use mantis::strategies::{
     BreakoutStrategy, ClassificationStrategy, EnsembleSignalStrategy, ExternalSignalStrategy,
@@ -170,6 +170,7 @@ fn test_backtest_with_costs() {
         futures: FuturesCost::default(),
         crypto: CryptoCost::default(),
         forex: ForexCost::default(),
+        market_impact: MarketImpactModel::None,
     };
 
     let config = BacktestConfig {

@@ -563,6 +563,7 @@ fn run_backtest(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn build_asset_config(
     symbol: &str,
     asset_class: AssetClassArg,

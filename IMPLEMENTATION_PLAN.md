@@ -197,47 +197,13 @@ These items significantly improve quality but are not explicit spec violations.
   - `test_drawdown_analysis_empty_curve` - edge case handling
   - `test_drawdown_analysis_serialization` - JSON round-trip
 
-### 3.3 Add Market Impact Modeling
+### 3.3 Add Market Impact Modeling - COMPLETE
 
-**Location:** `src/portfolio.rs`
+**Location:** `src/portfolio.rs`, `src/types.rs`, `src/engine.rs`
 
-**Current state:** Only simple slippage percentage exists (volume-independent):
-```rust
-slippage_pct: 0.0005  // Fixed 5 bps regardless of order size
-```
+**Summary:** Introduced `MarketImpactModel` on the `CostModel` (Linear, SquareRoot, Almgren-Chriss) with serde defaults, wired a new `VolumeProfile` into `DataManager`, `Portfolio`, and `StrategyContext`, and updated order execution to adjust prices by model-driven impact using per-symbol average volumes. Added dedicated tests (`test_market_impact_buy_adjusts_execution_price`, `test_market_impact_sell_direction`, and `types::tests::test_volume_profile_from_bars`) to validate price adjustments and statistical calculations. CLI/config glue now propagates the additional cost-model field for backwards-compatible configuration.
 
-**Spec mentions:** "market impact" (backtest-engine.md line 13)
-
-**Implementation tasks:**
-1. Add market impact models to `CostModel`:
-   ```rust
-   pub enum MarketImpactModel {
-       None,
-       Linear { coefficient: f64 },
-       SquareRoot { coefficient: f64 },
-       AlmgrenChriss { sigma: f64, eta: f64, gamma: f64 },
-   }
-   ```
-
-2. Extend `Bar` or `StrategyContext` to include average volume:
-   ```rust
-   pub struct VolumeProfile {
-       pub avg_daily_volume: f64,
-       pub avg_bar_volume: f64,
-   }
-   ```
-
-3. Implement impact calculation:
-   ```rust
-   fn calculate_market_impact(
-       order_size: f64,
-       avg_volume: f64,
-       price: f64,
-       model: &MarketImpactModel
-   ) -> f64
-   ```
-
-4. Apply impact in `Portfolio::execute_order()`
+**Verification:** `cargo fmt`, `cargo clippy -- -D warnings`, `cargo test`.
 
 ### 3.4 Improve Order Execution Realism
 

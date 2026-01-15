@@ -5,7 +5,7 @@ use crate::error::{BacktestError, Result};
 use crate::portfolio::{CostModel, Portfolio};
 use crate::risk::{RiskConfig, StopLoss, TrailingStop};
 use crate::strategy::{Strategy, StrategyContext};
-use crate::types::{Bar, EquityPoint, Order, Side, Signal, Trade};
+use crate::types::{Bar, EquityPoint, Order, Side, Signal, Trade, VolumeProfile};
 use chrono::{DateTime, Utc};
 use indicatif::{ProgressBar, ProgressStyle};
 use rayon::prelude::*;
@@ -173,6 +173,8 @@ impl Engine {
             ));
         }
 
+        let volume_profile = VolumeProfile::from_bars(&bars);
+
         info!(
             "Running backtest: {} on {} ({} bars)",
             strategy.name(),
@@ -189,6 +191,9 @@ impl Engine {
         portfolio.allow_short = self.config.allow_short;
         portfolio.fractional_shares = self.config.fractional_shares;
         portfolio.set_asset_configs(self.data.asset_configs());
+        if let Some(profile) = volume_profile {
+            portfolio.set_volume_profile(symbol.to_string(), profile);
+        }
 
         // Setup progress bar
         let progress = if self.config.show_progress {
@@ -298,6 +303,7 @@ impl Engine {
                 cash: portfolio.cash,
                 equity: portfolio.equity(&prices),
                 symbol,
+                volume_profile,
             };
 
             // Check for custom orders first
