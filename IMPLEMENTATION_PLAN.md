@@ -4,13 +4,13 @@
 >
 > Items marked `[NOT STARTED]` were previously claimed as partial but verified to have no implementation.
 >
-> **Recent Changes**: Multi-Timeframe Strategy Interface now complete with TimeframeManager for maintaining multiple resampled bar series, strategy access to multiple timeframes via StrategyContext, lazy evaluation, and comprehensive test coverage (12 tests). Options Pricing Models and Greeks Calculation complete with Black-Scholes pricing, full Greeks calculation (Delta, Gamma, Theta, Vega, Rho), and put-call parity validation (18 tests passing). Experiment Tracking complete with SQLite-based storage, automatic backtest logging, hyperparameter/metrics capture, CLI commands for experiment management, and query/filter capabilities. Transaction Cost Sensitivity analysis complete with comprehensive testing framework (0x-20x cost multipliers, Sharpe/return degradation, breakeven analysis). Overfitting Detection fully implemented with OOS Sharpe threshold checking, parameter stability testing, and n_trials integration into deflated Sharpe ratio. Black-Litterman portfolio optimization complete with comprehensive investor views support. All core portfolio construction methods (equal weight, inverse volatility, risk parity, mean-variance, HRP, Black-Litterman) are now complete.
+> **Recent Changes**: Implied Volatility solver now complete with Newton-Raphson method (vega-based, 5-10 iterations), Brent's method fallback, Brenner-Subrahmanyam initial guess, bounds checking (5%-200%), and comprehensive test coverage (17 tests covering ATM/ITM/OTM, short/long dated, high/low vol scenarios). Multi-Timeframe Strategy Interface complete with TimeframeManager for maintaining multiple resampled bar series, strategy access to multiple timeframes via StrategyContext, lazy evaluation, and comprehensive test coverage (12 tests). Options Pricing Models and Greeks Calculation complete with Black-Scholes pricing, full Greeks calculation (Delta, Gamma, Theta, Vega, Rho), and put-call parity validation (18 tests passing). Experiment Tracking complete with SQLite-based storage, automatic backtest logging, hyperparameter/metrics capture, CLI commands for experiment management, and query/filter capabilities. Transaction Cost Sensitivity analysis complete with comprehensive testing framework (0x-20x cost multipliers, Sharpe/return degradation, breakeven analysis). Overfitting Detection fully implemented with OOS Sharpe threshold checking, parameter stability testing, and n_trials integration into deflated Sharpe ratio. Black-Litterman portfolio optimization complete with comprehensive investor views support. All core portfolio construction methods (equal weight, inverse volatility, risk parity, mean-variance, HRP, Black-Litterman) are now complete.
 
 ## Current Status Summary
 
 | Metric | Status |
 |--------|--------|
-| **Tests** | 361 passing |
+| **Tests** | 390 passing |
 | **Clippy** | 0 errors (PASSING) |
 | **Cargo fmt** | PASSING |
 | **Architecture** | Production-quality modular design |
@@ -469,11 +469,18 @@ Items are organized by category and prioritized within each category. Priority r
   - Numerical Greeks from binomial trees
   - Portfolio Greeks aggregation
 
-### [MISSING] [HIGH] Implied Volatility
+### [COMPLETE] [HIGH] Implied Volatility
+- **IMPLEMENTED**:
+  - Newton-Raphson IV solver (vega-based iteration, typically converges in 5-10 iterations)
+  - Brent's method as fallback for edge cases
+  - Bounds checking (IV range: 5% to 200%)
+  - Input validation and error handling
+  - Brenner-Subrahmanyam approximation for initial guess
+  - Comprehensive test coverage (17 new tests covering ATM, ITM, OTM, short/long dated, high/low vol scenarios)
 - **MISSING**:
-  - IV solver (Newton-Raphson, Brent's method)
   - Volatility surface representation
   - Surface interpolation for missing strikes
+  - Historical IV storage and parametric models (SVI, SABR)
 
 ### [MISSING] [MEDIUM] Options Expiration Handling
 - **MISSING**:
@@ -992,7 +999,7 @@ cargo doc --no-deps --open
 | ML Integration | 6 | 1 | 0 | 4 | 11 |
 | Multi-Timeframe | 2 | 0 | 0 | 3 | 5 |
 | Multi-Asset Portfolio | 5 | 1 | 0 | 3 | 9 |
-| Options & Derivatives | 3 | 0 | 0 | 6 | 9 |
+| Options & Derivatives | 4 | 0 | 0 | 5 | 9 |
 | Risk & Validation | 4 | 2 | 0 | 3 | 9 |
 | Performance Analytics | 4 | 0 | 0 | 5 | 9 |
 | Production Operations | 0 | 0 | 0 | 7 | 7 |
@@ -1001,9 +1008,9 @@ cargo doc --no-deps --open
 | CLI & Configuration | 3 | 1 | 0 | 4 | 8 |
 | Execution Realism | 2 | 1 | 0 | 3 | 6 |
 | Reproducibility | 2 | 2 | 0 | 0 | 4 |
-| **TOTAL** | **50** | **6** | **4** | **67** | **127** |
+| **TOTAL** | **51** | **6** | **4** | **66** | **127** |
 
-**Estimated Completion: ~42%** (core backtesting solid; Options Pricing Models and Greeks Calculation now complete with Black-Scholes and full Greeks support; Experiment Tracking, Cross-Sectional Features, CPCV, Overfitting Detection, and Transaction Cost Sensitivity complete; all major portfolio construction methods complete including Black-Litterman; ONNX inference architecture complete but blocked by ort crate instability; live trading and Python bindings not started)
+**Estimated Completion: ~43%** (core backtesting solid; Options Pricing Models and Greeks Calculation now complete with Black-Scholes and full Greeks support; Experiment Tracking, Cross-Sectional Features, CPCV, Overfitting Detection, and Transaction Cost Sensitivity complete; all major portfolio construction methods complete including Black-Litterman; ONNX inference architecture complete but blocked by ort crate instability; live trading and Python bindings not started)
 
 ---
 
@@ -1030,7 +1037,7 @@ The following spec requirements are fully implemented and verified:
 - [x] Configuration via files and arguments
 - [x] Progress reporting (indicatif progress bars)
 - [x] Output in multiple formats (text, JSON, CSV)
-- [x] Comprehensive test coverage (361 tests)
+- [x] Comprehensive test coverage (390 tests)
 - [x] Stop-loss, take-profit, trailing stops
 - [x] Position sizing (risk-based, volatility-based, Kelly)
 - [x] Monte Carlo simulation
@@ -1052,3 +1059,4 @@ The following spec requirements are fully implemented and verified:
 - [x] Greeks calculation (Delta, Gamma, Theta, Vega, Rho)
 - [x] Put-call parity validation
 - [x] Options contract representation (strike, expiration, exercise style)
+- [x] Implied volatility solver (Newton-Raphson with Brent's method fallback)

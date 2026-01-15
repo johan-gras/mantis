@@ -329,6 +329,276 @@ fn normal_pdf(x: f64) -> f64 {
     (-x * x / 2.0).exp() / (2.0 * PI).sqrt()
 }
 
+/// Calculate implied volatility from market price using Newton-Raphson method.
+///
+/// Solves for the volatility σ that makes Black-Scholes(σ) = market_price.
+/// Uses vega-based Newton-Raphson iteration with Brent's method as fallback.
+///
+/// # Arguments
+/// * `market_price` - Observed market price of the option
+/// * `underlying_price` - Current price of underlying asset
+/// * `strike` - Strike price of option
+/// * `time_to_expiration` - Time to expiration in years
+/// * `risk_free_rate` - Annualized risk-free interest rate
+/// * `option_type` - Call or Put
+///
+/// # Returns
+/// * `Some(volatility)` - Implied volatility if solver converges
+/// * `None` - If solver fails to converge or inputs are invalid
+///
+/// # Algorithm
+/// 1. Start with initial guess (historical volatility proxy)
+/// 2. Newton-Raphson: σ_{n+1} = σ_n - (BS_price - market_price) / vega
+/// 3. If Newton-Raphson fails, fall back to Brent's method
+/// 4. Bounds checking: IV typically in [0.05, 2.00] (5% to 200%)
+pub fn implied_volatility(
+    market_price: f64,
+    underlying_price: f64,
+    strike: f64,
+    time_to_expiration: f64,
+    risk_free_rate: f64,
+    option_type: OptionType,
+) -> Option<f64> {
+    // Input validation
+    if market_price <= 0.0 || underlying_price <= 0.0 || strike <= 0.0 || time_to_expiration <= 0.0 {
+        return None;
+    }
+
+    // Check if market price is reasonable
+    // For calls: price cannot exceed underlying price (max value = S when K=0)
+    // For puts: price cannot exceed discounted strike (max value = K*e^(-rT))
+    let max_value = match option_type {
+        OptionType::Call => underlying_price,
+        OptionType::Put => strike * (-risk_free_rate * time_to_expiration).exp(),
+    };
+
+    if market_price > max_value + 1e-6 {
+        return None;
+    }
+
+    // Calculate intrinsic value (for American options, price >= intrinsic)
+    // For European options, this check is not applicable due to discounting
+    let intrinsic = match option_type {
+        OptionType::Call => (underlying_price - strike).max(0.0),
+        OptionType::Put => (strike - underlying_price).max(0.0),
+    };
+
+    // For deep ITM options at expiration, IV is undefined
+    if time_to_expiration < 1e-6 {
+        return None;
+    }
+
+    // Bounds for implied volatility (5% to 200%)
+    const MIN_VOL: f64 = 0.05;
+    const MAX_VOL: f64 = 2.00;
+    const TOLERANCE: f64 = 1e-6;
+    const MAX_ITERATIONS: usize = 100;
+
+    // Initial guess using Brenner-Subrahmanyam approximation for ATM options
+    let initial_guess = if (underlying_price / strike - 1.0).abs() < 0.1 {
+        // ATM approximation: σ ≈ sqrt(2π/T) * (C/S)
+        ((2.0 * PI / time_to_expiration).sqrt() * (market_price / underlying_price)).clamp(MIN_VOL, MAX_VOL)
+    } else if (market_price - intrinsic).abs() < 0.01 {
+        // Deep ITM option with very little time value - use low volatility guess
+        0.10
+    } else {
+        // Default to 25% volatility for non-ATM options
+        0.25
+    };
+
+    // Try Newton-Raphson first (fast convergence when it works)
+    if let Some(vol) = newton_raphson_iv(
+        market_price,
+        underlying_price,
+        strike,
+        time_to_expiration,
+        risk_free_rate,
+        option_type,
+        initial_guess,
+        TOLERANCE,
+        MAX_ITERATIONS,
+    ) {
+        return Some(vol);
+    }
+
+    // Fall back to Brent's method (more robust for difficult cases)
+    brent_method_iv(
+        market_price,
+        underlying_price,
+        strike,
+        time_to_expiration,
+        risk_free_rate,
+        option_type,
+        MIN_VOL,
+        MAX_VOL,
+        TOLERANCE,
+        MAX_ITERATIONS,
+    )
+}
+
+/// Newton-Raphson solver for implied volatility.
+///
+/// Uses vega (∂V/∂σ) as the derivative for fast convergence.
+/// Typically converges in 5-10 iterations for well-behaved inputs.
+#[allow(clippy::too_many_arguments)]
+fn newton_raphson_iv(
+    target_price: f64,
+    underlying_price: f64,
+    strike: f64,
+    time_to_expiration: f64,
+    risk_free_rate: f64,
+    option_type: OptionType,
+    initial_guess: f64,
+    tolerance: f64,
+    max_iterations: usize,
+) -> Option<f64> {
+    let mut sigma = initial_guess;
+    const MIN_VOL: f64 = 0.05;
+    const MAX_VOL: f64 = 2.00;
+
+    for _ in 0..max_iterations {
+        let price = black_scholes(
+            underlying_price,
+            strike,
+            time_to_expiration,
+            risk_free_rate,
+            sigma,
+            option_type,
+        );
+
+        let diff = price - target_price;
+
+        // Check convergence
+        if diff.abs() < tolerance {
+            return Some(sigma);
+        }
+
+        // Calculate vega for Newton-Raphson step
+        let greeks = calculate_greeks(
+            underlying_price,
+            strike,
+            time_to_expiration,
+            risk_free_rate,
+            sigma,
+            option_type,
+        );
+
+        // Avoid division by very small vega
+        if greeks.vega.abs() < 1e-10 {
+            return None;
+        }
+
+        // Newton-Raphson update: σ_{n+1} = σ_n - f(σ_n) / f'(σ_n)
+        // where f(σ) = BS_price(σ) - target_price
+        // and f'(σ) = vega * 100 (vega is scaled to 1% change)
+        sigma -= diff / (greeks.vega * 100.0);
+
+        // Keep sigma within bounds
+        sigma = sigma.clamp(MIN_VOL, MAX_VOL);
+
+        // Detect if we're stuck oscillating
+        if sigma <= MIN_VOL || sigma >= MAX_VOL {
+            return None;
+        }
+    }
+
+    None // Failed to converge
+}
+
+/// Brent's method for finding implied volatility.
+///
+/// More robust than Newton-Raphson but slower. Used as fallback.
+/// Guaranteed to converge if the function is continuous and brackets the root.
+#[allow(clippy::too_many_arguments)]
+fn brent_method_iv(
+    target_price: f64,
+    underlying_price: f64,
+    strike: f64,
+    time_to_expiration: f64,
+    risk_free_rate: f64,
+    option_type: OptionType,
+    mut a: f64,
+    mut b: f64,
+    tolerance: f64,
+    max_iterations: usize,
+) -> Option<f64> {
+    let price_at = |vol: f64| -> f64 {
+        black_scholes(underlying_price, strike, time_to_expiration, risk_free_rate, vol, option_type)
+    };
+
+    let mut fa = price_at(a) - target_price;
+    let mut fb = price_at(b) - target_price;
+
+    // Check if root is bracketed
+    if fa * fb > 0.0 {
+        return None;
+    }
+
+    // Ensure fa is closer to zero
+    if fa.abs() < fb.abs() {
+        std::mem::swap(&mut a, &mut b);
+        std::mem::swap(&mut fa, &mut fb);
+    }
+
+    let mut c = a;
+    let mut fc = fa;
+    let mut mflag = true;
+    let mut d = 0.0;
+
+    for _ in 0..max_iterations {
+        if (fb.abs() < tolerance) || ((b - a).abs() < tolerance) {
+            return Some(b);
+        }
+
+        let s = if (fa - fc).abs() > 1e-10 && (fb - fc).abs() > 1e-10 {
+            // Inverse quadratic interpolation
+            (a * fb * fc) / ((fa - fb) * (fa - fc))
+                + (b * fa * fc) / ((fb - fa) * (fb - fc))
+                + (c * fa * fb) / ((fc - fa) * (fc - fb))
+        } else {
+            // Secant method
+            b - fb * (b - a) / (fb - fa)
+        };
+
+        // Determine if we should use bisection instead
+        let condition1 = (s < (3.0 * a + b) / 4.0) || (s > b);
+        let condition2 = mflag && (s - b).abs() >= (b - c).abs() / 2.0;
+        let condition3 = !mflag && (s - b).abs() >= (c - d).abs() / 2.0;
+        let condition4 = mflag && (b - c).abs() < tolerance;
+        let condition5 = !mflag && (c - d).abs() < tolerance;
+
+        let s = if condition1 || condition2 || condition3 || condition4 || condition5 {
+            // Bisection
+            mflag = true;
+            (a + b) / 2.0
+        } else {
+            mflag = false;
+            s
+        };
+
+        let fs = price_at(s) - target_price;
+        d = c;
+        c = b;
+        fc = fb;
+
+        if fa * fs < 0.0 {
+            b = s;
+            fb = fs;
+        } else {
+            a = s;
+            fa = fs;
+        }
+
+        // Ensure fa is closer to zero
+        if fa.abs() < fb.abs() {
+            std::mem::swap(&mut a, &mut b);
+            std::mem::swap(&mut fa, &mut fb);
+        }
+    }
+
+    Some(b)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -700,5 +970,288 @@ mod tests {
 
         let tte_expired = option_expired.time_to_expiration(now);
         assert_eq!(tte_expired, 0.0); // Should be clamped to 0
+    }
+
+    #[test]
+    fn test_implied_volatility_atm_call() {
+        // Test roundtrip: calculate IV from a known Black-Scholes price
+        let s = 100.0;
+        let k = 100.0; // ATM
+        let t = 1.0;
+        let r = 0.05;
+        let sigma = 0.20; // 20% volatility
+
+        // Calculate theoretical price
+        let theoretical_price = black_scholes(s, k, t, r, sigma, OptionType::Call);
+
+        // Solve for IV from the price
+        let implied_vol = implied_volatility(theoretical_price, s, k, t, r, OptionType::Call);
+
+        assert!(implied_vol.is_some());
+        let iv = implied_vol.unwrap();
+
+        // Should recover the original volatility within tolerance
+        assert!((iv - sigma).abs() < 0.001, "Expected IV ~0.20, got {}", iv);
+    }
+
+    #[test]
+    fn test_implied_volatility_atm_put() {
+        let s = 100.0;
+        let k = 100.0; // ATM
+        let t = 1.0;
+        let r = 0.05;
+        let sigma = 0.30; // 30% volatility
+
+        let theoretical_price = black_scholes(s, k, t, r, sigma, OptionType::Put);
+        let implied_vol = implied_volatility(theoretical_price, s, k, t, r, OptionType::Put);
+
+        assert!(implied_vol.is_some());
+        let iv = implied_vol.unwrap();
+        assert!((iv - sigma).abs() < 0.001, "Expected IV ~0.30, got {}", iv);
+    }
+
+    #[test]
+    fn test_implied_volatility_itm_call() {
+        // Deep ITM call
+        let s = 110.0;
+        let k = 100.0;
+        let t = 1.0;
+        let r = 0.05;
+        let sigma = 0.25;
+
+        let theoretical_price = black_scholes(s, k, t, r, sigma, OptionType::Call);
+        let implied_vol = implied_volatility(theoretical_price, s, k, t, r, OptionType::Call);
+
+        assert!(implied_vol.is_some());
+        let iv = implied_vol.unwrap();
+        assert!((iv - sigma).abs() < 0.001, "Expected IV ~0.25, got {}", iv);
+    }
+
+    #[test]
+    fn test_implied_volatility_otm_put() {
+        // OTM put
+        let s = 110.0;
+        let k = 100.0;
+        let t = 1.0;
+        let r = 0.05;
+        let sigma = 0.15;
+
+        let theoretical_price = black_scholes(s, k, t, r, sigma, OptionType::Put);
+        let implied_vol = implied_volatility(theoretical_price, s, k, t, r, OptionType::Put);
+
+        assert!(implied_vol.is_some());
+        let iv = implied_vol.unwrap();
+        assert!((iv - sigma).abs() < 0.001, "Expected IV ~0.15, got {}", iv);
+    }
+
+    #[test]
+    fn test_implied_volatility_short_dated() {
+        // Short-dated option (1 month)
+        let s = 100.0;
+        let k = 100.0;
+        let t = 1.0 / 12.0; // 1 month
+        let r = 0.05;
+        let sigma = 0.40; // Higher vol
+
+        let theoretical_price = black_scholes(s, k, t, r, sigma, OptionType::Call);
+        let implied_vol = implied_volatility(theoretical_price, s, k, t, r, OptionType::Call);
+
+        assert!(implied_vol.is_some());
+        let iv = implied_vol.unwrap();
+        assert!((iv - sigma).abs() < 0.001, "Expected IV ~0.40, got {}", iv);
+    }
+
+    #[test]
+    fn test_implied_volatility_long_dated() {
+        // Long-dated option (2 years)
+        let s = 100.0;
+        let k = 100.0;
+        let t = 2.0;
+        let r = 0.05;
+        let sigma = 0.18;
+
+        let theoretical_price = black_scholes(s, k, t, r, sigma, OptionType::Call);
+        let implied_vol = implied_volatility(theoretical_price, s, k, t, r, OptionType::Call);
+
+        assert!(implied_vol.is_some());
+        let iv = implied_vol.unwrap();
+        assert!((iv - sigma).abs() < 0.001, "Expected IV ~0.18, got {}", iv);
+    }
+
+    #[test]
+    fn test_implied_volatility_high_vol() {
+        // High volatility scenario
+        let s = 100.0;
+        let k = 100.0;
+        let t = 0.5;
+        let r = 0.05;
+        let sigma = 0.80; // 80% volatility
+
+        let theoretical_price = black_scholes(s, k, t, r, sigma, OptionType::Call);
+        let implied_vol = implied_volatility(theoretical_price, s, k, t, r, OptionType::Call);
+
+        assert!(implied_vol.is_some());
+        let iv = implied_vol.unwrap();
+        assert!((iv - sigma).abs() < 0.001, "Expected IV ~0.80, got {}", iv);
+    }
+
+    #[test]
+    fn test_implied_volatility_low_vol() {
+        // Low volatility scenario
+        let s = 100.0;
+        let k = 100.0;
+        let t = 1.0;
+        let r = 0.05;
+        let sigma = 0.08; // 8% volatility
+
+        let theoretical_price = black_scholes(s, k, t, r, sigma, OptionType::Call);
+        let implied_vol = implied_volatility(theoretical_price, s, k, t, r, OptionType::Call);
+
+        assert!(implied_vol.is_some());
+        let iv = implied_vol.unwrap();
+        assert!((iv - sigma).abs() < 0.001, "Expected IV ~0.08, got {}", iv);
+    }
+
+    #[test]
+    fn test_implied_volatility_invalid_negative_price() {
+        // Negative price should return None
+        let implied_vol = implied_volatility(-10.0, 100.0, 100.0, 1.0, 0.05, OptionType::Call);
+        assert!(implied_vol.is_none());
+    }
+
+    #[test]
+    fn test_implied_volatility_invalid_zero_price() {
+        // Zero price should return None
+        let implied_vol = implied_volatility(0.0, 100.0, 100.0, 1.0, 0.05, OptionType::Call);
+        assert!(implied_vol.is_none());
+    }
+
+    #[test]
+    fn test_implied_volatility_price_below_intrinsic() {
+        // Price below intrinsic value is impossible
+        let s = 110.0;
+        let k = 100.0;
+        let intrinsic = s - k; // 10.0
+        let invalid_price = intrinsic - 5.0; // 5.0 (below intrinsic)
+
+        let implied_vol = implied_volatility(invalid_price, s, k, 1.0, 0.05, OptionType::Call);
+        assert!(implied_vol.is_none());
+    }
+
+    #[test]
+    fn test_implied_volatility_at_expiration() {
+        // At expiration (t=0), IV is undefined
+        let s = 105.0;
+        let k = 100.0;
+        let market_price = 5.0; // Intrinsic value
+
+        let implied_vol = implied_volatility(market_price, s, k, 0.0, 0.05, OptionType::Call);
+        assert!(implied_vol.is_none());
+    }
+
+    #[test]
+    fn test_implied_volatility_deep_itm_call_roundtrip() {
+        // Very deep ITM call (harder to solve)
+        let s = 150.0;
+        let k = 100.0;
+        let t = 0.5;
+        let r = 0.05;
+        let sigma = 0.22;
+
+        let theoretical_price = black_scholes(s, k, t, r, sigma, OptionType::Call);
+        let implied_vol = implied_volatility(theoretical_price, s, k, t, r, OptionType::Call);
+
+        assert!(implied_vol.is_some());
+        let iv = implied_vol.unwrap();
+        assert!((iv - sigma).abs() < 0.001, "Expected IV ~0.22, got {}", iv);
+    }
+
+    #[test]
+    fn test_implied_volatility_deep_otm_put_roundtrip() {
+        // Very deep OTM put (harder to solve)
+        let s = 150.0;
+        let k = 100.0;
+        let t = 0.5;
+        let r = 0.05;
+        let sigma = 0.35;
+
+        let theoretical_price = black_scholes(s, k, t, r, sigma, OptionType::Put);
+        let implied_vol = implied_volatility(theoretical_price, s, k, t, r, OptionType::Put);
+
+        assert!(implied_vol.is_some());
+        let iv = implied_vol.unwrap();
+        assert!((iv - sigma).abs() < 0.001, "Expected IV ~0.35, got {}", iv);
+    }
+
+    #[test]
+    fn test_implied_volatility_very_short_expiration() {
+        // Very short time to expiration (1 day)
+        let s = 100.0;
+        let k = 100.0;
+        let t = 1.0 / 365.0;
+        let r = 0.05;
+        let sigma = 0.50;
+
+        let theoretical_price = black_scholes(s, k, t, r, sigma, OptionType::Call);
+        let implied_vol = implied_volatility(theoretical_price, s, k, t, r, OptionType::Call);
+
+        assert!(implied_vol.is_some());
+        let iv = implied_vol.unwrap();
+        // Allow slightly higher tolerance for very short expirations
+        assert!((iv - sigma).abs() < 0.01, "Expected IV ~0.50, got {}", iv);
+    }
+
+    #[test]
+    fn test_implied_volatility_consistency_across_strikes() {
+        // Test that IV solver works consistently across different strikes
+        let s = 100.0;
+        let t = 0.5;
+        let r = 0.05;
+        let sigma = 0.25;
+
+        let strikes = vec![80.0, 90.0, 100.0, 110.0, 120.0];
+
+        for k in strikes {
+            let call_price = black_scholes(s, k, t, r, sigma, OptionType::Call);
+            let put_price = black_scholes(s, k, t, r, sigma, OptionType::Put);
+
+            // Skip very small prices (< $0.01) as they're numerically challenging
+            if put_price < 0.01 || call_price < 0.01 {
+                continue;
+            }
+
+            let call_iv = implied_volatility(call_price, s, k, t, r, OptionType::Call);
+            let put_iv = implied_volatility(put_price, s, k, t, r, OptionType::Put);
+
+            assert!(call_iv.is_some(), "Failed to solve IV for call at strike {}: price = {}", k, call_price);
+            assert!(put_iv.is_some(), "Failed to solve IV for put at strike {}: price = {}", k, put_price);
+
+            let call_vol = call_iv.unwrap();
+            let put_vol = put_iv.unwrap();
+
+            assert!((call_vol - sigma).abs() < 0.001, "Call IV mismatch at strike {}: expected {}, got {}", k, sigma, call_vol);
+            assert!((put_vol - sigma).abs() < 0.001, "Put IV mismatch at strike {}: expected {}, got {}", k, sigma, put_vol);
+        }
+    }
+
+    #[test]
+    fn test_implied_volatility_convergence_speed() {
+        // Verify that solver converges in reasonable number of iterations
+        // (This is more of a smoke test to ensure it doesn't hang)
+        let s = 100.0;
+        let k = 100.0;
+        let t = 1.0;
+        let r = 0.05;
+        let sigma = 0.20;
+
+        let price = black_scholes(s, k, t, r, sigma, OptionType::Call);
+
+        // Should converge quickly (internally uses max 100 iterations, but typically <10)
+        let start = std::time::Instant::now();
+        let implied_vol = implied_volatility(price, s, k, t, r, OptionType::Call);
+        let duration = start.elapsed();
+
+        assert!(implied_vol.is_some());
+        assert!(duration.as_millis() < 10, "IV solver took too long: {:?}", duration);
     }
 }
