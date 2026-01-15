@@ -2,12 +2,13 @@
 
 use crate::error::{BacktestError, Result};
 use crate::types::{
-    AssetClass, AssetConfig, Bar, EquityPoint, ExecutionPrice, Order, OrderType, Position, Side,
-    Trade, VolumeProfile,
+    AssetClass, AssetConfig, Bar, EquityPoint, ExecutionPrice, LotSelectionMethod, Order,
+    OrderType, Position, Side, TaxLot, Trade, VolumeProfile,
 };
 use chrono::{DateTime, Utc};
 use rand::{rngs::StdRng, Rng, SeedableRng};
 use serde::{Deserialize, Serialize};
+use std::cmp::Ordering;
 use std::collections::HashMap;
 use tracing::debug;
 
@@ -251,6 +252,8 @@ pub struct Portfolio {
     pub initial_capital: f64,
     /// Current positions by symbol.
     positions: HashMap<String, Position>,
+    /// Open tax lots per symbol (source of truth for entries).
+    tax_lots: HashMap<String, Vec<TaxLot>>,
     /// All trades (including closed).
     trades: Vec<Trade>,
     /// Equity curve.
@@ -273,6 +276,8 @@ pub struct Portfolio {
     execution_price: ExecutionPrice,
     /// Last execution price (used for fill reporting).
     last_fill_price: Option<f64>,
+    /// Default tax-lot selection method when closing positions.
+    lot_selection: LotSelectionMethod,
 }
 
 /// Result information for an executed (potentially partial) order.
@@ -292,6 +297,7 @@ impl Portfolio {
             cash: initial_capital,
             initial_capital,
             positions: HashMap::new(),
+            tax_lots: HashMap::new(),
             trades: Vec::new(),
             equity_curve: Vec::new(),
             cost_model: CostModel::default(),
@@ -303,6 +309,7 @@ impl Portfolio {
             margin_reserve: HashMap::new(),
             execution_price: ExecutionPrice::Open,
             last_fill_price: None,
+            lot_selection: LotSelectionMethod::default(),
         }
     }
 
@@ -312,6 +319,7 @@ impl Portfolio {
             cash: initial_capital,
             initial_capital,
             positions: HashMap::new(),
+            tax_lots: HashMap::new(),
             trades: Vec::new(),
             equity_curve: Vec::new(),
             cost_model,
@@ -323,12 +331,23 @@ impl Portfolio {
             margin_reserve: HashMap::new(),
             execution_price: ExecutionPrice::Open,
             last_fill_price: None,
+            lot_selection: LotSelectionMethod::default(),
         }
     }
 
     /// Set the execution price model.
     pub fn set_execution_price(&mut self, price: ExecutionPrice) {
         self.execution_price = price;
+    }
+
+    /// Override the default lot-selection method used for tax lots.
+    pub fn set_lot_selection_method(&mut self, method: LotSelectionMethod) {
+        self.lot_selection = method;
+    }
+
+    /// Read the current default lot-selection method.
+    pub fn lot_selection_method(&self) -> &LotSelectionMethod {
+        &self.lot_selection
     }
 
     /// Set the cost model.
@@ -363,6 +382,167 @@ impl Portfolio {
     /// Get the volume profile for a symbol if configured.
     pub fn volume_profile(&self, symbol: &str) -> Option<&VolumeProfile> {
         self.volume_profiles.get(symbol)
+    }
+
+    fn order_lot_method(&self, order: &Order) -> LotSelectionMethod {
+        order
+            .lot_selection
+            .clone()
+            .unwrap_or_else(|| self.lot_selection.clone())
+    }
+
+    fn fallback_lot_selection(&self) -> LotSelectionMethod {
+        match &self.lot_selection {
+            LotSelectionMethod::SpecificLot(_) => LotSelectionMethod::FIFO,
+            other => other.clone(),
+        }
+    }
+
+    fn add_tax_lot(
+        &mut self,
+        symbol: &str,
+        side: Side,
+        quantity: f64,
+        price: f64,
+        timestamp: DateTime<Utc>,
+    ) {
+        if quantity <= f64::EPSILON {
+            return;
+        }
+        let lot = TaxLot::new(side, quantity, price, timestamp);
+        self.tax_lots
+            .entry(symbol.to_string())
+            .or_default()
+            .push(lot);
+    }
+
+    fn cleanup_tax_lots(&mut self, symbol: &str) {
+        if let Some(lots) = self.tax_lots.get_mut(symbol) {
+            lots.retain(|lot| !lot.is_empty());
+            if lots.is_empty() {
+                self.tax_lots.remove(symbol);
+            }
+        }
+    }
+
+    fn close_tax_lots(
+        &mut self,
+        symbol: &str,
+        side: Side,
+        quantity: f64,
+        method: LotSelectionMethod,
+    ) -> Result<()> {
+        if quantity <= f64::EPSILON {
+            return Ok(());
+        }
+
+        if matches!(method, LotSelectionMethod::SpecificLot(_)) {
+            let remaining = {
+                let lots = self.tax_lots.get_mut(symbol).ok_or_else(|| {
+                    BacktestError::InvalidOrder(format!(
+                        "No tax lots available for symbol {}",
+                        symbol
+                    ))
+                })?;
+
+                if let LotSelectionMethod::SpecificLot(target) = method {
+                    if let Some((_, lot)) = lots
+                        .iter_mut()
+                        .enumerate()
+                        .find(|(_, lot)| lot.id == target && lot.side == side)
+                    {
+                        quantity - lot.consume(quantity)
+                    } else {
+                        return Err(BacktestError::InvalidOrder(format!(
+                            "Lot {} not found for symbol {}",
+                            target, symbol
+                        )));
+                    }
+                } else {
+                    quantity
+                }
+            };
+            self.cleanup_tax_lots(symbol);
+            if remaining > f64::EPSILON {
+                let fallback = self.fallback_lot_selection();
+                return self.close_tax_lots(symbol, side, remaining, fallback);
+            }
+            return Ok(());
+        }
+
+        let mut remaining = quantity;
+        {
+            let lots = self.tax_lots.get_mut(symbol).ok_or_else(|| {
+                BacktestError::InvalidOrder(format!("No tax lots available for symbol {}", symbol))
+            })?;
+            let mut indices: Vec<usize> = lots
+                .iter()
+                .enumerate()
+                .filter(|(_, lot)| lot.side == side && lot.quantity > f64::EPSILON)
+                .map(|(idx, _)| idx)
+                .collect();
+
+            if indices.is_empty() {
+                return Err(BacktestError::InvalidOrder(format!(
+                    "No {} tax lots available for symbol {}",
+                    match side {
+                        Side::Buy => "long",
+                        Side::Sell => "short",
+                    },
+                    symbol
+                )));
+            }
+
+            match method {
+                LotSelectionMethod::FIFO => {
+                    indices.sort_by(|a, b| lots[*a].acquired_date.cmp(&lots[*b].acquired_date));
+                }
+                LotSelectionMethod::LIFO => {
+                    indices.sort_by(|a, b| lots[*b].acquired_date.cmp(&lots[*a].acquired_date));
+                }
+                LotSelectionMethod::HighestCost => {
+                    indices.sort_by(|a, b| {
+                        lots[*b]
+                            .cost_basis
+                            .partial_cmp(&lots[*a].cost_basis)
+                            .unwrap_or(Ordering::Equal)
+                    });
+                }
+                LotSelectionMethod::LowestCost => {
+                    indices.sort_by(|a, b| {
+                        lots[*a]
+                            .cost_basis
+                            .partial_cmp(&lots[*b].cost_basis)
+                            .unwrap_or(Ordering::Equal)
+                    });
+                }
+                LotSelectionMethod::SpecificLot(_) => unreachable!(),
+            }
+
+            for idx in indices {
+                if remaining <= f64::EPSILON {
+                    break;
+                }
+                let lot = &mut lots[idx];
+                remaining -= lot.consume(remaining);
+            }
+        }
+
+        self.cleanup_tax_lots(symbol);
+
+        if remaining > f64::EPSILON {
+            return Err(BacktestError::InvalidOrder(format!(
+                "Attempted to close {:.4} more {} quantity than available for {}",
+                remaining,
+                match side {
+                    Side::Buy => "long",
+                    Side::Sell => "short",
+                },
+                symbol
+            )));
+        }
+
+        Ok(())
     }
 
     fn market_execution_price(&self, bar: &Bar) -> f64 {
@@ -444,6 +624,11 @@ impl Portfolio {
     /// Get position for a symbol.
     pub fn position(&self, symbol: &str) -> Option<&Position> {
         self.positions.get(symbol)
+    }
+
+    /// Inspect open tax lots for a symbol.
+    pub fn tax_lots(&self, symbol: &str) -> Option<&[TaxLot]> {
+        self.tax_lots.get(symbol).map(|lots| lots.as_slice())
     }
 
     /// Get position quantity for a symbol.
@@ -665,10 +850,17 @@ impl Portfolio {
         };
         let closing_commission = per_unit_commission * closing_qty;
         let opening_commission = (commission - closing_commission).max(0.0);
+        let lot_method = self.order_lot_method(order);
 
         if let Some(mut pos) = existing_position {
             if pos.is_short() {
                 if quantity >= pos.quantity {
+                    self.close_tax_lots(
+                        &order.symbol,
+                        Side::Sell,
+                        pos.quantity,
+                        lot_method.clone(),
+                    )?;
                     let closed_trade =
                         if let Some(trade) = self.find_open_trade_mut(&order.symbol, Side::Sell) {
                             trade.close(exec_price, bar.timestamp, closing_commission);
@@ -688,6 +880,7 @@ impl Portfolio {
                         return Ok(None);
                     }
                 } else {
+                    self.close_tax_lots(&order.symbol, Side::Sell, quantity, lot_method)?;
                     pos.quantity -= quantity;
                     self.positions.insert(order.symbol.clone(), pos);
                     return Ok(None);
@@ -706,6 +899,13 @@ impl Portfolio {
         }
 
         if opening_qty > 0.0 {
+            self.add_tax_lot(
+                &order.symbol,
+                Side::Buy,
+                opening_qty,
+                exec_price,
+                bar.timestamp,
+            );
             let trade = Trade::open(
                 &order.symbol,
                 Side::Buy,
@@ -761,10 +961,17 @@ impl Portfolio {
         };
         let closing_commission = per_unit_commission * closing_qty;
         let opening_commission = (commission - closing_commission).max(0.0);
+        let lot_method = self.order_lot_method(order);
 
         if let Some(mut pos) = existing_position {
             if pos.is_long() {
                 if quantity >= pos.quantity {
+                    self.close_tax_lots(
+                        &order.symbol,
+                        Side::Buy,
+                        pos.quantity,
+                        lot_method.clone(),
+                    )?;
                     let closed_trade =
                         if let Some(trade) = self.find_open_trade_mut(&order.symbol, Side::Buy) {
                             trade.close(exec_price, bar.timestamp, closing_commission);
@@ -784,6 +991,7 @@ impl Portfolio {
                         return Ok(None);
                     }
                 } else {
+                    self.close_tax_lots(&order.symbol, Side::Buy, quantity, lot_method)?;
                     pos.quantity -= quantity;
                     self.positions.insert(order.symbol.clone(), pos);
                     return Ok(None);
@@ -802,6 +1010,13 @@ impl Portfolio {
         }
 
         if opening_qty > 0.0 {
+            self.add_tax_lot(
+                &order.symbol,
+                Side::Sell,
+                opening_qty,
+                exec_price,
+                bar.timestamp,
+            );
             let trade = Trade::open(
                 &order.symbol,
                 Side::Sell,
@@ -849,12 +1064,19 @@ impl Portfolio {
         } else {
             0.0
         };
+        let lot_method = self.order_lot_method(order);
 
         if let Some(existing) = self.positions.get(&order.symbol).cloned() {
             match (order.side, existing.side) {
                 (Side::Buy, Side::Sell) => {
                     let close_qty = qty_remaining.min(existing.quantity);
                     if close_qty > 0.0 {
+                        self.close_tax_lots(
+                            &order.symbol,
+                            Side::Sell,
+                            close_qty,
+                            lot_method.clone(),
+                        )?;
                         let pnl = (existing.avg_entry_price - exec_price) * close_qty * multiplier;
                         self.cash += pnl;
                         qty_remaining -= close_qty;
@@ -888,6 +1110,12 @@ impl Portfolio {
                 (Side::Sell, Side::Buy) => {
                     let close_qty = qty_remaining.min(existing.quantity);
                     if close_qty > 0.0 {
+                        self.close_tax_lots(
+                            &order.symbol,
+                            Side::Buy,
+                            close_qty,
+                            lot_method.clone(),
+                        )?;
                         let pnl = (exec_price - existing.avg_entry_price) * close_qty * multiplier;
                         self.cash += pnl;
                         qty_remaining -= close_qty;
@@ -948,6 +1176,13 @@ impl Portfolio {
         }
 
         if qty_remaining > 0.0 {
+            self.add_tax_lot(
+                &order.symbol,
+                order.side,
+                qty_remaining,
+                exec_price,
+                bar.timestamp,
+            );
             let trade = Trade::open(
                 &order.symbol,
                 order.side,
@@ -1362,6 +1597,162 @@ mod tests {
         let order = Order::market("AAPL", Side::Sell, 50.0, bar.timestamp);
         let trade = portfolio.execute_order(&order, &bar).unwrap().unwrap();
         assert!((trade.entry_price - 99.5).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_tax_lot_fifo_consumption() {
+        let mut portfolio = Portfolio::with_cost_model(100000.0, CostModel::zero());
+        let bar1 = sample_bar();
+        let bar2 = Bar::new(
+            bar1.timestamp + chrono::Duration::days(1),
+            110.0,
+            112.0,
+            108.0,
+            111.0,
+            900.0,
+        );
+
+        portfolio
+            .execute_order(
+                &Order::market("AAPL", Side::Buy, 50.0, bar1.timestamp),
+                &bar1,
+            )
+            .unwrap();
+        portfolio
+            .execute_order(
+                &Order::market("AAPL", Side::Buy, 30.0, bar2.timestamp),
+                &bar2,
+            )
+            .unwrap();
+
+        let sell_bar = Bar::new(
+            bar2.timestamp + chrono::Duration::days(1),
+            120.0,
+            121.0,
+            118.0,
+            119.0,
+            1000.0,
+        );
+        portfolio
+            .execute_order(
+                &Order::market("AAPL", Side::Sell, 40.0, sell_bar.timestamp),
+                &sell_bar,
+            )
+            .unwrap();
+
+        let lots = portfolio.tax_lots("AAPL").unwrap();
+        let first_lot = lots
+            .iter()
+            .find(|lot| lot.acquired_date == bar1.timestamp)
+            .unwrap();
+        let second_lot = lots
+            .iter()
+            .find(|lot| lot.acquired_date == bar2.timestamp)
+            .unwrap();
+
+        assert!((first_lot.quantity - 10.0).abs() < 1e-6);
+        assert!((second_lot.quantity - 30.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_tax_lot_specific_selection() {
+        let mut portfolio = Portfolio::with_cost_model(100000.0, CostModel::zero());
+        let bar1 = sample_bar();
+        let bar2 = Bar::new(
+            bar1.timestamp + chrono::Duration::days(1),
+            110.0,
+            112.0,
+            108.0,
+            111.0,
+            900.0,
+        );
+
+        portfolio
+            .execute_order(
+                &Order::market("AAPL", Side::Buy, 40.0, bar1.timestamp),
+                &bar1,
+            )
+            .unwrap();
+        portfolio
+            .execute_order(
+                &Order::market("AAPL", Side::Buy, 20.0, bar2.timestamp),
+                &bar2,
+            )
+            .unwrap();
+
+        let lot_id = portfolio.tax_lots("AAPL").unwrap()[1].id;
+        let sell_bar = Bar::new(
+            bar2.timestamp + chrono::Duration::days(1),
+            115.0,
+            116.0,
+            112.0,
+            114.0,
+            1000.0,
+        );
+        let specific_order = Order::market("AAPL", Side::Sell, 15.0, sell_bar.timestamp)
+            .with_lot_selection(LotSelectionMethod::SpecificLot(lot_id));
+        portfolio.execute_order(&specific_order, &sell_bar).unwrap();
+
+        let lots = portfolio.tax_lots("AAPL").unwrap();
+        // Second lot should be reduced first due to explicit selection
+        let selected_lot = lots.iter().find(|lot| lot.id == lot_id).unwrap();
+        assert!((selected_lot.quantity - 5.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_tax_lot_lifo_policy() {
+        let mut portfolio = Portfolio::with_cost_model(100000.0, CostModel::zero());
+        portfolio.set_lot_selection_method(LotSelectionMethod::LIFO);
+        let bar1 = sample_bar();
+        let bar2 = Bar::new(
+            bar1.timestamp + chrono::Duration::days(1),
+            108.0,
+            110.0,
+            106.0,
+            107.0,
+            900.0,
+        );
+
+        portfolio
+            .execute_order(
+                &Order::market("AAPL", Side::Buy, 25.0, bar1.timestamp),
+                &bar1,
+            )
+            .unwrap();
+        portfolio
+            .execute_order(
+                &Order::market("AAPL", Side::Buy, 25.0, bar2.timestamp),
+                &bar2,
+            )
+            .unwrap();
+
+        let sell_bar = Bar::new(
+            bar2.timestamp + chrono::Duration::days(1),
+            109.0,
+            110.0,
+            105.0,
+            106.0,
+            1000.0,
+        );
+        portfolio
+            .execute_order(
+                &Order::market("AAPL", Side::Sell, 15.0, sell_bar.timestamp),
+                &sell_bar,
+            )
+            .unwrap();
+
+        let lots = portfolio.tax_lots("AAPL").unwrap();
+        let newer_lot = lots
+            .iter()
+            .find(|lot| lot.acquired_date == bar2.timestamp)
+            .unwrap();
+        let older_lot = lots
+            .iter()
+            .find(|lot| lot.acquired_date == bar1.timestamp)
+            .unwrap();
+
+        assert!((newer_lot.quantity - 10.0).abs() < 1e-6);
+        assert!((older_lot.quantity - 25.0).abs() < 1e-6);
     }
 
     #[test]

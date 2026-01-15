@@ -13,7 +13,7 @@ use mantis::strategies::{
     BreakoutStrategy, MacdStrategy, MeanReversion, MomentumStrategy, RsiStrategy, SmaCrossover,
 };
 use mantis::strategy::Strategy;
-use mantis::types::{AssetClass, AssetConfig, ExecutionPrice};
+use mantis::types::{AssetClass, AssetConfig, ExecutionPrice, LotSelectionMethod};
 use mantis::walkforward::{
     WalkForwardAnalyzer, WalkForwardConfig, WalkForwardMetric, WalkForwardResult,
 };
@@ -87,6 +87,10 @@ pub enum Commands {
         /// Lifetime of pending limit orders in bars (0 = good-till-cancelled)
         #[arg(long, default_value = "5")]
         limit_order_ttl: usize,
+
+        /// Tax-lot selection policy when closing positions
+        #[arg(long = "lot-selection", value_enum, default_value = "fifo")]
+        lot_selection: LotSelectionArg,
 
         /// Allow short selling
         #[arg(long)]
@@ -190,6 +194,10 @@ pub enum Commands {
         /// Lifetime of pending limit orders in bars (0 = good-till-cancelled)
         #[arg(long, default_value = "5")]
         limit_order_ttl: usize,
+
+        /// Tax-lot selection policy when closing positions
+        #[arg(long = "lot-selection", value_enum, default_value = "fifo")]
+        lot_selection: LotSelectionArg,
 
         /// Allow short selling
         #[arg(long)]
@@ -355,6 +363,17 @@ pub enum ExecutionPriceArg {
     #[value(name = "random-in-range")]
     RandomInRange,
     Midpoint,
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, ValueEnum)]
+#[value(rename_all = "kebab-case")]
+pub enum LotSelectionArg {
+    Fifo,
+    Lifo,
+    #[value(name = "highest-cost")]
+    HighestCost,
+    #[value(name = "lowest-cost")]
+    LowestCost,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, ValueEnum)]
@@ -532,6 +551,7 @@ pub fn run() -> Result<()> {
             execution_price,
             fill_probability,
             limit_order_ttl,
+            lot_selection,
             allow_short,
             fast_period,
             slow_period,
@@ -558,6 +578,7 @@ pub fn run() -> Result<()> {
             *execution_price,
             *fill_probability,
             *limit_order_ttl,
+            *lot_selection,
             *allow_short,
             *fast_period,
             *slow_period,
@@ -587,6 +608,7 @@ pub fn run() -> Result<()> {
             execution_price,
             fill_probability,
             limit_order_ttl,
+            lot_selection,
             allow_short,
             folds,
             in_sample_ratio,
@@ -605,6 +627,7 @@ pub fn run() -> Result<()> {
             *execution_price,
             *fill_probability,
             *limit_order_ttl,
+            *lot_selection,
             *allow_short,
             *folds,
             *in_sample_ratio,
@@ -677,6 +700,7 @@ fn run_backtest(
     execution_price: ExecutionPriceArg,
     fill_probability: f64,
     limit_order_ttl: usize,
+    lot_selection: LotSelectionArg,
     allow_short: bool,
     fast_period: usize,
     slow_period: usize,
@@ -719,6 +743,7 @@ fn run_backtest(
         execution_price: execution_price.into(),
         fill_probability,
         limit_order_ttl_bars,
+        lot_selection: lot_selection.into(),
         ..Default::default()
     };
 
@@ -773,6 +798,7 @@ fn run_walk_forward(
     execution_price: ExecutionPriceArg,
     fill_probability: f64,
     limit_order_ttl: usize,
+    lot_selection: LotSelectionArg,
     allow_short: bool,
     folds: usize,
     in_sample_ratio: f64,
@@ -826,6 +852,7 @@ fn run_walk_forward(
         execution_price: execution_price.into(),
         fill_probability,
         limit_order_ttl_bars,
+        lot_selection: lot_selection.into(),
         ..Default::default()
     };
 
@@ -1114,6 +1141,17 @@ impl From<ExecutionPriceArg> for ExecutionPrice {
             ExecutionPriceArg::Twap => ExecutionPrice::Twap,
             ExecutionPriceArg::RandomInRange => ExecutionPrice::RandomInRange,
             ExecutionPriceArg::Midpoint => ExecutionPrice::Midpoint,
+        }
+    }
+}
+
+impl From<LotSelectionArg> for LotSelectionMethod {
+    fn from(arg: LotSelectionArg) -> Self {
+        match arg {
+            LotSelectionArg::Fifo => LotSelectionMethod::FIFO,
+            LotSelectionArg::Lifo => LotSelectionMethod::LIFO,
+            LotSelectionArg::HighestCost => LotSelectionMethod::HighestCost,
+            LotSelectionArg::LowestCost => LotSelectionMethod::LowestCost,
         }
     }
 }

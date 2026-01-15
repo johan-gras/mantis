@@ -3,6 +3,7 @@
 use chrono::{DateTime, NaiveDate, Utc};
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, fmt};
+use uuid::Uuid;
 
 /// OHLCV bar representing a single time period of market data.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -263,6 +264,23 @@ impl fmt::Display for Side {
     }
 }
 
+/// Strategy for choosing which tax lot is closed when offsetting a position.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum LotSelectionMethod {
+    #[serde(rename = "fifo")]
+    #[default]
+    FIFO,
+    #[serde(rename = "lifo")]
+    LIFO,
+    #[serde(rename = "highest-cost")]
+    HighestCost,
+    #[serde(rename = "lowest-cost")]
+    LowestCost,
+    #[serde(rename = "specific-lot")]
+    SpecificLot(Uuid),
+}
+
 /// Order type for execution.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub enum OrderType {
@@ -292,6 +310,8 @@ pub struct Order {
     pub quantity: f64,
     pub order_type: OrderType,
     pub timestamp: DateTime<Utc>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lot_selection: Option<LotSelectionMethod>,
 }
 
 impl Order {
@@ -308,6 +328,7 @@ impl Order {
             quantity,
             order_type: OrderType::Market,
             timestamp,
+            lot_selection: None,
         }
     }
 
@@ -325,6 +346,7 @@ impl Order {
             quantity,
             order_type: OrderType::Limit(LimitPrice(limit_price)),
             timestamp,
+            lot_selection: None,
         }
     }
 
@@ -342,7 +364,14 @@ impl Order {
             quantity,
             order_type: OrderType::Stop(StopPrice(stop_price)),
             timestamp,
+            lot_selection: None,
         }
+    }
+
+    /// Override the lot selection strategy for this order.
+    pub fn with_lot_selection(mut self, method: LotSelectionMethod) -> Self {
+        self.lot_selection = Some(method);
+        self
     }
 
     /// Validate the order.
@@ -492,6 +521,44 @@ impl Position {
     /// Check if position is short.
     pub fn is_short(&self) -> bool {
         matches!(self.side, Side::Sell)
+    }
+}
+
+/// Tracks a specific entry lot for precise cost-basis accounting.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TaxLot {
+    pub id: Uuid,
+    pub quantity: f64,
+    pub cost_basis: f64,
+    pub acquired_date: DateTime<Utc>,
+    pub side: Side,
+}
+
+impl TaxLot {
+    /// Create a new lot tied to an execution.
+    pub fn new(side: Side, quantity: f64, cost_basis: f64, acquired_date: DateTime<Utc>) -> Self {
+        Self {
+            id: Uuid::new_v4(),
+            quantity,
+            cost_basis,
+            acquired_date,
+            side,
+        }
+    }
+
+    /// Reduce the lot by a specified quantity, returning the amount actually removed.
+    pub fn consume(&mut self, qty: f64) -> f64 {
+        if qty <= 0.0 {
+            return 0.0;
+        }
+        let taken = self.quantity.min(qty);
+        self.quantity -= taken;
+        taken
+    }
+
+    /// True when the lot has been fully closed.
+    pub fn is_empty(&self) -> bool {
+        self.quantity <= f64::EPSILON
     }
 }
 

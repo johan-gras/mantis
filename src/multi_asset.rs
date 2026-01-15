@@ -264,6 +264,7 @@ impl MultiAssetEngine {
         portfolio.allow_short = self.config.allow_short;
         portfolio.fractional_shares = self.config.fractional_shares;
         portfolio.set_execution_price(self.config.execution_price);
+        portfolio.set_lot_selection_method(self.config.lot_selection.clone());
         portfolio.set_asset_configs(self.data.asset_configs());
         let volume_profiles = self.data.volume_profiles();
         portfolio.set_volume_profiles(&volume_profiles);

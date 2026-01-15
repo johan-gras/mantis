@@ -123,7 +123,8 @@ pub use error::{BacktestError, Result};
 pub use strategy::Strategy;
 pub use types::{
     AssetClass, AssetConfig, Bar, CorporateAction, CorporateActionType, DividendAdjustMethod,
-    DividendType, ExecutionPrice, Order, Side, Signal, Trade, VolumeProfile,
+    DividendType, ExecutionPrice, LotSelectionMethod, Order, Side, Signal, TaxLot, Trade,
+    VolumeProfile,
 };
 
 // Data handling re-exports

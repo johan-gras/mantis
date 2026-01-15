@@ -6,7 +6,8 @@ use crate::portfolio::{CostModel, Portfolio};
 use crate::risk::{RiskConfig, StopLoss, TrailingStop};
 use crate::strategy::{Strategy, StrategyContext};
 use crate::types::{
-    Bar, EquityPoint, ExecutionPrice, Order, OrderType, Side, Signal, Trade, VolumeProfile,
+    Bar, EquityPoint, ExecutionPrice, LotSelectionMethod, Order, OrderType, Side, Signal, Trade,
+    VolumeProfile,
 };
 use chrono::{DateTime, Utc};
 use indicatif::{ProgressBar, ProgressStyle};
@@ -46,6 +47,9 @@ pub struct BacktestConfig {
     /// Number of bars before pending limit orders expire (None = GTC).
     #[serde(default)]
     pub limit_order_ttl_bars: Option<usize>,
+    /// Default tax-lot selection policy when closing positions.
+    #[serde(default)]
+    pub lot_selection: LotSelectionMethod,
 }
 
 impl Default for BacktestConfig {
@@ -63,6 +67,7 @@ impl Default for BacktestConfig {
             execution_price: ExecutionPrice::Open,
             fill_probability: default_fill_probability(),
             limit_order_ttl_bars: Some(5),
+            lot_selection: LotSelectionMethod::default(),
         }
     }
 }
@@ -225,6 +230,7 @@ impl Engine {
         portfolio.allow_short = self.config.allow_short;
         portfolio.fractional_shares = self.config.fractional_shares;
         portfolio.set_execution_price(self.config.execution_price);
+        portfolio.set_lot_selection_method(self.config.lot_selection.clone());
         portfolio.set_asset_configs(self.data.asset_configs());
         if let Some(profile) = volume_profile {
             portfolio.set_volume_profile(symbol.to_string(), profile);

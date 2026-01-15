@@ -6,7 +6,7 @@ use crate::engine::BacktestConfig;
 use crate::error::{BacktestError, Result};
 use crate::portfolio::{CostModel, CryptoCost, ForexCost, FuturesCost, MarketImpactModel};
 use crate::risk::{RiskConfig, StopLoss, TakeProfit};
-use crate::types::ExecutionPrice;
+use crate::types::{ExecutionPrice, LotSelectionMethod};
 use chrono::{NaiveDate, TimeZone, Utc};
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -57,6 +57,9 @@ pub struct BacktestSettings {
     /// Pending limit order lifetime in bars (None = GTC).
     #[serde(default = "default_limit_order_ttl")]
     pub limit_order_ttl_bars: Option<usize>,
+    /// Default lot selection policy when offsetting positions.
+    #[serde(default)]
+    pub lot_selection: LotSelectionMethod,
     /// Start date (YYYY-MM-DD format).
     #[serde(default)]
     pub start_date: Option<String>,
@@ -85,6 +88,7 @@ impl Default for BacktestSettings {
             execution_price: ExecutionPrice::Open,
             fill_probability: default_fill_probability(),
             limit_order_ttl_bars: Some(5),
+            lot_selection: LotSelectionMethod::default(),
             start_date: None,
             end_date: None,
         }
@@ -348,6 +352,7 @@ impl BacktestFileConfig {
             execution_price: self.backtest.execution_price,
             fill_probability: self.backtest.fill_probability,
             limit_order_ttl_bars: self.backtest.limit_order_ttl_bars,
+            lot_selection: self.backtest.lot_selection.clone(),
         })
     }
 
@@ -364,6 +369,7 @@ fractional_shares = true
 execution_price = "open"
 fill_probability = 1.0
 limit_order_ttl_bars = 5
+lot_selection = "fifo"       # fifo|lifo|highest-cost|lowest-cost
 # start_date = "2023-01-01"
 # end_date = "2023-12-31"
 
