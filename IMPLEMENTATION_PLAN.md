@@ -284,10 +284,12 @@ Items are organized by category and prioritized within each category. Priority r
 - **BLOCKERS**: ort crate version instability - v1.15-1.16 yanked, v2.0.0-rc.11 has breaking API changes
 - **NEXT STEPS**: Monitor ort crate for stable 2.0 release, update API calls, add integration tests
 
-### [MISSING] [HIGH] Cross-Sectional Features
-- Rank features across universe
-- Z-score across universe
-- Relative strength features
+### [COMPLETE] Cross-Sectional Features
+- Rank features across universe (percentile ranking)
+- Z-score across universe (standardized scores)
+- Relative momentum features (outperformance vs universe average)
+- Convenience methods for common metrics (return, volume, volatility)
+- Generic metric functions for custom cross-sectional calculations
 
 ### [MISSING] [HIGH] Combinatorial Purged Cross-Validation (CPCV)
 - Non-overlapping, temporally ordered folds
@@ -925,7 +927,7 @@ cargo doc --no-deps --open
 | Core Engine | 4 | 0 | 2 | 4 | 10 |
 | Data Handling | 6 | 1 | 1 | 6 | 14 |
 | Position Management | 8 | 1 | 0 | 4 | 13 |
-| ML Integration | 4 | 1 | 0 | 6 | 11 |
+| ML Integration | 5 | 1 | 0 | 5 | 11 |
 | Multi-Timeframe | 1 | 1 | 0 | 3 | 5 |
 | Multi-Asset Portfolio | 3 | 1 | 0 | 5 | 9 |
 | Options & Derivatives | 0 | 1 | 0 | 8 | 9 |
@@ -937,9 +939,9 @@ cargo doc --no-deps --open
 | CLI & Configuration | 3 | 1 | 0 | 4 | 8 |
 | Execution Realism | 2 | 1 | 0 | 3 | 6 |
 | Reproducibility | 0 | 2 | 0 | 2 | 4 |
-| **TOTAL** | **37** | **12** | **4** | **74** | **127** |
+| **TOTAL** | **38** | **12** | **4** | **73** | **127** |
 
-**Estimated Completion: ~34%** (core backtesting solid; ONNX inference architecture complete but blocked by ort crate instability; live trading and Python bindings not started)
+**Estimated Completion: ~35%** (core backtesting solid; Cross-Sectional Features now complete; ONNX inference architecture complete but blocked by ort crate instability; live trading and Python bindings not started)
 
 ---
 

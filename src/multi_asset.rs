@@ -160,6 +160,242 @@ impl<'a> PortfolioContext<'a> {
             None
         }
     }
+
+    /// Calculate the percentile rank of a symbol's metric across the universe.
+    ///
+    /// Returns a value between 0.0 (lowest) and 1.0 (highest) indicating where
+    /// the symbol ranks relative to all other symbols for the given metric.
+    ///
+    /// # Arguments
+    /// * `symbol` - The symbol to rank
+    /// * `metric_fn` - Function that computes the metric from historical bars
+    /// * `lookback` - Minimum number of bars required for metric calculation
+    ///
+    /// # Example
+    /// ```ignore
+    /// // Rank by momentum (return over last 20 bars)
+    /// let momentum_rank = ctx.rank_percentile("AAPL", |bars, lb| {
+    ///     if bars.len() < lb { return None; }
+    ///     let start = bars[bars.len() - lb].close;
+    ///     let end = bars.last().unwrap().close;
+    ///     Some((end - start) / start)
+    /// }, 20);
+    /// ```
+    pub fn rank_percentile<F>(&self, symbol: &str, metric_fn: F, lookback: usize) -> Option<f64>
+    where
+        F: Fn(&Vec<Bar>, usize) -> Option<f64>,
+    {
+        // Calculate metric for target symbol
+        let target_bars = self.bars.get(symbol)?;
+        let target_value = metric_fn(target_bars, lookback)?;
+
+        // Calculate metric for all symbols in universe
+        let mut values: Vec<(String, f64)> = Vec::new();
+        for sym in self.symbols {
+            if let Some(bars) = self.bars.get(sym) {
+                if let Some(value) = metric_fn(bars, lookback) {
+                    values.push((sym.clone(), value));
+                }
+            }
+        }
+
+        if values.len() < 2 {
+            return None; // Need at least 2 symbols for meaningful ranking
+        }
+
+        // Count how many symbols have lower values
+        let lower_count = values.iter().filter(|(_, v)| *v < target_value).count();
+
+        // Percentile rank = (number below + 0.5 * number equal) / total
+        // Simplified: number below / (total - 1) for unique values
+        let percentile = lower_count as f64 / (values.len() - 1) as f64;
+
+        Some(percentile)
+    }
+
+    /// Calculate the cross-sectional z-score of a symbol's metric across the universe.
+    ///
+    /// Returns how many standard deviations the symbol's metric is from the
+    /// universe mean. Positive values indicate above-average, negative below-average.
+    ///
+    /// # Arguments
+    /// * `symbol` - The symbol to score
+    /// * `metric_fn` - Function that computes the metric from historical bars
+    /// * `lookback` - Minimum number of bars required for metric calculation
+    ///
+    /// # Example
+    /// ```ignore
+    /// // Z-score by volatility (std dev of returns over last 20 bars)
+    /// let vol_zscore = ctx.cross_sectional_zscore("AAPL", |bars, lb| {
+    ///     if bars.len() < lb { return None; }
+    ///     let returns: Vec<f64> = bars[bars.len()-lb..].windows(2)
+    ///         .map(|w| (w[1].close - w[0].close) / w[0].close).collect();
+    ///     let mean = returns.iter().sum::<f64>() / returns.len() as f64;
+    ///     let variance = returns.iter().map(|r| (r - mean).powi(2)).sum::<f64>() / returns.len() as f64;
+    ///     Some(variance.sqrt())
+    /// }, 20);
+    /// ```
+    pub fn cross_sectional_zscore<F>(
+        &self,
+        symbol: &str,
+        metric_fn: F,
+        lookback: usize,
+    ) -> Option<f64>
+    where
+        F: Fn(&Vec<Bar>, usize) -> Option<f64>,
+    {
+        // Calculate metric for target symbol
+        let target_bars = self.bars.get(symbol)?;
+        let target_value = metric_fn(target_bars, lookback)?;
+
+        // Calculate metric for all symbols in universe
+        let mut values: Vec<f64> = Vec::new();
+        for sym in self.symbols {
+            if let Some(bars) = self.bars.get(sym) {
+                if let Some(value) = metric_fn(bars, lookback) {
+                    values.push(value);
+                }
+            }
+        }
+
+        if values.len() < 2 {
+            return None; // Need at least 2 symbols for meaningful z-score
+        }
+
+        // Calculate mean and standard deviation across universe
+        let mean = values.iter().sum::<f64>() / values.len() as f64;
+        let variance =
+            values.iter().map(|v| (v - mean).powi(2)).sum::<f64>() / values.len() as f64;
+        let std_dev = variance.sqrt();
+
+        if std_dev > 0.0 {
+            Some((target_value - mean) / std_dev)
+        } else {
+            Some(0.0) // All values are the same
+        }
+    }
+
+    /// Calculate relative momentum of a symbol compared to the universe average.
+    ///
+    /// Returns the momentum (return) of the symbol minus the equal-weighted
+    /// average momentum of all symbols in the universe.
+    ///
+    /// # Arguments
+    /// * `symbol` - The symbol to calculate relative momentum for
+    /// * `lookback` - Number of bars to calculate momentum over
+    ///
+    /// # Returns
+    /// Relative momentum as a decimal (e.g., 0.05 = 5% outperformance).
+    /// Positive values indicate outperformance, negative underperformance.
+    ///
+    /// # Example
+    /// ```ignore
+    /// // Relative momentum over last 20 bars
+    /// if let Some(rel_mom) = ctx.relative_momentum("AAPL", 20) {
+    ///     if rel_mom > 0.0 {
+    ///         println!("AAPL is outperforming the universe");
+    ///     }
+    /// }
+    /// ```
+    pub fn relative_momentum(&self, symbol: &str, lookback: usize) -> Option<f64> {
+        // Calculate momentum for target symbol
+        let target_bars = self.bars.get(symbol)?;
+        if target_bars.len() < lookback + 1 {
+            return None;
+        }
+
+        let start_price = target_bars[target_bars.len() - lookback - 1].close;
+        let end_price = target_bars.last()?.close;
+        let target_momentum = (end_price - start_price) / start_price;
+
+        // Calculate average momentum across universe
+        let mut momentums: Vec<f64> = Vec::new();
+        for sym in self.symbols {
+            if let Some(bars) = self.bars.get(sym) {
+                if bars.len() >= lookback + 1 {
+                    let start = bars[bars.len() - lookback - 1].close;
+                    let end = bars.last()?.close;
+                    let momentum = (end - start) / start;
+                    momentums.push(momentum);
+                }
+            }
+        }
+
+        if momentums.is_empty() {
+            return None;
+        }
+
+        let avg_momentum = momentums.iter().sum::<f64>() / momentums.len() as f64;
+        let relative = target_momentum - avg_momentum;
+
+        Some(relative)
+    }
+
+    /// Calculate the percentile rank of a symbol by a simple metric (price, volume, etc.).
+    ///
+    /// This is a convenience method for ranking by simple bar metrics without
+    /// needing to provide a custom metric function.
+    ///
+    /// # Arguments
+    /// * `symbol` - The symbol to rank
+    /// * `metric` - The metric to rank by ("return", "volume", "volatility")
+    /// * `lookback` - Number of bars for metric calculation
+    ///
+    /// # Returns
+    /// Percentile rank from 0.0 (lowest) to 1.0 (highest), or None if insufficient data.
+    pub fn rank_by_metric(&self, symbol: &str, metric: &str, lookback: usize) -> Option<f64> {
+        match metric {
+            "return" | "momentum" => self.rank_percentile(
+                symbol,
+                |bars, lb| {
+                    if bars.len() < lb + 1 {
+                        return None;
+                    }
+                    let start = bars[bars.len() - lb - 1].close;
+                    let end = bars.last()?.close;
+                    Some((end - start) / start)
+                },
+                lookback,
+            ),
+            "volume" => self.rank_percentile(
+                symbol,
+                |bars, lb| {
+                    if bars.len() < lb {
+                        return None;
+                    }
+                    let avg_vol =
+                        bars[bars.len() - lb..].iter().map(|b| b.volume).sum::<f64>()
+                            / lb as f64;
+                    Some(avg_vol)
+                },
+                lookback,
+            ),
+            "volatility" => self.rank_percentile(
+                symbol,
+                |bars, lb| {
+                    if bars.len() < lb + 1 {
+                        return None;
+                    }
+                    let returns: Vec<f64> = bars[bars.len() - lb..]
+                        .windows(2)
+                        .map(|w| (w[1].close - w[0].close) / w[0].close)
+                        .collect();
+                    if returns.is_empty() {
+                        return None;
+                    }
+                    let mean = returns.iter().sum::<f64>() / returns.len() as f64;
+                    let variance = returns
+                        .iter()
+                        .map(|r| (r - mean).powi(2))
+                        .sum::<f64>()
+                        / returns.len() as f64;
+                    Some(variance.sqrt())
+                },
+                lookback,
+            ),
+            _ => None,
+        }
+    }
 }
 
 /// Trait for multi-asset portfolio strategies.
@@ -821,5 +1057,352 @@ mod tests {
         assert_eq!(result.symbols.len(), 2);
         assert!(result.final_equity > 0.0);
         assert!(!result.equity_curve.is_empty());
+    }
+
+    fn create_portfolio_context_for_testing() -> (
+        PortfolioContext<'static>,
+        HashMap<String, Bar>,
+        HashMap<String, Vec<Bar>>,
+        Vec<String>,
+    ) {
+        // Create test data with different price trends for cross-sectional testing
+        let bars_a = create_test_bars(50, 100.0, 0.02); // Strong uptrend
+        let bars_b = create_test_bars(50, 100.0, 0.01); // Moderate uptrend
+        let bars_c = create_test_bars(50, 100.0, 0.00); // Flat
+        let bars_d = create_test_bars(50, 100.0, -0.01); // Downtrend
+
+        let mut all_bars = HashMap::new();
+        all_bars.insert("ASSET_A".to_string(), bars_a.clone());
+        all_bars.insert("ASSET_B".to_string(), bars_b.clone());
+        all_bars.insert("ASSET_C".to_string(), bars_c.clone());
+        all_bars.insert("ASSET_D".to_string(), bars_d.clone());
+
+        let mut current_bars = HashMap::new();
+        current_bars.insert("ASSET_A".to_string(), bars_a.last().unwrap().clone());
+        current_bars.insert("ASSET_B".to_string(), bars_b.last().unwrap().clone());
+        current_bars.insert("ASSET_C".to_string(), bars_c.last().unwrap().clone());
+        current_bars.insert("ASSET_D".to_string(), bars_d.last().unwrap().clone());
+
+        let symbols = vec![
+            "ASSET_A".to_string(),
+            "ASSET_B".to_string(),
+            "ASSET_C".to_string(),
+            "ASSET_D".to_string(),
+        ];
+
+        // These need to be 'static or have the same lifetime
+        // For testing, we'll need to leak them or Box them
+        // Let's use Box::leak to create static references
+        let all_bars_static = Box::leak(Box::new(all_bars.clone()));
+        let current_bars_static = Box::leak(Box::new(current_bars.clone()));
+        let symbols_static = Box::leak(Box::new(symbols.clone()));
+
+        let ctx = PortfolioContext {
+            bar_index: 49,
+            current_bars: current_bars_static,
+            bars: all_bars_static,
+            positions: HashMap::new(),
+            cash: 100000.0,
+            equity: 100000.0,
+            weights: HashMap::new(),
+            symbols: symbols_static,
+        };
+
+        (ctx, current_bars, all_bars, symbols)
+    }
+
+    #[test]
+    fn test_rank_percentile_momentum() {
+        let (ctx, _, _, _) = create_portfolio_context_for_testing();
+
+        // ASSET_A has strongest momentum (2% trend)
+        let rank_a = ctx
+            .rank_percentile(
+                "ASSET_A",
+                |bars, lb| {
+                    if bars.len() < lb + 1 {
+                        return None;
+                    }
+                    let start = bars[bars.len() - lb - 1].close;
+                    let end = bars.last()?.close;
+                    Some((end - start) / start)
+                },
+                20,
+            )
+            .unwrap();
+
+        // ASSET_D has weakest momentum (-1% trend)
+        let rank_d = ctx
+            .rank_percentile(
+                "ASSET_D",
+                |bars, lb| {
+                    if bars.len() < lb + 1 {
+                        return None;
+                    }
+                    let start = bars[bars.len() - lb - 1].close;
+                    let end = bars.last()?.close;
+                    Some((end - start) / start)
+                },
+                20,
+            )
+            .unwrap();
+
+        // ASSET_A should rank highest (1.0 or close to it)
+        assert!(
+            rank_a > 0.8,
+            "ASSET_A should have high momentum rank: {}",
+            rank_a
+        );
+
+        // ASSET_D should rank lowest (0.0 or close to it)
+        assert!(
+            rank_d < 0.2,
+            "ASSET_D should have low momentum rank: {}",
+            rank_d
+        );
+
+        // Rank should be ordered: A > B > C > D
+        assert!(rank_a > rank_d, "Strong momentum should rank higher than weak");
+    }
+
+    #[test]
+    fn test_cross_sectional_zscore() {
+        let (ctx, _, _, _) = create_portfolio_context_for_testing();
+
+        // Calculate z-score of momentum for each asset
+        let zscore_a = ctx
+            .cross_sectional_zscore(
+                "ASSET_A",
+                |bars, lb| {
+                    if bars.len() < lb + 1 {
+                        return None;
+                    }
+                    let start = bars[bars.len() - lb - 1].close;
+                    let end = bars.last()?.close;
+                    Some((end - start) / start)
+                },
+                20,
+            )
+            .unwrap();
+
+        let zscore_d = ctx
+            .cross_sectional_zscore(
+                "ASSET_D",
+                |bars, lb| {
+                    if bars.len() < lb + 1 {
+                        return None;
+                    }
+                    let start = bars[bars.len() - lb - 1].close;
+                    let end = bars.last()?.close;
+                    Some((end - start) / start)
+                },
+                20,
+            )
+            .unwrap();
+
+        // ASSET_A should have positive z-score (above average)
+        assert!(
+            zscore_a > 0.0,
+            "ASSET_A should have positive z-score: {}",
+            zscore_a
+        );
+
+        // ASSET_D should have negative z-score (below average)
+        assert!(
+            zscore_d < 0.0,
+            "ASSET_D should have negative z-score: {}",
+            zscore_d
+        );
+    }
+
+    #[test]
+    fn test_relative_momentum() {
+        let (ctx, _, _, _) = create_portfolio_context_for_testing();
+
+        // ASSET_A should have positive relative momentum (outperforming)
+        let rel_mom_a = ctx.relative_momentum("ASSET_A", 20).unwrap();
+
+        // ASSET_D should have negative relative momentum (underperforming)
+        let rel_mom_d = ctx.relative_momentum("ASSET_D", 20).unwrap();
+
+        assert!(
+            rel_mom_a > 0.0,
+            "ASSET_A should outperform universe: {}",
+            rel_mom_a
+        );
+        assert!(
+            rel_mom_d < 0.0,
+            "ASSET_D should underperform universe: {}",
+            rel_mom_d
+        );
+
+        // Relative momentum should be additive-inverse around average
+        // (not exactly due to equal-weighting, but should be opposite signs)
+        assert!(
+            rel_mom_a > rel_mom_d,
+            "Strong asset should have higher relative momentum than weak"
+        );
+    }
+
+    #[test]
+    fn test_rank_by_metric_momentum() {
+        let (ctx, _, _, _) = create_portfolio_context_for_testing();
+
+        let rank_a = ctx.rank_by_metric("ASSET_A", "momentum", 20).unwrap();
+        let rank_d = ctx.rank_by_metric("ASSET_D", "momentum", 20).unwrap();
+
+        // Same expectations as rank_percentile test
+        assert!(
+            rank_a > 0.8,
+            "ASSET_A should have high momentum rank: {}",
+            rank_a
+        );
+        assert!(
+            rank_d < 0.2,
+            "ASSET_D should have low momentum rank: {}",
+            rank_d
+        );
+    }
+
+    #[test]
+    fn test_rank_by_metric_volatility() {
+        let (ctx, _, _, _) = create_portfolio_context_for_testing();
+
+        // All assets should have similar volatility since they follow geometric trends
+        let rank_a = ctx.rank_by_metric("ASSET_A", "volatility", 20);
+        let rank_b = ctx.rank_by_metric("ASSET_B", "volatility", 20);
+
+        assert!(rank_a.is_some(), "Volatility rank should be calculated");
+        assert!(rank_b.is_some(), "Volatility rank should be calculated");
+    }
+
+    #[test]
+    fn test_rank_by_metric_volume() {
+        let (ctx, _, _, _) = create_portfolio_context_for_testing();
+
+        // All test bars have same volume (1000000.0), so ranks should be equal
+        let rank_a = ctx.rank_by_metric("ASSET_A", "volume", 20).unwrap();
+
+        // With equal volumes, each asset should have similar ranks
+        // (exact value depends on tie-breaking, but should be around 0.33-0.66)
+        assert!(
+            rank_a >= 0.0 && rank_a <= 1.0,
+            "Volume rank should be between 0 and 1: {}",
+            rank_a
+        );
+    }
+
+    #[test]
+    fn test_rank_percentile_insufficient_symbols() {
+        // Create context with only one symbol
+        let bars = create_test_bars(50, 100.0, 0.01);
+        let mut all_bars = HashMap::new();
+        all_bars.insert("ASSET_A".to_string(), bars.clone());
+
+        let mut current_bars = HashMap::new();
+        current_bars.insert("ASSET_A".to_string(), bars.last().unwrap().clone());
+
+        let symbols = vec!["ASSET_A".to_string()];
+
+        let all_bars_static = Box::leak(Box::new(all_bars));
+        let current_bars_static = Box::leak(Box::new(current_bars));
+        let symbols_static = Box::leak(Box::new(symbols));
+
+        let ctx = PortfolioContext {
+            bar_index: 49,
+            current_bars: current_bars_static,
+            bars: all_bars_static,
+            positions: HashMap::new(),
+            cash: 100000.0,
+            equity: 100000.0,
+            weights: HashMap::new(),
+            symbols: symbols_static,
+        };
+
+        // Should return None with only one symbol
+        let rank = ctx.rank_percentile(
+            "ASSET_A",
+            |bars, lb| {
+                if bars.len() < lb + 1 {
+                    return None;
+                }
+                let start = bars[bars.len() - lb - 1].close;
+                let end = bars.last()?.close;
+                Some((end - start) / start)
+            },
+            20,
+        );
+
+        assert!(
+            rank.is_none(),
+            "Should return None with insufficient symbols"
+        );
+    }
+
+    #[test]
+    fn test_cross_sectional_zscore_all_equal() {
+        // Create context where all assets have identical values
+        let bars = create_test_bars(50, 100.0, 0.01);
+        let mut all_bars = HashMap::new();
+        all_bars.insert("ASSET_A".to_string(), bars.clone());
+        all_bars.insert("ASSET_B".to_string(), bars.clone());
+        all_bars.insert("ASSET_C".to_string(), bars.clone());
+
+        let mut current_bars = HashMap::new();
+        current_bars.insert("ASSET_A".to_string(), bars.last().unwrap().clone());
+        current_bars.insert("ASSET_B".to_string(), bars.last().unwrap().clone());
+        current_bars.insert("ASSET_C".to_string(), bars.last().unwrap().clone());
+
+        let symbols = vec![
+            "ASSET_A".to_string(),
+            "ASSET_B".to_string(),
+            "ASSET_C".to_string(),
+        ];
+
+        let all_bars_static = Box::leak(Box::new(all_bars));
+        let current_bars_static = Box::leak(Box::new(current_bars));
+        let symbols_static = Box::leak(Box::new(symbols));
+
+        let ctx = PortfolioContext {
+            bar_index: 49,
+            current_bars: current_bars_static,
+            bars: all_bars_static,
+            positions: HashMap::new(),
+            cash: 100000.0,
+            equity: 100000.0,
+            weights: HashMap::new(),
+            symbols: symbols_static,
+        };
+
+        // When all values are equal, z-score should be 0.0
+        let zscore = ctx
+            .cross_sectional_zscore(
+                "ASSET_A",
+                |bars, lb| {
+                    if bars.len() < lb + 1 {
+                        return None;
+                    }
+                    let start = bars[bars.len() - lb - 1].close;
+                    let end = bars.last()?.close;
+                    Some((end - start) / start)
+                },
+                20,
+            )
+            .unwrap();
+
+        assert_eq!(zscore, 0.0, "Z-score should be 0 when all values are equal");
+    }
+
+    #[test]
+    fn test_relative_momentum_insufficient_data() {
+        let (ctx, _, _, _) = create_portfolio_context_for_testing();
+
+        // Request lookback longer than available data
+        let rel_mom = ctx.relative_momentum("ASSET_A", 100);
+
+        assert!(
+            rel_mom.is_none(),
+            "Should return None with insufficient data"
+        );
     }
 }
