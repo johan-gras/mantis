@@ -228,32 +228,15 @@ These items significantly improve quality but are not explicit spec violations.
 
 **Verification:** `cargo fmt`, `cargo fmt --check`, `cargo test`, `cargo clippy -- -D warnings`
 
-### 3.6 Add Streaming Indicator Serialization
+### 3.6 Add Streaming Indicator Serialization - COMPLETE
 
-**Location:** `src/streaming.rs` lines 327-438
+**Location:** `src/streaming.rs`
 
-**Current state:** `StreamingBollinger` and `StreamingATR` lack `#[derive(Serialize, Deserialize)]` while other streaming indicators have it.
-
-**Implementation tasks:**
-1. Add derive macros to `StreamingBollinger`:
-   ```rust
-   #[derive(Debug, Clone, Serialize, Deserialize)]  // Add Serialize, Deserialize
-   pub struct StreamingBollinger { ... }
-   ```
-
-2. Add derive macros to `StreamingATR`:
-   ```rust
-   #[derive(Debug, Clone, Serialize, Deserialize)]  // Add Serialize, Deserialize
-   pub struct StreamingATR { ... }
-   ```
-
-3. Add derive macros to `StreamingStdDev` (lines 529-536):
-   ```rust
-   #[derive(Debug, Clone, Serialize, Deserialize)]  // Add Serialize, Deserialize
-   pub struct StreamingStdDev { ... }
-   ```
-
-4. Add serialization round-trip tests for all streaming indicators
+**Implementation Summary:**
+- Added `Serialize`/`Deserialize` derives to `StreamingBollinger`, `StreamingATR`, and `StreamingStdDev`, bringing serde support to every streaming indicator struct.
+- Introduced reusable serde helpers inside the tests plus tight float comparison to ensure we catch state mismatches.
+- Added serialization round-trip tests for SMA, EMA, RSI, MACD, Bollinger Bands, ATR (via OHLC updates), and StdDev to prove their internal buffers survive serde conversions.
+- Verification: `cargo fmt`, `cargo clippy -- -D warnings`, `cargo test streaming::tests`
 
 ---
 

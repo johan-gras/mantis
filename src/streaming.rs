@@ -327,7 +327,7 @@ impl StreamingIndicator for StreamingMACD {
 }
 
 /// Streaming Bollinger Bands.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StreamingBollinger {
     period: usize,
     std_dev_mult: f64,
@@ -440,7 +440,7 @@ impl StreamingIndicator for StreamingBollinger {
 }
 
 /// Streaming ATR (Average True Range).
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StreamingATR {
     period: usize,
     prev_close: Option<f64>,
@@ -530,7 +530,7 @@ impl StreamingIndicator for StreamingATR {
 }
 
 /// Streaming standard deviation.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StreamingStdDev {
     period: usize,
     buffer: VecDeque<f64>,
@@ -717,6 +717,25 @@ impl Default for StreamingIndicatorSet {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde::de::DeserializeOwned;
+
+    fn serialize_round_trip<T>(value: &T) -> T
+    where
+        T: serde::Serialize + DeserializeOwned,
+    {
+        let json = serde_json::to_string(value).expect("serialize indicator");
+        serde_json::from_str(&json).expect("deserialize indicator")
+    }
+
+    fn assert_option_close(left: Option<f64>, right: Option<f64>) {
+        match (left, right) {
+            (Some(a), Some(b)) => {
+                assert!((a - b).abs() < 1e-9, "values differ: left={a}, right={b}");
+            }
+            (None, None) => {}
+            other => panic!("mismatched readiness: {:?}", other),
+        }
+    }
 
     fn generate_prices(count: usize) -> Vec<f64> {
         (0..count)
@@ -916,5 +935,126 @@ mod tests {
         assert!(bb.is_ready());
         let bandwidth = bb.bandwidth().unwrap();
         assert!(bandwidth > 0.0);
+    }
+
+    #[test]
+    fn test_streaming_sma_serialization_round_trip() {
+        let mut sma = StreamingSMA::new(5);
+        for price in generate_prices(10) {
+            sma.update(price);
+        }
+
+        assert!(sma.is_ready());
+        let mut restored: StreamingSMA = serialize_round_trip(&sma);
+        assert_option_close(sma.value(), restored.value());
+
+        sma.update(200.0);
+        restored.update(200.0);
+        assert_option_close(sma.value(), restored.value());
+    }
+
+    #[test]
+    fn test_streaming_ema_serialization_round_trip() {
+        let mut ema = StreamingEMA::new(12);
+        for price in generate_prices(40) {
+            ema.update(price);
+        }
+
+        assert!(ema.is_ready());
+        let mut restored: StreamingEMA = serialize_round_trip(&ema);
+        assert_option_close(ema.value(), restored.value());
+
+        ema.update(205.0);
+        restored.update(205.0);
+        assert_option_close(ema.value(), restored.value());
+    }
+
+    #[test]
+    fn test_streaming_rsi_serialization_round_trip() {
+        let mut rsi = StreamingRSI::new(14);
+        for price in generate_prices(40) {
+            rsi.update(price);
+        }
+
+        assert!(rsi.is_ready());
+        let mut restored: StreamingRSI = serialize_round_trip(&rsi);
+        assert_option_close(rsi.value(), restored.value());
+
+        rsi.update(207.0);
+        restored.update(207.0);
+        assert_option_close(rsi.value(), restored.value());
+    }
+
+    #[test]
+    fn test_streaming_macd_serialization_round_trip() {
+        let mut macd = StreamingMACD::new();
+        for price in generate_prices(60) {
+            macd.update(price);
+        }
+
+        assert!(macd.is_ready());
+        let mut restored: StreamingMACD = serialize_round_trip(&macd);
+        assert_option_close(macd.macd(), restored.macd());
+        assert_option_close(macd.signal(), restored.signal());
+        assert_option_close(macd.histogram(), restored.histogram());
+
+        macd.update(210.0);
+        restored.update(210.0);
+        assert_option_close(macd.macd(), restored.macd());
+        assert_option_close(macd.signal(), restored.signal());
+        assert_option_close(macd.histogram(), restored.histogram());
+    }
+
+    #[test]
+    fn test_streaming_bollinger_serialization_round_trip() {
+        let mut bb = StreamingBollinger::new(20, 2.0);
+        for price in generate_prices(50) {
+            bb.update(price);
+        }
+
+        assert!(bb.is_ready());
+        let mut restored: StreamingBollinger = serialize_round_trip(&bb);
+        assert_option_close(bb.middle(), restored.middle());
+        assert_option_close(bb.upper(), restored.upper());
+        assert_option_close(bb.lower(), restored.lower());
+
+        bb.update(215.0);
+        restored.update(215.0);
+        assert_option_close(bb.middle(), restored.middle());
+        assert_option_close(bb.upper(), restored.upper());
+        assert_option_close(bb.lower(), restored.lower());
+    }
+
+    #[test]
+    fn test_streaming_atr_serialization_round_trip() {
+        let mut atr = StreamingATR::new(14);
+        for i in 0..40 {
+            let base = 100.0 + i as f64 * 0.2;
+            atr.update_ohlc(base + 1.5, base - 1.0, base);
+        }
+
+        assert!(atr.is_ready());
+        let mut restored: StreamingATR = serialize_round_trip(&atr);
+        assert_option_close(atr.value(), restored.value());
+
+        atr.update_ohlc(120.0, 118.5, 119.0);
+        restored.update_ohlc(120.0, 118.5, 119.0);
+        assert_option_close(atr.value(), restored.value());
+    }
+
+    #[test]
+    fn test_streaming_std_dev_serialization_round_trip() {
+        let mut std_dev = StreamingStdDev::new(10);
+        for price in generate_prices(25) {
+            std_dev.update(price);
+        }
+
+        assert!(std_dev.is_ready());
+        let mut restored: StreamingStdDev = serialize_round_trip(&std_dev);
+        assert_option_close(std_dev.value(), restored.value());
+
+        std_dev.update(222.0);
+        restored.update(222.0);
+        assert_option_close(std_dev.value(), restored.value());
     }
 }
