@@ -291,7 +291,7 @@ Items are organized by category and prioritized within each category. Priority r
 - Convenience methods for common metrics (return, volume, volatility)
 - Generic metric functions for custom cross-sectional calculations
 
-### [MISSING] [HIGH] Combinatorial Purged Cross-Validation (CPCV)
+### [COMPLETE] Combinatorial Purged Cross-Validation (CPCV)
 - Non-overlapping, temporally ordered folds
 - Embargo period between train/test
 - Remove overlapping bars between splits
@@ -484,10 +484,11 @@ Items are organized by category and prioritized within each category. Priority r
 - Test with 2x, 5x, 10x higher costs
 - Breakeven cost analysis
 
-### [MISSING] [MEDIUM] Cross-Validation
-- K-fold validation with temporal ordering
-- Embargo period between train/test
-- CPCV implementation
+### [PARTIAL ~33%] [MEDIUM] Cross-Validation
+- **IMPLEMENTED**: CPCV (Combinatorial Purged Cross-Validation)
+- **MISSING**:
+  - K-fold validation with temporal ordering
+  - Additional cross-validation methods
 
 ### [MISSING] [MEDIUM] Robustness Tests
 - Parameter sensitivity analysis
@@ -863,9 +864,9 @@ Items are organized by category and prioritized within each category. Priority r
 4. Kill switch functionality
 
 ### Phase 2: ML/DL Workflow Support [HIGH]
-1. ONNX model inference integration
-2. Cross-sectional features
-3. CPCV implementation
+1. ~~ONNX model inference integration~~ (PARTIAL - architecture complete)
+2. ~~Cross-sectional features~~ (COMPLETE)
+3. ~~CPCV implementation~~ (COMPLETE)
 4. Jupyter/Python bindings
 5. Experiment tracking (MLflow integration)
 
@@ -927,11 +928,11 @@ cargo doc --no-deps --open
 | Core Engine | 4 | 0 | 2 | 4 | 10 |
 | Data Handling | 6 | 1 | 1 | 6 | 14 |
 | Position Management | 8 | 1 | 0 | 4 | 13 |
-| ML Integration | 5 | 1 | 0 | 5 | 11 |
+| ML Integration | 6 | 1 | 0 | 4 | 11 |
 | Multi-Timeframe | 1 | 1 | 0 | 3 | 5 |
 | Multi-Asset Portfolio | 3 | 1 | 0 | 5 | 9 |
 | Options & Derivatives | 0 | 1 | 0 | 8 | 9 |
-| Risk & Validation | 2 | 2 | 0 | 5 | 9 |
+| Risk & Validation | 2 | 3 | 0 | 4 | 9 |
 | Performance Analytics | 4 | 0 | 0 | 5 | 9 |
 | Production Operations | 0 | 0 | 0 | 7 | 7 |
 | Model Governance | 0 | 0 | 0 | 6 | 6 |
@@ -939,9 +940,9 @@ cargo doc --no-deps --open
 | CLI & Configuration | 3 | 1 | 0 | 4 | 8 |
 | Execution Realism | 2 | 1 | 0 | 3 | 6 |
 | Reproducibility | 0 | 2 | 0 | 2 | 4 |
-| **TOTAL** | **38** | **12** | **4** | **73** | **127** |
+| **TOTAL** | **39** | **13** | **4** | **71** | **127** |
 
-**Estimated Completion: ~35%** (core backtesting solid; Cross-Sectional Features now complete; ONNX inference architecture complete but blocked by ort crate instability; live trading and Python bindings not started)
+**Estimated Completion: ~36%** (core backtesting solid; Cross-Sectional Features and CPCV now complete; ONNX inference architecture complete but blocked by ort crate instability; live trading and Python bindings not started)
 
 ---
 

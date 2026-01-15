@@ -98,6 +98,7 @@
 
 pub mod analytics;
 pub mod config;
+pub mod cpcv;
 pub mod data;
 pub mod engine;
 pub mod error;
