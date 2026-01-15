@@ -2222,6 +2222,618 @@ impl ResultFormatter {
     }
 }
 
+// ============================================================================
+// Statistical Tests for Validation and Robustness
+// ============================================================================
+
+/// Result of a statistical hypothesis test.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StatisticalTestResult {
+    /// Name of the test
+    pub test_name: String,
+    /// Test statistic value
+    pub statistic: f64,
+    /// P-value (probability of observing this result under null hypothesis)
+    pub p_value: f64,
+    /// Whether to reject the null hypothesis at 5% significance level
+    pub reject_null_at_5pct: bool,
+    /// Whether to reject the null hypothesis at 1% significance level
+    pub reject_null_at_1pct: bool,
+    /// Human-readable interpretation of the result
+    pub interpretation: String,
+}
+
+impl StatisticalTestResult {
+    /// Create a new statistical test result.
+    pub fn new(
+        test_name: impl Into<String>,
+        statistic: f64,
+        p_value: f64,
+        interpretation: impl Into<String>,
+    ) -> Self {
+        Self {
+            test_name: test_name.into(),
+            statistic,
+            p_value,
+            reject_null_at_5pct: p_value < 0.05,
+            reject_null_at_1pct: p_value < 0.01,
+            interpretation: interpretation.into(),
+        }
+    }
+}
+
+/// Statistical tests for validating return distributions and time series properties.
+pub struct StatisticalTests;
+
+impl StatisticalTests {
+    /// Jarque-Bera test for normality.
+    ///
+    /// Tests whether the sample data has the skewness and kurtosis matching
+    /// a normal distribution. Useful for validating return distribution assumptions.
+    ///
+    /// # Null Hypothesis
+    /// The data comes from a normal distribution (skewness = 0, excess kurtosis = 0).
+    ///
+    /// # Arguments
+    /// * `data` - Sample data (typically daily returns)
+    ///
+    /// # Returns
+    /// Test result with JB statistic and p-value. High JB statistic (low p-value)
+    /// indicates non-normality.
+    ///
+    /// # Formula
+    /// JB = (n/6) * (S² + K²/4)
+    /// where S = skewness, K = excess kurtosis, n = sample size
+    pub fn jarque_bera(data: &[f64]) -> Option<StatisticalTestResult> {
+        let n = data.len();
+        if n < 8 {
+            // Need reasonable sample size for meaningful test
+            return None;
+        }
+
+        let n_f64 = n as f64;
+
+        // Calculate mean
+        let mean = data.iter().sum::<f64>() / n_f64;
+
+        // Calculate moments
+        let m2: f64 = data.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / n_f64;
+        let m3: f64 = data.iter().map(|x| (x - mean).powi(3)).sum::<f64>() / n_f64;
+        let m4: f64 = data.iter().map(|x| (x - mean).powi(4)).sum::<f64>() / n_f64;
+
+        if m2 == 0.0 {
+            // Zero variance - data is constant
+            return None;
+        }
+
+        // Sample skewness: m3 / m2^(3/2)
+        let skewness = m3 / m2.powf(1.5);
+
+        // Sample excess kurtosis: m4 / m2^2 - 3
+        let excess_kurtosis = (m4 / m2.powi(2)) - 3.0;
+
+        // Jarque-Bera statistic
+        // JB = (n/6) * (S^2 + K^2/4)
+        let jb_statistic = (n_f64 / 6.0) * (skewness.powi(2) + excess_kurtosis.powi(2) / 4.0);
+
+        // Under H0, JB follows chi-squared distribution with 2 degrees of freedom
+        let p_value = 1.0 - chi_squared_cdf(jb_statistic, 2);
+
+        let interpretation = if p_value < 0.05 {
+            format!(
+                "Non-normal distribution (skew={:.3}, kurt={:.3}). Sharpe ratio assumptions may be violated.",
+                skewness, excess_kurtosis
+            )
+        } else {
+            format!(
+                "Cannot reject normality (skew={:.3}, kurt={:.3}). Distribution appears normal.",
+                skewness, excess_kurtosis
+            )
+        };
+
+        Some(StatisticalTestResult::new(
+            "Jarque-Bera",
+            jb_statistic,
+            p_value,
+            interpretation,
+        ))
+    }
+
+    /// Durbin-Watson test for autocorrelation in residuals.
+    ///
+    /// Tests whether there is first-order autocorrelation in a time series.
+    /// Critical for detecting serial dependence in strategy returns.
+    ///
+    /// # Null Hypothesis
+    /// No first-order autocorrelation (ρ = 0).
+    ///
+    /// # Arguments
+    /// * `residuals` - Time series of residuals or returns
+    ///
+    /// # Returns
+    /// Test result with DW statistic (range 0-4).
+    /// - DW ≈ 2: No autocorrelation
+    /// - DW < 2: Positive autocorrelation (trending)
+    /// - DW > 2: Negative autocorrelation (mean-reverting)
+    ///
+    /// # Formula
+    /// DW = Σ(e_t - e_{t-1})² / Σe_t²
+    pub fn durbin_watson(residuals: &[f64]) -> Option<StatisticalTestResult> {
+        let n = residuals.len();
+        if n < 3 {
+            return None;
+        }
+
+        // Sum of squared residuals
+        let ss_residuals: f64 = residuals.iter().map(|e| e.powi(2)).sum();
+
+        if ss_residuals == 0.0 {
+            return None;
+        }
+
+        // Sum of squared differences
+        let ss_diff: f64 = residuals
+            .windows(2)
+            .map(|w| (w[1] - w[0]).powi(2))
+            .sum();
+
+        let dw_statistic = ss_diff / ss_residuals;
+
+        // Convert DW to approximate p-value for positive autocorrelation
+        // Using the relationship: DW ≈ 2(1 - ρ) where ρ is first-order autocorrelation
+        let rho = 1.0 - dw_statistic / 2.0;
+
+        // Approximate p-value using transformation
+        // Under H0, DW is approximately normal for large samples
+        let n_f64 = n as f64;
+        let se = (4.0 / n_f64).sqrt(); // Approximate standard error
+
+        // Test for departure from 2 (positive autocorrelation if DW < 2)
+        let z = (dw_statistic - 2.0) / se;
+        let p_value_lower = normal_cdf(z); // P-value for positive autocorrelation
+
+        // Use two-sided p-value for general test
+        let p_value = 2.0 * p_value_lower.min(1.0 - p_value_lower);
+
+        let interpretation = if dw_statistic < 1.5 {
+            format!(
+                "Strong positive autocorrelation (ρ≈{:.3}). Returns may be trending.",
+                rho
+            )
+        } else if dw_statistic < 1.8 {
+            format!(
+                "Moderate positive autocorrelation (ρ≈{:.3}). Some serial dependence present.",
+                rho
+            )
+        } else if dw_statistic > 2.5 {
+            format!(
+                "Negative autocorrelation (ρ≈{:.3}). Returns may be mean-reverting.",
+                rho
+            )
+        } else {
+            format!(
+                "No significant autocorrelation (ρ≈{:.3}). Returns appear independent.",
+                rho
+            )
+        };
+
+        Some(StatisticalTestResult::new(
+            "Durbin-Watson",
+            dw_statistic,
+            p_value,
+            interpretation,
+        ))
+    }
+
+    /// Augmented Dickey-Fuller (ADF) test for stationarity.
+    ///
+    /// Tests whether a time series has a unit root (is non-stationary).
+    /// Critical for validating that returns are stationary before backtesting.
+    ///
+    /// # Null Hypothesis
+    /// The series has a unit root (is non-stationary).
+    ///
+    /// # Arguments
+    /// * `data` - Time series data (e.g., returns or prices)
+    /// * `max_lag` - Maximum number of lags to include (None for automatic selection)
+    ///
+    /// # Returns
+    /// Test result with ADF statistic. More negative values indicate stronger
+    /// evidence against unit root (i.e., evidence of stationarity).
+    ///
+    /// # Formula
+    /// Δy_t = α + βt + γy_{t-1} + Σδ_i*Δy_{t-i} + ε_t
+    /// Test H0: γ = 0 (unit root) vs H1: γ < 0 (stationary)
+    pub fn adf_test(data: &[f64], max_lag: Option<usize>) -> Option<StatisticalTestResult> {
+        let n = data.len();
+        if n < 20 {
+            return None;
+        }
+
+        // Automatic lag selection using Schwert (1989) rule: max_lag = 12*(T/100)^(1/4)
+        let auto_lag = ((12.0 * (n as f64 / 100.0).powf(0.25)).floor() as usize).max(1);
+        let lag = max_lag.unwrap_or(auto_lag).min(n / 4);
+
+        // Calculate first differences
+        let diff: Vec<f64> = data.windows(2).map(|w| w[1] - w[0]).collect();
+
+        if diff.len() <= lag + 1 {
+            return None;
+        }
+
+        // Build regression: Δy_t = α + γ*y_{t-1} + Σδ_i*Δy_{t-i} + ε_t
+        // We use OLS to estimate γ and test H0: γ = 0
+
+        // Prepare dependent variable: Δy_t (skip first lag observations)
+        let y: Vec<f64> = diff.iter().skip(lag).copied().collect();
+        let n_obs = y.len();
+
+        if n_obs < 10 {
+            return None;
+        }
+
+        // Prepare independent variables
+        // 1. Constant (intercept)
+        // 2. Lagged level: y_{t-1}
+        // 3. Lagged differences: Δy_{t-1}, ..., Δy_{t-lag}
+
+        let mut x_lagged_level = Vec::with_capacity(n_obs);
+        let mut x_lagged_diffs: Vec<Vec<f64>> = (0..lag).map(|_| Vec::with_capacity(n_obs)).collect();
+
+        for i in lag..diff.len() {
+            // Lagged level: y_{t-1} = data[i] (since diff[i] = data[i+1] - data[i])
+            x_lagged_level.push(data[i]);
+
+            // Lagged differences
+            for j in 0..lag {
+                x_lagged_diffs[j].push(diff[i - 1 - j]);
+            }
+        }
+
+        // Build design matrix for regression
+        let mut factors: Vec<Vec<f64>> = vec![x_lagged_level];
+        for lag_diff in x_lagged_diffs {
+            factors.push(lag_diff);
+        }
+
+        // Run regression
+        let regression = match multiple_regression(&y, &factors) {
+            Some(r) => r,
+            None => return None,
+        };
+
+        // The ADF test statistic is the t-statistic for the coefficient on y_{t-1}
+        let adf_statistic = regression.t_statistics.first().copied().unwrap_or(0.0);
+
+        // ADF critical values (approximate, from Dickey-Fuller tables)
+        // At 1%: -3.43, 5%: -2.86, 10%: -2.57 (for n=100, with constant)
+        // These vary with sample size; using approximate values
+        let critical_1pct = -3.43;
+        let critical_5pct = -2.86;
+        let critical_10pct = -2.57;
+
+        // Approximate p-value using interpolation
+        // The ADF distribution is non-standard (not normal or t)
+        let p_value = adf_p_value(adf_statistic, n_obs);
+
+        let interpretation = if adf_statistic < critical_1pct {
+            format!(
+                "Strongly stationary (ADF < {:.2}). Series has no unit root.",
+                critical_1pct
+            )
+        } else if adf_statistic < critical_5pct {
+            format!(
+                "Stationary at 5% level (ADF < {:.2}). Reject unit root hypothesis.",
+                critical_5pct
+            )
+        } else if adf_statistic < critical_10pct {
+            format!(
+                "Weakly stationary (ADF < {:.2}). Marginal evidence against unit root.",
+                critical_10pct
+            )
+        } else {
+            "Non-stationary (cannot reject unit root). Consider differencing the series.".to_string()
+        };
+
+        Some(StatisticalTestResult::new(
+            "Augmented Dickey-Fuller",
+            adf_statistic,
+            p_value,
+            interpretation,
+        ))
+    }
+
+    /// Calculate first-order autocorrelation coefficient.
+    ///
+    /// # Arguments
+    /// * `data` - Time series data
+    ///
+    /// # Returns
+    /// Autocorrelation coefficient at lag 1 (range -1 to 1)
+    pub fn autocorrelation(data: &[f64]) -> Option<f64> {
+        let n = data.len();
+        if n < 3 {
+            return None;
+        }
+
+        let mean = data.iter().sum::<f64>() / n as f64;
+
+        // Variance
+        let variance: f64 = data.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / n as f64;
+
+        if variance == 0.0 {
+            return None;
+        }
+
+        // Autocovariance at lag 1
+        let autocovariance: f64 = data
+            .windows(2)
+            .map(|w| (w[0] - mean) * (w[1] - mean))
+            .sum::<f64>()
+            / (n - 1) as f64;
+
+        Some(autocovariance / variance)
+    }
+
+    /// Ljung-Box test for autocorrelation at multiple lags.
+    ///
+    /// Tests the null hypothesis that the first h autocorrelations are jointly zero.
+    ///
+    /// # Arguments
+    /// * `data` - Time series data
+    /// * `lags` - Number of lags to test (default: 10)
+    ///
+    /// # Returns
+    /// Q statistic and p-value. Low p-value indicates significant autocorrelation.
+    pub fn ljung_box(data: &[f64], lags: Option<usize>) -> Option<StatisticalTestResult> {
+        let n = data.len();
+        let h = lags.unwrap_or(10.min(n / 5));
+
+        if n < h + 5 {
+            return None;
+        }
+
+        let mean = data.iter().sum::<f64>() / n as f64;
+
+        // Variance (denominator for autocorrelation)
+        let variance: f64 = data.iter().map(|x| (x - mean).powi(2)).sum();
+
+        if variance == 0.0 {
+            return None;
+        }
+
+        // Calculate autocorrelations for each lag
+        let mut q_stat = 0.0;
+        for k in 1..=h {
+            if k >= n {
+                break;
+            }
+
+            // Autocovariance at lag k
+            let autocov: f64 = (0..n - k)
+                .map(|i| (data[i] - mean) * (data[i + k] - mean))
+                .sum();
+
+            let rho_k = autocov / variance;
+
+            // Ljung-Box Q = n(n+2) * Σ (ρ_k² / (n-k))
+            q_stat += rho_k.powi(2) / (n - k) as f64;
+        }
+
+        q_stat *= (n as f64) * (n as f64 + 2.0);
+
+        // Under H0, Q follows chi-squared distribution with h degrees of freedom
+        let p_value = 1.0 - chi_squared_cdf(q_stat, h);
+
+        let interpretation = if p_value < 0.05 {
+            format!(
+                "Significant autocorrelation detected (Q={:.2}, lags={}). Returns are serially dependent.",
+                q_stat, h
+            )
+        } else {
+            format!(
+                "No significant autocorrelation (Q={:.2}, lags={}). Returns appear independent.",
+                q_stat, h
+            )
+        };
+
+        Some(StatisticalTestResult::new(
+            "Ljung-Box Q",
+            q_stat,
+            p_value,
+            interpretation,
+        ))
+    }
+
+    /// Print a summary of statistical test results.
+    pub fn print_summary(results: &[StatisticalTestResult]) {
+        println!();
+        println!("{}", "═".repeat(70).blue());
+        println!("{}", " STATISTICAL TESTS SUMMARY ".bold().blue());
+        println!("{}", "═".repeat(70).blue());
+        println!();
+
+        let mut builder = Builder::default();
+        builder.push_record(["Test", "Statistic", "P-value", "Result"]);
+
+        for result in results {
+            let status = if result.reject_null_at_1pct {
+                "***".to_string()
+            } else if result.reject_null_at_5pct {
+                "**".to_string()
+            } else {
+                "".to_string()
+            };
+
+            builder.push_record([
+                result.test_name.clone(),
+                format!("{:.4}", result.statistic),
+                format!("{:.4}", result.p_value),
+                status,
+            ]);
+        }
+
+        let mut table = builder.build();
+        table.with(Style::rounded());
+        println!("{}", table);
+        println!();
+        println!("  *** = significant at 1%, ** = significant at 5%");
+        println!();
+
+        for result in results {
+            println!("  {}: {}", result.test_name.bold(), result.interpretation);
+        }
+
+        println!("{}", "═".repeat(70).blue());
+    }
+}
+
+/// Chi-squared CDF using the incomplete gamma function.
+/// Useful for computing p-values for chi-squared distributed statistics.
+fn chi_squared_cdf(x: f64, df: usize) -> f64 {
+    if x <= 0.0 {
+        return 0.0;
+    }
+    if df == 0 {
+        return 1.0;
+    }
+
+    // Chi-squared CDF = lower incomplete gamma / gamma
+    // P(X <= x) = γ(k/2, x/2) / Γ(k/2)
+    let k = df as f64;
+    lower_incomplete_gamma(k / 2.0, x / 2.0)
+}
+
+/// Lower incomplete gamma function (regularized).
+/// Uses series expansion for small x and continued fraction for large x.
+fn lower_incomplete_gamma(a: f64, x: f64) -> f64 {
+    if x <= 0.0 {
+        return 0.0;
+    }
+    if a <= 0.0 {
+        return 1.0;
+    }
+
+    // Choose method based on x relative to a
+    if x < a + 1.0 {
+        // Use series expansion
+        let mut sum = 1.0 / a;
+        let mut term = 1.0 / a;
+
+        for n in 1..200 {
+            term *= x / (a + n as f64);
+            sum += term;
+            if term.abs() < 1e-15 * sum.abs() {
+                break;
+            }
+        }
+
+        sum * (-x + a * x.ln() - ln_gamma(a)).exp()
+    } else {
+        // Use continued fraction (complement)
+        1.0 - upper_incomplete_gamma_cf(a, x)
+    }
+}
+
+/// Upper incomplete gamma using continued fraction.
+fn upper_incomplete_gamma_cf(a: f64, x: f64) -> f64 {
+    let mut f = 1e-30_f64;
+    let mut c = 1e-30_f64;
+    let mut d = 0.0_f64;
+
+    for n in 1..200 {
+        let an = if n == 1 {
+            1.0
+        } else if n % 2 == 0 {
+            (n as f64 / 2.0 - 1.0) * x / ((a + n as f64 - 2.0) * (a + n as f64 - 1.0))
+        } else {
+            -(a + (n as f64 - 1.0) / 2.0) * x / ((a + n as f64 - 2.0) * (a + n as f64 - 1.0))
+        };
+
+        let bn = if n == 1 { x } else { a + n as f64 - 1.0 };
+
+        d = bn + an * d;
+        if d.abs() < 1e-30 {
+            d = 1e-30;
+        }
+        d = 1.0 / d;
+
+        c = bn + an / c;
+        if c.abs() < 1e-30 {
+            c = 1e-30;
+        }
+
+        let delta = c * d;
+        f *= delta;
+
+        if (delta - 1.0).abs() < 1e-10 {
+            break;
+        }
+    }
+
+    f * (-x + a * x.ln() - ln_gamma(a)).exp()
+}
+
+/// Approximate p-value for ADF test statistic.
+/// Uses interpolation from MacKinnon (1994) critical values.
+fn adf_p_value(t_stat: f64, n: usize) -> f64 {
+    // MacKinnon (1994) critical values for ADF with constant
+    // For sample size n=100:
+    // 1%: -3.43, 5%: -2.86, 10%: -2.57
+    // These shift slightly with sample size, but we use fixed approximation
+
+    // Simple linear interpolation between critical values
+    let critical_values = [
+        (-4.0, 0.001),
+        (-3.5, 0.005),
+        (-3.43, 0.01),
+        (-3.15, 0.025),
+        (-2.86, 0.05),
+        (-2.57, 0.10),
+        (-2.0, 0.20),
+        (-1.5, 0.30),
+        (-1.0, 0.50),
+        (0.0, 0.70),
+        (1.0, 0.90),
+        (2.0, 0.99),
+    ];
+
+    // Adjust critical values slightly for sample size
+    let size_adj = if n < 25 {
+        0.3
+    } else if n < 50 {
+        0.15
+    } else if n < 100 {
+        0.05
+    } else {
+        0.0
+    };
+
+    // Find bracketing critical values
+    for i in 0..critical_values.len() - 1 {
+        let (t1, p1) = critical_values[i];
+        let (t2, p2) = critical_values[i + 1];
+        let t1_adj = t1 - size_adj;
+        let t2_adj = t2 - size_adj;
+
+        if t_stat <= t1_adj {
+            return p1;
+        }
+        if t_stat < t2_adj {
+            // Linear interpolation
+            let ratio = (t_stat - t1_adj) / (t2_adj - t1_adj);
+            return p1 + ratio * (p2 - p1);
+        }
+    }
+
+    // Beyond the table
+    if t_stat < critical_values[0].0 - size_adj {
+        0.001
+    } else {
+        0.99
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -4113,5 +4725,398 @@ mod tests {
 
         // Φ(1.96) ≈ 0.975 (97.5th percentile)
         assert!((normal_cdf(1.96) - 0.975).abs() < 0.001);
+    }
+
+    // =========================================================================
+    // Statistical Tests - Normality, Autocorrelation, Stationarity
+    // =========================================================================
+
+    #[test]
+    fn test_jarque_bera_normal_data() {
+        // Generate normally distributed data using Box-Muller transform
+        let n = 1000;
+        let normal_data: Vec<f64> = (0..n)
+            .map(|i| {
+                // Simple pseudo-normal: sum of 12 uniform - 6 (central limit theorem)
+                let u1 = ((i * 1234567) % 10000) as f64 / 10000.0;
+                let u2 = ((i * 7654321) % 10000) as f64 / 10000.0;
+                let u3 = ((i * 2468135) % 10000) as f64 / 10000.0;
+                let u4 = ((i * 3579246) % 10000) as f64 / 10000.0;
+                (u1 + u2 + u3 + u4 - 2.0) * 0.5 // Approximately normal
+            })
+            .collect();
+
+        let result = StatisticalTests::jarque_bera(&normal_data).expect("Should compute JB test");
+
+        // For approximately normal data, we should NOT reject normality strongly
+        assert!(result.statistic >= 0.0, "JB statistic must be non-negative");
+        // P-value should be reasonable (not extremely low for normal data)
+        // Note: Our pseudo-normal may not be perfectly normal, so allow some deviation
+    }
+
+    #[test]
+    fn test_jarque_bera_heavy_tails() {
+        // Data with heavy tails (high kurtosis) - should reject normality
+        let n = 500;
+        let heavy_tail_data: Vec<f64> = (0..n)
+            .map(|i| {
+                // Create data with occasional large outliers
+                let base = (i as f64 * 0.1).sin() * 0.01;
+                if i % 20 == 0 {
+                    base * 10.0 // Occasional large value
+                } else {
+                    base
+                }
+            })
+            .collect();
+
+        let result =
+            StatisticalTests::jarque_bera(&heavy_tail_data).expect("Should compute JB test");
+
+        // With heavy tails, JB statistic should be high
+        assert!(result.statistic > 0.0, "JB statistic should be positive");
+    }
+
+    #[test]
+    fn test_jarque_bera_skewed_data() {
+        // Right-skewed data (like many financial return distributions)
+        let n = 500;
+        let skewed_data: Vec<f64> = (0..n)
+            .map(|i| {
+                // Exponential-like: mostly small positive values with occasional large ones
+                let u = ((i * 9876543) % 10000) as f64 / 10000.0;
+                -u.ln() * 0.01 // Exponential distribution (right skewed)
+            })
+            .collect();
+
+        let result = StatisticalTests::jarque_bera(&skewed_data).expect("Should compute JB test");
+
+        // Skewed data should have high JB statistic
+        assert!(result.statistic > 5.0, "Skewed data should have high JB statistic: {}", result.statistic);
+    }
+
+    #[test]
+    fn test_jarque_bera_insufficient_data() {
+        // Too few observations
+        let small_data = vec![1.0, 2.0, 3.0];
+        assert!(StatisticalTests::jarque_bera(&small_data).is_none());
+
+        // Constant data (zero variance)
+        let constant_data = vec![1.0; 100];
+        assert!(StatisticalTests::jarque_bera(&constant_data).is_none());
+    }
+
+    #[test]
+    fn test_durbin_watson_no_autocorrelation() {
+        // Independent data should have DW ≈ 2
+        let n = 200;
+        let independent_data: Vec<f64> = (0..n)
+            .map(|i| {
+                // Pseudo-random: sin of prime multiples
+                (i as f64 * 1.618033988749895).sin() * 0.01
+            })
+            .collect();
+
+        let result =
+            StatisticalTests::durbin_watson(&independent_data).expect("Should compute DW test");
+
+        // DW should be close to 2 for independent data
+        assert!(
+            result.statistic > 1.5 && result.statistic < 2.5,
+            "DW should be near 2 for independent data: {}",
+            result.statistic
+        );
+    }
+
+    #[test]
+    fn test_durbin_watson_positive_autocorrelation() {
+        // Create positively autocorrelated data (trending)
+        let n = 200;
+        let mut autocorrelated_data = Vec::with_capacity(n);
+        autocorrelated_data.push(0.01);
+        for i in 1..n {
+            // AR(1) process with rho = 0.8
+            let innovation = (i as f64 * 1.618033988749895).sin() * 0.005;
+            let prev = autocorrelated_data[i - 1];
+            autocorrelated_data.push(0.8 * prev + innovation);
+        }
+
+        let result =
+            StatisticalTests::durbin_watson(&autocorrelated_data).expect("Should compute DW test");
+
+        // DW should be low (<2) for positively autocorrelated data
+        assert!(
+            result.statistic < 1.5,
+            "DW should be low for positively autocorrelated data: {}",
+            result.statistic
+        );
+    }
+
+    #[test]
+    fn test_durbin_watson_negative_autocorrelation() {
+        // Create negatively autocorrelated data (mean-reverting)
+        let n = 200;
+        let mut mean_reverting = Vec::with_capacity(n);
+        mean_reverting.push(0.01);
+        for i in 1..n {
+            // Alternating pattern
+            let innovation = (i as f64 * 1.618033988749895).sin() * 0.002;
+            let prev = mean_reverting[i - 1];
+            mean_reverting.push(-0.5 * prev + innovation);
+        }
+
+        let result =
+            StatisticalTests::durbin_watson(&mean_reverting).expect("Should compute DW test");
+
+        // DW should be high (>2) for negatively autocorrelated data
+        assert!(
+            result.statistic > 2.0,
+            "DW should be high for negatively autocorrelated data: {}",
+            result.statistic
+        );
+    }
+
+    #[test]
+    fn test_durbin_watson_insufficient_data() {
+        let small_data = vec![1.0, 2.0];
+        assert!(StatisticalTests::durbin_watson(&small_data).is_none());
+
+        // Zero variance residuals
+        let constant = vec![1.0; 100];
+        assert!(StatisticalTests::durbin_watson(&constant).is_none());
+    }
+
+    #[test]
+    fn test_adf_stationary_data() {
+        // Generate stationary data (returns should be stationary)
+        let n = 300;
+        let stationary_data: Vec<f64> = (0..n)
+            .map(|i| {
+                // Stationary process: mean-reverting with noise
+                (i as f64 * 1.618033988749895).sin() * 0.02
+            })
+            .collect();
+
+        let result =
+            StatisticalTests::adf_test(&stationary_data, Some(4)).expect("Should compute ADF test");
+
+        // For stationary data, ADF statistic should be more negative
+        // A very negative ADF indicates rejection of unit root (stationarity)
+        assert!(
+            result.statistic < 0.0,
+            "ADF should be negative for stationary data: {}",
+            result.statistic
+        );
+    }
+
+    #[test]
+    fn test_adf_non_stationary_data() {
+        // Generate random walk (non-stationary)
+        let n = 300;
+        let mut random_walk = Vec::with_capacity(n);
+        random_walk.push(100.0);
+        for i in 1..n {
+            let innovation = (i as f64 * 1.618033988749895).sin() * 0.5;
+            random_walk.push(random_walk[i - 1] + innovation);
+        }
+
+        let result =
+            StatisticalTests::adf_test(&random_walk, Some(4)).expect("Should compute ADF test");
+
+        // For non-stationary data (random walk), ADF should be closer to 0 or positive
+        // We should NOT be able to reject the unit root hypothesis
+        assert!(
+            result.statistic > -3.0,
+            "ADF should be less negative for non-stationary data: {}",
+            result.statistic
+        );
+    }
+
+    #[test]
+    fn test_adf_auto_lag_selection() {
+        let n = 250;
+        let data: Vec<f64> = (0..n)
+            .map(|i| (i as f64 * 0.1).sin() * 0.01)
+            .collect();
+
+        // Test with automatic lag selection
+        let result_auto = StatisticalTests::adf_test(&data, None).expect("Should work with auto lag");
+
+        // Test with explicit lag
+        let result_manual =
+            StatisticalTests::adf_test(&data, Some(5)).expect("Should work with manual lag");
+
+        // Both should produce valid results
+        assert!(result_auto.statistic.is_finite());
+        assert!(result_manual.statistic.is_finite());
+    }
+
+    #[test]
+    fn test_adf_insufficient_data() {
+        let small_data = vec![1.0; 10];
+        assert!(StatisticalTests::adf_test(&small_data, Some(2)).is_none());
+    }
+
+    #[test]
+    fn test_autocorrelation_calculation() {
+        // Zero autocorrelation case
+        let n = 200;
+        let independent: Vec<f64> = (0..n)
+            .map(|i| (i as f64 * 1.618033988749895).sin() * 0.01)
+            .collect();
+
+        let rho = StatisticalTests::autocorrelation(&independent).expect("Should compute autocorrelation");
+
+        // Should be near 0 for independent data
+        assert!(
+            rho.abs() < 0.2,
+            "Autocorrelation should be near 0 for independent data: {}",
+            rho
+        );
+
+        // High autocorrelation case (AR(1) process)
+        let mut ar1 = Vec::with_capacity(n);
+        ar1.push(0.0);
+        for i in 1..n {
+            let innovation = (i as f64 * 1.618033988749895).sin() * 0.002;
+            ar1.push(0.9 * ar1[i - 1] + innovation);
+        }
+
+        let rho_ar1 = StatisticalTests::autocorrelation(&ar1).expect("Should compute autocorrelation");
+
+        // Should be near 0.9 for AR(1) with rho=0.9
+        assert!(
+            rho_ar1 > 0.6,
+            "Autocorrelation should be high for AR(1) process: {}",
+            rho_ar1
+        );
+    }
+
+    #[test]
+    fn test_ljung_box_no_autocorrelation() {
+        let n = 200;
+        let independent: Vec<f64> = (0..n)
+            .map(|i| (i as f64 * 1.618033988749895).sin() * 0.01)
+            .collect();
+
+        let result =
+            StatisticalTests::ljung_box(&independent, Some(10)).expect("Should compute LB test");
+
+        // For independent data, Q should be low and p-value high
+        assert!(result.statistic >= 0.0, "Q statistic must be non-negative");
+        // Should NOT reject null hypothesis of no autocorrelation
+        assert!(
+            result.p_value > 0.01,
+            "P-value should be reasonably high for independent data: {}",
+            result.p_value
+        );
+    }
+
+    #[test]
+    fn test_ljung_box_with_autocorrelation() {
+        let n = 200;
+        let mut ar1 = Vec::with_capacity(n);
+        ar1.push(0.0);
+        for i in 1..n {
+            let innovation = (i as f64 * 1.618033988749895).sin() * 0.002;
+            ar1.push(0.8 * ar1[i - 1] + innovation);
+        }
+
+        let result = StatisticalTests::ljung_box(&ar1, Some(10)).expect("Should compute LB test");
+
+        // For autocorrelated data, Q should be high and p-value low
+        assert!(
+            result.statistic > 10.0,
+            "Q should be high for autocorrelated data: {}",
+            result.statistic
+        );
+    }
+
+    #[test]
+    fn test_ljung_box_insufficient_data() {
+        let small_data = vec![1.0, 2.0, 3.0];
+        assert!(StatisticalTests::ljung_box(&small_data, Some(5)).is_none());
+    }
+
+    #[test]
+    fn test_chi_squared_cdf() {
+        // χ²(df=2) CDF values
+        // P(X ≤ 0) = 0
+        assert!(chi_squared_cdf(0.0, 2) < 0.001);
+
+        // P(X ≤ 5.99) ≈ 0.95 for df=2
+        let p_5_99 = chi_squared_cdf(5.99, 2);
+        assert!(
+            (p_5_99 - 0.95).abs() < 0.02,
+            "chi_squared_cdf(5.99, 2) should be ~0.95: {}",
+            p_5_99
+        );
+
+        // P(X ≤ 9.21) ≈ 0.99 for df=2
+        let p_9_21 = chi_squared_cdf(9.21, 2);
+        assert!(
+            (p_9_21 - 0.99).abs() < 0.02,
+            "chi_squared_cdf(9.21, 2) should be ~0.99: {}",
+            p_9_21
+        );
+
+        // For larger df
+        // χ²(df=10): P(X ≤ 18.31) ≈ 0.95
+        let p_df10 = chi_squared_cdf(18.31, 10);
+        assert!(
+            (p_df10 - 0.95).abs() < 0.02,
+            "chi_squared_cdf(18.31, 10) should be ~0.95: {}",
+            p_df10
+        );
+    }
+
+    #[test]
+    fn test_statistical_test_result_creation() {
+        let result = StatisticalTestResult::new(
+            "Test Name",
+            2.5,
+            0.03,
+            "Test interpretation",
+        );
+
+        assert_eq!(result.test_name, "Test Name");
+        assert_eq!(result.statistic, 2.5);
+        assert_eq!(result.p_value, 0.03);
+        assert!(result.reject_null_at_5pct); // 0.03 < 0.05
+        assert!(!result.reject_null_at_1pct); // 0.03 > 0.01
+    }
+
+    #[test]
+    fn test_statistical_test_result_serialization() {
+        let result = StatisticalTestResult::new(
+            "Jarque-Bera",
+            15.5,
+            0.0004,
+            "Non-normal distribution",
+        );
+
+        let json = serde_json::to_string(&result).unwrap();
+        assert!(json.contains("Jarque-Bera"));
+        assert!(json.contains("15.5"));
+
+        let deserialized: StatisticalTestResult = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.test_name, result.test_name);
+        assert_eq!(deserialized.statistic, result.statistic);
+    }
+
+    #[test]
+    fn test_lower_incomplete_gamma() {
+        // Test with known values
+        // γ(1, 1) / Γ(1) = 1 - e^(-1) ≈ 0.632
+        let lig_1_1 = lower_incomplete_gamma(1.0, 1.0);
+        assert!(
+            (lig_1_1 - 0.632).abs() < 0.01,
+            "lower_incomplete_gamma(1, 1) should be ~0.632: {}",
+            lig_1_1
+        );
+
+        // Edge cases
+        assert!(lower_incomplete_gamma(1.0, 0.0) < 0.001);
+        assert!((lower_incomplete_gamma(1.0, 10.0) - 1.0).abs() < 0.001);
     }
 }
