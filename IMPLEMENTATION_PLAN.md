@@ -367,11 +367,9 @@ Items are organized by category and prioritized within each category. Priority r
 - Rolling correlation between symbols
 - Correlation matrix estimation
 
-### [PARTIAL ~40%] [HIGH] Portfolio Construction Methods
-- **Status**: Verified - only equal-weight and momentum implemented
-- **IMPLEMENTED**: Equal-weight allocation, momentum-based allocation
+### [PARTIAL ~60%] [HIGH] Portfolio Construction Methods
+- **IMPLEMENTED**: Equal-weight allocation, momentum-based allocation, inverse volatility weighting, risk parity
 - **MISSING**:
-  - Risk parity (inverse volatility weighting)
   - Mean-variance optimization (Markowitz)
   - Hierarchical Risk Parity (HRP)
   - Black-Litterman model
@@ -942,7 +940,7 @@ cargo doc --no-deps --open
 | Reproducibility | 0 | 2 | 0 | 2 | 4 |
 | **TOTAL** | **39** | **13** | **4** | **71** | **127** |
 
-**Estimated Completion: ~36%** (core backtesting solid; Cross-Sectional Features and CPCV now complete; ONNX inference architecture complete but blocked by ort crate instability; live trading and Python bindings not started)
+**Estimated Completion: ~37%** (core backtesting solid; Cross-Sectional Features and CPCV now complete; inverse volatility and risk parity portfolio strategies complete; ONNX inference architecture complete but blocked by ort crate instability; live trading and Python bindings not started)
 
 ---
 

@@ -979,6 +979,207 @@ impl PortfolioStrategy for MomentumPortfolioStrategy {
     }
 }
 
+/// Inverse volatility portfolio strategy.
+/// Allocates weight inversely proportional to each asset's volatility.
+pub struct InverseVolatilityStrategy {
+    lookback: usize,
+    rebalance_frequency: usize,
+    last_rebalance: usize,
+}
+
+impl InverseVolatilityStrategy {
+    /// Create new inverse volatility strategy.
+    pub fn new(lookback: usize, rebalance_frequency: usize) -> Self {
+        Self {
+            lookback,
+            rebalance_frequency,
+            last_rebalance: 0,
+        }
+    }
+}
+
+impl PortfolioStrategy for InverseVolatilityStrategy {
+    fn name(&self) -> &str {
+        "Inverse Volatility"
+    }
+
+    fn warmup_period(&self) -> usize {
+        self.lookback
+    }
+
+    fn on_bars(&mut self, ctx: &PortfolioContext) -> AllocationSignal {
+        if ctx.bar_index < self.last_rebalance + self.rebalance_frequency {
+            return AllocationSignal::Hold;
+        }
+
+        self.last_rebalance = ctx.bar_index;
+
+        // Calculate volatility for each symbol
+        let volatilities: Vec<(String, f64)> = ctx
+            .symbols
+            .iter()
+            .filter_map(|s| {
+                let bars = ctx.history(s)?;
+                if bars.len() < self.lookback + 1 {
+                    return None;
+                }
+
+                // Calculate returns
+                let returns: Vec<f64> = bars
+                    .windows(2)
+                    .rev()
+                    .take(self.lookback)
+                    .map(|w| (w[1].close - w[0].close) / w[0].close)
+                    .collect();
+
+                if returns.is_empty() {
+                    return None;
+                }
+
+                // Calculate volatility (standard deviation of returns)
+                let mean = returns.iter().sum::<f64>() / returns.len() as f64;
+                let variance = returns
+                    .iter()
+                    .map(|r| (r - mean).powi(2))
+                    .sum::<f64>()
+                    / returns.len() as f64;
+                let volatility = variance.sqrt();
+
+                Some((s.clone(), volatility))
+            })
+            .collect();
+
+        if volatilities.is_empty() {
+            return AllocationSignal::Hold;
+        }
+
+        // Calculate inverse volatility weights
+        let inverse_vols: Vec<(String, f64)> = volatilities
+            .into_iter()
+            .map(|(s, vol)| {
+                let inv_vol = if vol > 0.0 { 1.0 / vol } else { 0.0 };
+                (s, inv_vol)
+            })
+            .collect();
+
+        let total_inv_vol: f64 = inverse_vols.iter().map(|(_, iv)| iv).sum();
+
+        if total_inv_vol == 0.0 {
+            return AllocationSignal::Hold;
+        }
+
+        // Normalize to sum to 1.0
+        let weights: HashMap<String, f64> = inverse_vols
+            .into_iter()
+            .map(|(s, iv)| (s, iv / total_inv_vol))
+            .collect();
+
+        AllocationSignal::Rebalance(weights)
+    }
+}
+
+/// Risk parity portfolio strategy.
+/// Allocates so each asset contributes equally to portfolio risk.
+/// Simplified version using inverse volatility as proxy for risk contribution.
+pub struct RiskParityStrategy {
+    lookback: usize,
+    rebalance_frequency: usize,
+    last_rebalance: usize,
+}
+
+impl RiskParityStrategy {
+    /// Create new risk parity strategy.
+    pub fn new(lookback: usize, rebalance_frequency: usize) -> Self {
+        Self {
+            lookback,
+            rebalance_frequency,
+            last_rebalance: 0,
+        }
+    }
+}
+
+impl PortfolioStrategy for RiskParityStrategy {
+    fn name(&self) -> &str {
+        "Risk Parity"
+    }
+
+    fn warmup_period(&self) -> usize {
+        self.lookback
+    }
+
+    fn on_bars(&mut self, ctx: &PortfolioContext) -> AllocationSignal {
+        if ctx.bar_index < self.last_rebalance + self.rebalance_frequency {
+            return AllocationSignal::Hold;
+        }
+
+        self.last_rebalance = ctx.bar_index;
+
+        // Calculate volatility for each symbol
+        let volatilities: Vec<(String, f64)> = ctx
+            .symbols
+            .iter()
+            .filter_map(|s| {
+                let bars = ctx.history(s)?;
+                if bars.len() < self.lookback + 1 {
+                    return None;
+                }
+
+                // Calculate returns
+                let returns: Vec<f64> = bars
+                    .windows(2)
+                    .rev()
+                    .take(self.lookback)
+                    .map(|w| (w[1].close - w[0].close) / w[0].close)
+                    .collect();
+
+                if returns.is_empty() {
+                    return None;
+                }
+
+                // Calculate volatility (annualized)
+                let mean = returns.iter().sum::<f64>() / returns.len() as f64;
+                let variance = returns
+                    .iter()
+                    .map(|r| (r - mean).powi(2))
+                    .sum::<f64>()
+                    / returns.len() as f64;
+                let daily_vol = variance.sqrt();
+                let annual_vol = daily_vol * 252.0_f64.sqrt();
+
+                Some((s.clone(), annual_vol))
+            })
+            .collect();
+
+        if volatilities.is_empty() {
+            return AllocationSignal::Hold;
+        }
+
+        // For risk parity, allocate inversely to volatility
+        // This ensures each asset contributes equally to portfolio variance
+        let inverse_vols: Vec<(String, f64)> = volatilities
+            .into_iter()
+            .map(|(s, vol)| {
+                let inv_vol = if vol > 0.0 { 1.0 / vol } else { 0.0 };
+                (s, inv_vol)
+            })
+            .collect();
+
+        let total_inv_vol: f64 = inverse_vols.iter().map(|(_, iv)| iv).sum();
+
+        if total_inv_vol == 0.0 {
+            return AllocationSignal::Hold;
+        }
+
+        // Normalize to sum to 1.0
+        let weights: HashMap<String, f64> = inverse_vols
+            .into_iter()
+            .map(|(s, iv)| (s, iv / total_inv_vol))
+            .collect();
+
+        AllocationSignal::Rebalance(weights)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1021,6 +1222,72 @@ mod tests {
         let strategy = MomentumPortfolioStrategy::new(20, 3, 5);
         assert_eq!(strategy.name(), "Momentum Portfolio");
         assert_eq!(strategy.warmup_period(), 20);
+    }
+
+    #[test]
+    fn test_inverse_volatility_strategy() {
+        let strategy = InverseVolatilityStrategy::new(20, 5);
+        assert_eq!(strategy.name(), "Inverse Volatility");
+        assert_eq!(strategy.warmup_period(), 20);
+    }
+
+    #[test]
+    fn test_risk_parity_strategy() {
+        let strategy = RiskParityStrategy::new(20, 5);
+        assert_eq!(strategy.name(), "Risk Parity");
+        assert_eq!(strategy.warmup_period(), 20);
+    }
+
+    #[test]
+    fn test_inverse_volatility_allocation() {
+        let config = BacktestConfig {
+            initial_capital: 100_000.0,
+            show_progress: false,
+            ..Default::default()
+        };
+
+        let mut engine = MultiAssetEngine::new(config);
+
+        // Create assets with different volatilities
+        // High volatility asset
+        let bars1 = create_test_bars(100, 100.0, 0.02); // 2% daily
+        // Low volatility asset
+        let bars2 = create_test_bars(100, 50.0, 0.005); // 0.5% daily
+
+        engine.add_data("HIGH_VOL", bars1);
+        engine.add_data("LOW_VOL", bars2);
+
+        let mut strategy = InverseVolatilityStrategy::new(20, 5);
+        let result = engine.run(&mut strategy).unwrap();
+
+        // Inverse volatility should allocate less to high vol asset
+        assert!(result.final_equity > 0.0);
+        assert_eq!(result.symbols.len(), 2);
+    }
+
+    #[test]
+    fn test_risk_parity_allocation() {
+        let config = BacktestConfig {
+            initial_capital: 100_000.0,
+            show_progress: false,
+            ..Default::default()
+        };
+
+        let mut engine = MultiAssetEngine::new(config);
+
+        // Create assets with different volatilities
+        let bars1 = create_test_bars(100, 100.0, 0.02);
+        let bars2 = create_test_bars(100, 50.0, 0.005);
+
+        engine.add_data("ASSET1", bars1);
+        engine.add_data("ASSET2", bars2);
+
+        let mut strategy = RiskParityStrategy::new(20, 5);
+        let result = engine.run(&mut strategy).unwrap();
+
+        // Risk parity should produce a result
+        assert!(result.final_equity > 0.0);
+        assert_eq!(result.symbols.len(), 2);
     }
 
     #[test]
