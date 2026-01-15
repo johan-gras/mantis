@@ -146,6 +146,20 @@ These features are explicitly required in the spec but not implemented.
 
 ---
 
+### 2.7 Walk-Forward CLI Command - COMPLETE
+
+**Spec requirement:** `specs/cli-interface.md` requires `walk-forward --folds N` to run walk-forward optimization from the CLI.
+
+**Implementation Summary:**
+- Added a fully documented `walk-forward` subcommand (data path, strategy, folds, in-sample ratio, anchored windows, metric, execution realism knobs, output format) and `WalkForwardMetricArg` value enum.
+- Introduced a reusable `StrategyParam` enum plus `default_param_grid`/`strategy_from_param` helpers so both optimization and walk-forward reuse the same parameter grids (now covering SMA, Momentum, Mean Reversion, RSI, Breakout, MACD).
+- Implemented `run_walk_forward` that loads data via the requested format, configures `WalkForwardAnalyzer` + `BacktestConfig`, and prints text/JSON/CSV summaries (per-window stats + aggregate efficiency) using new helper functions.
+- Added CLI unit tests for the new subcommand plus coverage for the shared helpers; wired JSON output errors through `BacktestError` for consistent reporting.
+
+**Verification:** `cargo fmt`, `cargo fmt --check`, `cargo clippy -- -D warnings`, `cargo test`.
+
+---
+
 ## Priority 3: Production Quality Improvements (MEDIUM)
 
 These items significantly improve quality but are not explicit spec violations.

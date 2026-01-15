@@ -28,3 +28,4 @@ Run these after implementing to get immediate feedback:
 - CLI `mantis run` supports `--asset-class` (equity/future/crypto/forex/option) plus parameters
   like `--multiplier`, `--tick-size`, `--margin-requirement`, etc., to configure symbol metadata.
 - Execution realism can be tuned via `--execution-price`, `--fill-probability`, and `--limit-order-ttl` flags on `mantis run`.
+- Walk-forward optimization is available via `mantis walk-forward -d data.csv --folds 5 --strategy sma-crossover` with optional `--anchored` windows and `--metric profit-factor`.

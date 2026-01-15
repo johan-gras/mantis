@@ -14,6 +14,9 @@ use mantis::strategies::{
 };
 use mantis::strategy::Strategy;
 use mantis::types::{AssetClass, AssetConfig, ExecutionPrice};
+use mantis::walkforward::{
+    WalkForwardAnalyzer, WalkForwardConfig, WalkForwardMetric, WalkForwardResult,
+};
 
 use clap::{Parser, Subcommand, ValueEnum};
 use std::fs;
@@ -144,6 +147,77 @@ pub enum Commands {
         /// Underlying symbol for options (defaults to same as symbol)
         #[arg(long)]
         underlying: Option<String>,
+    },
+
+    /// Run walk-forward optimization with rolling windows
+    WalkForward {
+        /// Path to data file (CSV or Parquet)
+        #[arg(short, long)]
+        data: PathBuf,
+
+        /// Symbol name
+        #[arg(short, long, default_value = "SYMBOL")]
+        symbol: String,
+
+        /// Strategy to evaluate
+        #[arg(short = 'S', long, value_enum, default_value = "sma-crossover")]
+        strategy: StrategyType,
+
+        /// Initial capital
+        #[arg(short, long, default_value = "100000")]
+        capital: f64,
+
+        /// Position size as fraction of equity (0.0-1.0)
+        #[arg(short, long, default_value = "1.0")]
+        position_size: f64,
+
+        /// Commission percentage (e.g., 0.1 for 0.1%)
+        #[arg(long, default_value = "0.1")]
+        commission: f64,
+
+        /// Slippage percentage (e.g., 0.05 for 0.05%)
+        #[arg(long, default_value = "0.05")]
+        slippage: f64,
+
+        /// Execution price model for market orders
+        #[arg(long, value_enum, default_value = "open")]
+        execution_price: ExecutionPriceArg,
+
+        /// Probability that an order fully fills on each attempt (0.0 - 1.0)
+        #[arg(long, default_value = "1.0")]
+        fill_probability: f64,
+
+        /// Lifetime of pending limit orders in bars (0 = good-till-cancelled)
+        #[arg(long, default_value = "5")]
+        limit_order_ttl: usize,
+
+        /// Allow short selling
+        #[arg(long)]
+        allow_short: bool,
+
+        /// Number of walk-forward windows/folds
+        #[arg(long = "folds", default_value = "5")]
+        folds: usize,
+
+        /// Ratio of data allocated to in-sample optimization (0-1)
+        #[arg(long, default_value = "0.7")]
+        in_sample_ratio: f64,
+
+        /// Use anchored windows instead of rolling
+        #[arg(long)]
+        anchored: bool,
+
+        /// Minimum bars per window
+        #[arg(long, default_value = "50")]
+        min_bars: usize,
+
+        /// Walk-forward optimization metric
+        #[arg(long, value_enum, default_value = "sharpe")]
+        metric: WalkForwardMetricArg,
+
+        /// Data file format (auto-detects from extension if not specified)
+        #[arg(short, long, value_enum, default_value = "auto")]
+        format: DataFormatArg,
     },
 
     /// Optimize strategy parameters
@@ -302,6 +376,16 @@ pub enum OptimizeMetric {
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, ValueEnum)]
+pub enum WalkForwardMetricArg {
+    Sharpe,
+    Sortino,
+    Return,
+    Calmar,
+    #[value(name = "profit-factor")]
+    ProfitFactor,
+}
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq, ValueEnum)]
 pub enum FeatureConfigType {
     Minimal,
     Default,
@@ -364,6 +448,38 @@ impl ResampleIntervalArg {
             ResampleIntervalArg::OneMonth => ResampleInterval::Month,
         }
     }
+}
+
+#[derive(Clone, Debug)]
+enum StrategyParam {
+    Sma {
+        fast: usize,
+        slow: usize,
+    },
+    Momentum {
+        lookback: usize,
+        threshold: f64,
+    },
+    MeanReversion {
+        period: usize,
+        num_std: f64,
+        entry_std: f64,
+        exit_std: f64,
+    },
+    Rsi {
+        period: usize,
+        oversold: f64,
+        overbought: f64,
+    },
+    Breakout {
+        entry_period: usize,
+        exit_period: usize,
+    },
+    Macd {
+        fast: usize,
+        slow: usize,
+        signal: usize,
+    },
 }
 
 /// Load data based on format argument.
@@ -457,6 +573,45 @@ pub fn run() -> Result<()> {
             *pip_size,
             *lot_size,
             underlying.clone(),
+            cli.output,
+        ),
+
+        Commands::WalkForward {
+            data,
+            symbol,
+            strategy,
+            capital,
+            position_size,
+            commission,
+            slippage,
+            execution_price,
+            fill_probability,
+            limit_order_ttl,
+            allow_short,
+            folds,
+            in_sample_ratio,
+            anchored,
+            min_bars,
+            metric,
+            format,
+        } => run_walk_forward(
+            data,
+            symbol,
+            *strategy,
+            *capital,
+            *position_size,
+            *commission,
+            *slippage,
+            *execution_price,
+            *fill_probability,
+            *limit_order_ttl,
+            *allow_short,
+            *folds,
+            *in_sample_ratio,
+            *anchored,
+            *min_bars,
+            *metric,
+            *format,
             cli.output,
         ),
 
@@ -607,6 +762,180 @@ fn run_backtest(
 }
 
 #[allow(clippy::too_many_arguments)]
+fn run_walk_forward(
+    data_path: &PathBuf,
+    symbol: &str,
+    strategy_type: StrategyType,
+    capital: f64,
+    position_size: f64,
+    commission: f64,
+    slippage: f64,
+    execution_price: ExecutionPriceArg,
+    fill_probability: f64,
+    limit_order_ttl: usize,
+    allow_short: bool,
+    folds: usize,
+    in_sample_ratio: f64,
+    anchored: bool,
+    min_bars: usize,
+    metric: WalkForwardMetricArg,
+    format: DataFormatArg,
+    output: OutputFormat,
+) -> Result<()> {
+    if folds == 0 {
+        return Err(mantis::BacktestError::ConfigError(
+            "Number of folds must be greater than zero".to_string(),
+        ));
+    }
+
+    if !(0.0 < in_sample_ratio && in_sample_ratio < 1.0) {
+        return Err(mantis::BacktestError::ConfigError(
+            "In-sample ratio must be between 0 and 1".to_string(),
+        ));
+    }
+
+    info!("Loading data from: {}", data_path.display());
+    let bars = load_data_with_format(data_path, &DataConfig::default(), format)?;
+
+    let fill_probability = fill_probability.clamp(0.0, 1.0);
+    let limit_order_ttl_bars = if limit_order_ttl == 0 {
+        None
+    } else {
+        Some(limit_order_ttl)
+    };
+
+    let cost_model = CostModel {
+        commission_pct: commission / 100.0,
+        slippage_pct: slippage / 100.0,
+        ..Default::default()
+    };
+
+    let walk_forward_config = WalkForwardConfig {
+        num_windows: folds,
+        in_sample_ratio,
+        anchored,
+        min_bars_per_window: min_bars,
+    };
+
+    let backtest_config = BacktestConfig {
+        initial_capital: capital,
+        cost_model,
+        position_size,
+        allow_short,
+        show_progress: false,
+        execution_price: execution_price.into(),
+        fill_probability,
+        limit_order_ttl_bars,
+        ..Default::default()
+    };
+
+    let analyzer = WalkForwardAnalyzer::new(walk_forward_config, backtest_config);
+
+    let Some(params) = default_param_grid(strategy_type) else {
+        println!("Walk-forward analysis not implemented for this strategy");
+        return Ok(());
+    };
+
+    if params.is_empty() {
+        println!("No parameter combinations available for walk-forward analysis");
+        return Ok(());
+    }
+
+    let result = analyzer.run(
+        &bars,
+        symbol,
+        params,
+        |param| strategy_from_param(param),
+        metric.into(),
+    )?;
+
+    match output {
+        OutputFormat::Text => print_walk_forward_text(&result),
+        OutputFormat::Json => {
+            let json = serde_json::to_string_pretty(&result)?;
+            println!("{}", json);
+        }
+        OutputFormat::Csv => print_walk_forward_csv(&result),
+    }
+
+    Ok(())
+}
+
+fn print_walk_forward_text(result: &WalkForwardResult) {
+    println!("\nWalk-Forward Analysis\n=====================\n");
+    for window in &result.windows {
+        println!(
+            "Window {} (IS {}-{} / OOS {}-{}):",
+            window.window.index + 1,
+            window.window.is_start.format("%Y-%m-%d"),
+            window.window.is_end.format("%Y-%m-%d"),
+            window.window.oos_start.format("%Y-%m-%d"),
+            window.window.oos_end.format("%Y-%m-%d")
+        );
+        println!(
+            "  In-Sample   : {:>8.2}% return | Sharpe {:>5.2}",
+            window.in_sample_result.total_return_pct, window.in_sample_result.sharpe_ratio
+        );
+        println!(
+            "  Out-of-Sample: {:>8.2}% return | Sharpe {:>5.2}",
+            window.out_of_sample_result.total_return_pct, window.out_of_sample_result.sharpe_ratio
+        );
+        println!(
+            "  Efficiency  : {:>8.2}%\n",
+            window.efficiency_ratio * 100.0
+        );
+    }
+
+    println!("Summary:\n--------");
+    println!("  Windows            : {}", result.windows.len());
+    println!("  Avg IS Return      : {:.2}%", result.avg_is_return);
+    println!("  Avg OOS Return     : {:.2}%", result.avg_oos_return);
+    println!(
+        "  Avg Efficiency     : {:.2}%",
+        result.avg_efficiency_ratio * 100.0
+    );
+    println!("  Combined OOS Return: {:.2}%", result.combined_oos_return);
+    println!(
+        "  WF Efficiency      : {:.2}%",
+        result.walk_forward_efficiency * 100.0
+    );
+
+    if result.is_robust(0.5) {
+        println!("\nResult: PASSED (walk-forward efficiency >= 50%)");
+    } else {
+        println!("\nResult: FAILED (walk-forward efficiency < 50%)");
+    }
+}
+
+fn print_walk_forward_csv(result: &WalkForwardResult) {
+    println!(
+        "window,is_start,is_end,oos_start,oos_end,is_return_pct,oos_return_pct,is_sharpe,oos_sharpe,efficiency_pct"
+    );
+    for window in &result.windows {
+        println!(
+            "{},{},{},{},{},{:.4},{:.4},{:.4},{:.4},{:.4}",
+            window.window.index + 1,
+            window.window.is_start.format("%Y-%m-%d"),
+            window.window.is_end.format("%Y-%m-%d"),
+            window.window.oos_start.format("%Y-%m-%d"),
+            window.window.oos_end.format("%Y-%m-%d"),
+            window.in_sample_result.total_return_pct,
+            window.out_of_sample_result.total_return_pct,
+            window.in_sample_result.sharpe_ratio,
+            window.out_of_sample_result.sharpe_ratio,
+            window.efficiency_ratio * 100.0
+        );
+    }
+
+    println!(
+        "summary,,,,,{:.4},{:.4},,,{:.4}",
+        result.avg_is_return,
+        result.avg_oos_return,
+        result.walk_forward_efficiency * 100.0
+    );
+}
+
+#[allow(clippy::too_many_arguments)]
 fn build_asset_config(
     symbol: &str,
     asset_class: AssetClassArg,
@@ -650,6 +979,132 @@ fn build_asset_config(
     }
 }
 
+fn default_param_grid(strategy: StrategyType) -> Option<Vec<StrategyParam>> {
+    match strategy {
+        StrategyType::SmaCrossover => {
+            let mut params = Vec::new();
+            for fast in (5..=20).step_by(5) {
+                for slow in (20..=60).step_by(10) {
+                    if fast < slow {
+                        params.push(StrategyParam::Sma { fast, slow });
+                    }
+                }
+            }
+            Some(params)
+        }
+        StrategyType::Momentum => {
+            let mut params = Vec::new();
+            for lookback in (5..=30).step_by(5) {
+                params.push(StrategyParam::Momentum {
+                    lookback,
+                    threshold: 0.0,
+                });
+            }
+            Some(params)
+        }
+        StrategyType::MeanReversion => {
+            let mut params = Vec::new();
+            let periods = [10, 15, 20, 30];
+            let entry_thresholds = [1.5, 2.0, 2.5];
+            let exit_thresholds = [0.5, 1.0];
+            for &period in &periods {
+                for &entry_std in &entry_thresholds {
+                    for &exit_std in &exit_thresholds {
+                        if entry_std > exit_std {
+                            params.push(StrategyParam::MeanReversion {
+                                period,
+                                num_std: entry_std,
+                                entry_std,
+                                exit_std,
+                            });
+                        }
+                    }
+                }
+            }
+            Some(params)
+        }
+        StrategyType::Rsi => {
+            let mut params = Vec::new();
+            let periods = [7, 14, 21];
+            let oversold_levels = [25.0, 30.0, 35.0];
+            let overbought_levels = [65.0, 70.0, 75.0];
+            for &period in &periods {
+                for &oversold in &oversold_levels {
+                    for &overbought in &overbought_levels {
+                        if oversold < overbought {
+                            params.push(StrategyParam::Rsi {
+                                period,
+                                oversold,
+                                overbought,
+                            });
+                        }
+                    }
+                }
+            }
+            Some(params)
+        }
+        StrategyType::Breakout => {
+            let mut params = Vec::new();
+            let entry_periods = [20, 30, 40, 50];
+            let exit_periods = [10, 15, 20];
+            for &entry_period in &entry_periods {
+                for &exit_period in &exit_periods {
+                    if exit_period < entry_period {
+                        params.push(StrategyParam::Breakout {
+                            entry_period,
+                            exit_period,
+                        });
+                    }
+                }
+            }
+            Some(params)
+        }
+        StrategyType::Macd => {
+            let mut params = Vec::new();
+            for fast in (8..=16).step_by(4) {
+                for slow in (20..=30).step_by(5) {
+                    if fast < slow {
+                        params.push(StrategyParam::Macd {
+                            fast,
+                            slow,
+                            signal: 9,
+                        });
+                    }
+                }
+            }
+            Some(params)
+        }
+    }
+}
+
+fn strategy_from_param(param: &StrategyParam) -> Box<dyn Strategy> {
+    match param {
+        StrategyParam::Sma { fast, slow } => Box::new(SmaCrossover::new(*fast, *slow)),
+        StrategyParam::Momentum {
+            lookback,
+            threshold,
+        } => Box::new(MomentumStrategy::new(*lookback, *threshold)),
+        StrategyParam::MeanReversion {
+            period,
+            num_std,
+            entry_std,
+            exit_std,
+        } => Box::new(MeanReversion::new(*period, *num_std, *entry_std, *exit_std)),
+        StrategyParam::Rsi {
+            period,
+            oversold,
+            overbought,
+        } => Box::new(RsiStrategy::new(*period, *oversold, *overbought)),
+        StrategyParam::Breakout {
+            entry_period,
+            exit_period,
+        } => Box::new(BreakoutStrategy::new(*entry_period, *exit_period)),
+        StrategyParam::Macd { fast, slow, signal } => {
+            Box::new(MacdStrategy::new(*fast, *slow, *signal))
+        }
+    }
+}
+
 impl From<ExecutionPriceArg> for ExecutionPrice {
     fn from(arg: ExecutionPriceArg) -> Self {
         match arg {
@@ -659,6 +1114,18 @@ impl From<ExecutionPriceArg> for ExecutionPrice {
             ExecutionPriceArg::Twap => ExecutionPrice::Twap,
             ExecutionPriceArg::RandomInRange => ExecutionPrice::RandomInRange,
             ExecutionPriceArg::Midpoint => ExecutionPrice::Midpoint,
+        }
+    }
+}
+
+impl From<WalkForwardMetricArg> for WalkForwardMetric {
+    fn from(arg: WalkForwardMetricArg) -> Self {
+        match arg {
+            WalkForwardMetricArg::Sharpe => WalkForwardMetric::Sharpe,
+            WalkForwardMetricArg::Sortino => WalkForwardMetric::Sortino,
+            WalkForwardMetricArg::Return => WalkForwardMetric::Return,
+            WalkForwardMetricArg::Calmar => WalkForwardMetric::Calmar,
+            WalkForwardMetricArg::ProfitFactor => WalkForwardMetric::ProfitFactor,
         }
     }
 }
@@ -685,70 +1152,22 @@ fn run_optimization(
 
     info!("Running parameter optimization...");
 
-    // Extract just BacktestResults, discarding the parameter info
-    let mut results: Vec<mantis::BacktestResult> = match strategy_type {
-        StrategyType::SmaCrossover => {
-            // Generate parameter combinations
-            let mut params = Vec::new();
-            for fast in (5..=20).step_by(5) {
-                for slow in (20..=60).step_by(10) {
-                    if fast < slow {
-                        params.push((fast, slow));
-                    }
-                }
-            }
-
-            engine
-                .optimize(symbol, params, |&(fast, slow)| {
-                    Box::new(SmaCrossover::new(fast, slow))
-                })?
-                .into_iter()
-                .map(|(_, r)| r)
-                .collect()
-        }
-        StrategyType::Momentum => {
-            let params: Vec<usize> = (5..=30).step_by(5).collect();
-            engine
-                .optimize(symbol, params, |&lookback| {
-                    Box::new(MomentumStrategy::new(lookback, 0.0))
-                })?
-                .into_iter()
-                .map(|(_, r)| r)
-                .collect()
-        }
-        StrategyType::Rsi => {
-            let params: Vec<usize> = (7..=21).step_by(7).collect();
-            engine
-                .optimize(symbol, params, |&period| {
-                    Box::new(RsiStrategy::new(period, 30.0, 70.0))
-                })?
-                .into_iter()
-                .map(|(_, r)| r)
-                .collect()
-        }
-        StrategyType::Macd => {
-            // Optimize MACD with different fast/slow period combinations
-            let mut params = Vec::new();
-            for fast in (8..=16).step_by(4) {
-                for slow in (20..=30).step_by(5) {
-                    if fast < slow {
-                        params.push((fast, slow, 9usize));
-                    }
-                }
-            }
-            engine
-                .optimize(symbol, params, |&(fast, slow, signal)| {
-                    Box::new(MacdStrategy::new(fast, slow, signal))
-                })?
-                .into_iter()
-                .map(|(_, r)| r)
-                .collect()
-        }
-        _ => {
-            println!("Optimization not implemented for this strategy");
-            return Ok(());
-        }
+    let Some(params) = default_param_grid(strategy_type) else {
+        println!("Optimization not implemented for this strategy");
+        return Ok(());
     };
+
+    // Extract just BacktestResults, discarding the parameter info
+    let mut results: Vec<mantis::BacktestResult> = engine
+        .optimize(symbol, params, |param| strategy_from_param(param))?
+        .into_iter()
+        .map(|(_, r)| r)
+        .collect();
+
+    if results.is_empty() {
+        println!("No optimization results produced for the selected strategy");
+        return Ok(());
+    }
 
     // Sort by metric
     results.sort_by(|a, b| {
@@ -1203,5 +1622,33 @@ mod tests {
     fn test_strategies_command() {
         let cli = Cli::try_parse_from(["mantis", "strategies"]);
         assert!(cli.is_ok());
+    }
+
+    #[test]
+    fn test_walk_forward_parse() {
+        let cli = Cli::try_parse_from([
+            "mantis",
+            "walk-forward",
+            "-d",
+            "test.csv",
+            "-s",
+            "TEST",
+            "--folds",
+            "3",
+        ]);
+        assert!(cli.is_ok());
+    }
+
+    #[test]
+    fn test_default_param_grid_for_sma() {
+        let params = default_param_grid(StrategyType::SmaCrossover);
+        assert!(params.is_some());
+        assert!(!params.unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_walk_forward_metric_arg_conversion() {
+        let metric: WalkForwardMetric = WalkForwardMetricArg::ProfitFactor.into();
+        assert!(matches!(metric, WalkForwardMetric::ProfitFactor));
     }
 }
