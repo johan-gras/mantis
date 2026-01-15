@@ -1,437 +1,895 @@
 # Mantis Implementation Plan
 
+> **Last Verified**: 2026-01-15 via code analysis
+>
+> Items marked `[NOT STARTED]` were previously claimed as partial but verified to have no implementation.
+
 ## Current Status Summary
 
 | Metric | Status |
 |--------|--------|
-| **Tests** | 238 passing (203 unit + 2 CLI + 28 integration + 5 doc-tests) |
+| **Tests** | 254+ passing |
 | **Clippy** | 0 errors (PASSING) |
 | **Cargo fmt** | PASSING |
+| **Architecture** | Production-quality modular design |
+| **Core Engine** | engine.rs: 942 lines, production-ready |
+| **Feature Engineering** | features.rs: 865 lines, 40+ indicators |
 
 ---
 
-## Priority 1: Acceptance Criteria Violations - COMPLETE
+## Implementation Roadmap
 
-### 1.1 Fix Clippy Errors - COMPLETE
-
-All 26 clippy errors have been fixed. Verification: `cargo clippy -- -D warnings` passes.
-
-### 1.2 Fix Code Formatting - COMPLETE
-
-Code has been formatted. Verification: `cargo fmt --check` passes.
+Items are organized by category and prioritized within each category. Priority reflects:
+- **CRITICAL**: Required for production use / core functionality gaps
+- **HIGH**: Important for professional-grade system / ML workflow support
+- **MEDIUM**: Significant value-add / advanced features
+- **LOW**: Nice-to-have / edge case handling
 
 ---
 
-## Priority 2: Missing Spec Features (HIGH)
+## 1. Core Engine Capabilities
 
-These features are explicitly required in the spec but not implemented.
+### [COMPLETE] Event-Driven Backtesting Architecture
+- Strict temporal ordering of events (data -> signals -> orders -> fills)
+- Bar-by-bar processing with strategy context
+- Support for market, limit, stop, stop-limit orders
 
-### 2.1 Benchmark Comparison for Analytics - COMPLETE
+### [COMPLETE] Parallel Optimization
+- Rayon-based parallelization for parameter sweeps
+- Grid search optimization across parameter combinations
 
-**Spec requirement:** "Benchmark comparison" (backtest-engine.md line 28)
+### [COMPLETE] Walk-Forward Optimization
+- Rolling training/testing windows with configurable folds
+- In-sample/out-of-sample ratio configuration
+- Anchored window support
+- CLI command: `walk-forward --folds N`
 
-**Location:** `src/analytics.rs`
+### [COMPLETE] Monte Carlo Simulation
+- Randomized entry timing simulation
+- Confidence interval generation
+- Multiple path generation
 
-**Implementation Summary:**
-- `BenchmarkMetrics` struct with all required fields:
-  - `alpha: f64` - Jensen's alpha (annualized, as percentage)
-  - `beta: f64` - Portfolio beta to benchmark
-  - `tracking_error: f64` - Standard deviation of excess returns (annualized, as percentage)
-  - `information_ratio: f64` - Risk-adjusted excess return (annualized)
-  - `correlation: f64` - Correlation coefficient with benchmark
-  - `up_capture: f64` - Upside capture ratio (percentage)
-  - `down_capture: f64` - Downside capture ratio (percentage)
-  - `benchmark_return_pct: f64` - Benchmark total return
-  - `excess_return_pct: f64` - Portfolio excess return over benchmark
-- `BenchmarkMetrics::calculate()` method to compute all metrics from aligned return series
-- `BenchmarkMetrics::extract_daily_returns()` to extract actual returns from equity curves
-- `BenchmarkMetrics::extract_returns_from_prices()` to extract returns from price series
-- `ResultFormatter::print_benchmark_comparison()` for terminal output
-- `ResultFormatter::print_report_with_benchmark()` for full report with optional benchmark
-- Tests: `test_benchmark_metrics_calculation`, `test_benchmark_metrics_perfect_correlation`,
-  `test_benchmark_metrics_empty_returns`, `test_benchmark_metrics_mismatched_lengths`,
-  `test_extract_daily_returns`, `test_extract_returns_from_prices`,
-  `test_capture_ratios_all_up_market`, `test_benchmark_serialization`
-- Re-exported in `lib.rs` for public API access
+### [NOT STARTED] [HIGH] Live Trading Mode
+- **Status**: Verified incomplete - no broker integration exists
+- **IMPLEMENTED**: None (backtest-only execution logic)
+- **MISSING**:
+  - WebSocket/REST live data feed integration
+  - Broker API connectors (Alpaca, Interactive Brokers, etc.)
+  - Real-time order routing and execution
+  - Position synchronization with broker
+  - Live-backtest parity validation harness
 
-### 2.2 Parquet Data Loading - COMPLETE
+### [NOT STARTED] [HIGH] Multi-Leg Order Support
+- **Status**: Verified incomplete - only noted as needed, not implemented
+- **IMPLEMENTED**: None (single-leg orders only, no multi-leg infrastructure)
+- **MISSING**:
+  - Atomic multi-leg execution (all legs fill or none)
+  - Spread pricing for multi-leg orders
+  - Pairs trading order support
+  - Iron condor / butterfly / spread builders
+  - Rollback semantics on partial multi-leg fills
 
-**Spec requirement:** "Support for multiple data formats (CSV, Parquet)" (backtest-engine.md line 18)
+### [MISSING] [MEDIUM] Memory-Mapped File Support
+- Memory-mapped file support for large datasets
+- Required for 100GB+ datasets without loading into RAM
+- Lazy loading for streaming scenarios
 
-**Location:** `src/data.rs`
+### [MISSING] [MEDIUM] Struct-of-Arrays (SoA) Layout
+- Cache-efficient data layout for performance
+- Currently using Array-of-Structs pattern
+- Target: Sub-millisecond bar processing for intraday strategies
 
-**Implementation Summary:**
-- `load_parquet()` function in `src/data.rs` that loads OHLCV data from Parquet files
-- Support for multiple column naming conventions (timestamp/date/time, open/Open/o, etc.)
-- Support for multiple timestamp formats (Arrow Timestamp types, Unix timestamps, ISO strings)
-- `load_data()` auto-detect function that chooses format based on file extension
-- DataManager methods: `load_parquet()`, `load_parquet_with_config()`, updated `load()` to auto-detect
-- CLI support via `--format` option (auto/csv/parquet) on the Run command
-- Comprehensive tests: `test_load_parquet`, `test_load_parquet_matches_csv`, `test_load_data_auto_detect`, `test_data_format_detection`, `test_data_manager_parquet`, `test_data_manager_auto_detect`
+### [MISSING] [MEDIUM] Plugin System for Custom Strategies
+- Dynamic strategy loading without recompilation
+- Hooks for pre/post trade execution
+- Custom indicator registration API
 
-### 2.3 Time-Series Alignment and Resampling - COMPLETE
-
-**Spec requirement:** "Time-series alignment and resampling" (backtest-engine.md line 19)
-
-**Location:** `src/data.rs`
-
-**Implementation Summary:**
-- `ResampleInterval` enum with Minute(u32), Hour(u32), Day, Week, Month variants
-- `resample()` function for OHLCV aggregation with standard rules (first open, max high, min low, last close, sum volume)
-- `AlignMode` enum: Inner (common timestamps only), OuterForwardFill, OuterNone
-- `AlignedBars` struct for aligned multi-symbol data at a single timestamp
-- `align_series()` function for aligning multiple symbol series to common timestamps
-- `unalign_series()` helper to extract individual symbol data from aligned result
-- CLI support via `mantis resample -i input.csv -o output.csv -I 1h` command
-- Supported intervals: 1m, 5m, 15m, 30m, 1h, 4h, 1d, 1w, 1M
-- Tests: `test_resample_minute_to_5min`, `test_resample_minute_to_hour`, `test_resample_daily_to_weekly`, `test_resample_empty`, `test_resample_interval_to_seconds`, `test_align_series_inner`, `test_align_series_outer_none`, `test_align_series_outer_forward_fill`, `test_unalign_series`, `test_align_series_empty`, `test_aligned_bars_is_complete`
-
-### 2.4 Missing Data Handling - COMPLETE
-
-**Spec requirement:** "Missing data handling" (backtest-engine.md line 20)
-
-**Location:** `src/data.rs`
-
-**Implementation Summary:**
-- `DataGap` struct with start, end timestamps and expected_bars count
-- `FillMethod` enum: ForwardFill, BackwardFill, Linear, Zero
-- `DataQualityReport` struct with total_bars, gaps, gap_percentage, duplicate_timestamps, invalid_bars
-- `detect_gaps()` function to find gaps in time series based on expected interval
-- `fill_gaps()` function to fill gaps using specified method
-- `data_quality_report()` function for comprehensive data quality analysis
-- CLI support via `mantis quality -d data.csv -I 86400` command (interval in seconds)
-- Tests: `test_detect_gaps`, `test_detect_gaps_no_gaps`, `test_fill_gaps_forward_fill`, `test_fill_gaps_backward_fill`, `test_fill_gaps_linear`, `test_data_quality_report`, `test_data_quality_report_clean_data`
-
-### 2.5 Corporate Actions Support - COMPLETE
-
-**Spec requirement:** "Corporate actions support (splits, dividends)" (backtest-engine.md line 21)
-
-**Location:** `src/data.rs`, `src/types.rs`
-
-**Implementation Summary:**
-- `DividendType` enum with Cash, Stock, Special variants
-- `CorporateActionType` enum with Split, ReverseSplit, Dividend, SpinOff variants
-- `CorporateAction` struct with symbol, action_type, ex_date, record_date, pay_date fields
-- `DividendAdjustMethod` enum with Proportional, Absolute, None methods
-- Builder methods: `CorporateAction::split()`, `reverse_split()`, `cash_dividend()`, `dividend()`, `spin_off()`
-- Fluent setters: `with_record_date()`, `with_pay_date()`
-- Helper methods: `adjustment_factor()`, `requires_price_adjustment()`, `is_dividend()`, `dividend_amount()`
-- `adjust_for_splits()` - adjusts prices for stock splits (divides pre-split prices by ratio, multiplies volume)
-- `adjust_for_dividends()` - adjusts prices for dividends (proportional or absolute methods)
-- `apply_adjustment_factor()` - applies custom adjustment factors to bars
-- `load_corporate_actions()` - loads corporate actions from CSV files with flexible column naming
-- `filter_actions_for_symbol()` - filters actions for a specific symbol
-- `cumulative_adjustment_factor()` - calculates cumulative adjustment factor for a timestamp
-- Re-exported in `lib.rs` for public API access
-- Tests: `test_corporate_action_split`, `test_corporate_action_reverse_split`, `test_corporate_action_dividend`,
-  `test_corporate_action_special_dividend`, `test_corporate_action_spinoff`, `test_corporate_action_serialization`,
-  `test_dividend_type_default`, `test_adjust_for_splits`, `test_adjust_for_reverse_split`,
-  `test_adjust_for_dividends_proportional`, `test_adjust_for_dividends_absolute`, `test_adjust_for_dividends_none`,
-  `test_apply_adjustment_factor`, `test_cumulative_adjustment_factor`, `test_filter_actions_for_symbol`,
-  `test_load_corporate_actions`, `test_adjust_for_splits_empty`, `test_multiple_splits`
-
-### 2.6 Multi-Asset Class Support - COMPLETE
-
-**Spec requirement:** "Support for multiple asset classes (equities, futures, crypto)" (backtest-engine.md line 10)
-
-**Location:** `src/multi_asset.rs`, `src/portfolio.rs`, `src/types.rs`
-
-**Implementation Summary:**
-- Added `AssetClass` enum and `AssetConfig` metadata in `types.rs` with variants for equities, futures, crypto, forex, and options.
-- `DataManager` now tracks per-symbol asset configs; `Engine`/`MultiAssetEngine` pass configs into `Portfolio`.
-- Extended `CostModel` with futures/crypto/forex fee profiles and logic for maker/taker fees, spread adjustments, swap rates, and margin interest.
-- Reworked `Portfolio::execute_order` to normalize quantities/prices, manage futures margin reserves/P&L, apply crypto withdrawal fees, and honor forex spreads.
-- Added CLI flags (`--asset-class`, `--multiplier`, etc.) to configure symbol metadata and propagate through `build_asset_config` into the engine.
-- Added regression tests for futures margin handling and crypto withdrawal fees; integration tests updated for new `CostModel` fields.
+### [MISSING] [LOW] Event Replay System
+- Full event log capture for debugging
+- Replay exact backtest sequence from logs
+- Audit trail for regulatory compliance
 
 ---
 
-### 2.7 Walk-Forward CLI Command - COMPLETE
+## 2. Data Handling & Quality
 
-**Spec requirement:** `specs/cli-interface.md` requires `walk-forward --folds N` to run walk-forward optimization from the CLI.
+### [COMPLETE] CSV Data Loading
+- Flexible column detection
+- Multiple date format support
+- Configurable timestamp parsing
 
-**Implementation Summary:**
-- Added a fully documented `walk-forward` subcommand (data path, strategy, folds, in-sample ratio, anchored windows, metric, execution realism knobs, output format) and `WalkForwardMetricArg` value enum.
-- Introduced a reusable `StrategyParam` enum plus `default_param_grid`/`strategy_from_param` helpers so both optimization and walk-forward reuse the same parameter grids (now covering SMA, Momentum, Mean Reversion, RSI, Breakout, MACD).
-- Implemented `run_walk_forward` that loads data via the requested format, configures `WalkForwardAnalyzer` + `BacktestConfig`, and prints text/JSON/CSV summaries (per-window stats + aggregate efficiency) using new helper functions.
-- Added CLI unit tests for the new subcommand plus coverage for the shared helpers; wired JSON output errors through `BacktestError` for consistent reporting.
+### [COMPLETE] Parquet Data Loading
+- Native Arrow format support
+- Auto-detection based on file extension
+- Multiple timestamp format handling
 
-**Verification:** `cargo fmt`, `cargo fmt --check`, `cargo clippy -- -D warnings`, `cargo test`.
+### [COMPLETE] Time-Series Resampling
+- Minute to hourly/daily/weekly/monthly
+- Standard OHLCV aggregation rules
+- CLI support via `mantis resample`
 
----
+### [COMPLETE] Multi-Symbol Alignment
+- Inner join (common timestamps only)
+- Outer join with forward fill
+- Configurable alignment modes
 
-## Priority 3: Production Quality Improvements (MEDIUM)
+### [COMPLETE] Missing Data Handling
+- Gap detection with configurable intervals
+- Fill methods: forward-fill, backward-fill, linear, zero
+- Data quality reports
 
-These items significantly improve quality but are not explicit spec violations.
+### [COMPLETE] Corporate Actions Support
+- Stock splits and reverse splits
+- Cash and stock dividends
+- Spin-offs
+- Adjustment factor calculation
 
-### 3.1 Fix Daily Returns Calculation in Analytics - COMPLETE
+### [NOT STARTED] [HIGH] Alternative Data Integration
+- **Status**: Verified incomplete - design doc exists but no implementation
+- **IMPLEMENTED**: None (only standard OHLCV price/volume data)
+- **MISSING**:
+  - News and sentiment data loaders
+  - Satellite imagery data integration
+  - Web scraping data pipelines
+  - Credit card transaction data
+  - Weather data (temperature, HDD/CDD)
+  - Supply chain data
+  - ESG scores
+  - Order flow / Level 2 data
+  - Options flow data
 
-**Location:** `src/analytics.rs` lines 427-466
+### [PARTIAL ~20%] [HIGH] Point-in-Time (PIT) Enforcement
+- **IMPLEMENTED**: Basic temporal ordering in backtest
+- **MISSING**:
+  - Compile-time PIT guarantees via type system
+  - Separate event_time vs publication_time tracking
+  - PIT fundamentals support (as-of date queries)
+  - Financial statement restatement tracking
+  - Lookahead bias detection at compile time
 
-**Implementation Summary:**
-- Replaced synthetic uniform returns with actual daily returns from equity curve
-- `calculate_daily_returns()` now:
-  - Groups equity points by day (year, month, day) to handle intraday data
-  - Takes the last equity value for each day using BTreeMap
-  - Calculates actual returns between consecutive days
-  - Falls back to synthetic returns only if equity curve is unavailable or too small
-- Volatility calculations now produce meaningful results from actual equity changes
-- Tests added:
-  - `test_calculate_daily_returns_from_equity_curve` - verifies actual returns calculation
-  - `test_calculate_daily_returns_meaningful_volatility` - verifies volatility is non-zero with varying returns
-  - `test_calculate_daily_returns_empty_equity_curve_fallback` - verifies fallback behavior
-  - `test_calculate_daily_returns_intraday_aggregation` - verifies intraday data handling
+### [MISSING] [HIGH] Data Versioning and Reproducibility
+- Data file checksums (SHA256) computation and storage
+- Data lineage tracking
+- Multiple versions of historical data support
+- DVC integration for dataset versioning
+- Data restatement tracking with timestamps
 
-### 3.2 Fix Drawdown Analysis Approximations - COMPLETE
+### [MISSING] [MEDIUM] Multi-Vendor Reconciliation
+- Handle data from multiple providers (Polygon, IEX, Yahoo, Bloomberg)
+- Discrepancy detection between vendors
+- Configurable reconciliation rules (vendor precedence)
+- Data source provenance tracking
 
-**Location:** `src/analytics.rs` lines 230-385
+### [MISSING] [MEDIUM] Live Streaming Data Support
+- WebSocket data feed integration
+- REST polling fallback
+- Target: <10ms latency for live data
 
-**Implementation Summary:**
-- Added `DrawdownPeriod` struct tracking: start, trough, end, depth_pct, duration_days
-- Added `DrawdownAnalysis` struct with comprehensive drawdown statistics:
-  - max_drawdown_pct - actual maximum drawdown from equity curve
-  - max_drawdown_duration_days - longest drawdown period
-  - avg_drawdown_pct - average of all drawdown depths
-  - ulcer_index - proper sqrt(mean(drawdown_pct^2)) calculation
-  - periods - all individual drawdown periods
-  - time_underwater_pct - percentage of time in drawdown
-- `DrawdownAnalysis::from_equity_curve()` method processes equity curve to:
-  - Track peaks and detect when equity drops below peak
-  - Identify complete drawdown periods (start to recovery)
-  - Track ongoing drawdowns that haven't recovered
-  - Calculate proper Ulcer Index from all drawdown points
-- Updated `PerformanceMetrics::drawdown_analysis()` and `ulcer_index()` to use actual data
-- Falls back to approximations only when equity curve unavailable
-- Exported `DrawdownAnalysis` and `DrawdownPeriod` in lib.rs for public API
-- Tests added:
-  - `test_drawdown_analysis_single_drawdown` - ongoing drawdown tracking
-  - `test_drawdown_analysis_multiple_drawdowns` - multiple recovered periods
-  - `test_drawdown_analysis_ulcer_index` - proper Ulcer Index calculation
-  - `test_drawdown_analysis_no_drawdown` - steadily increasing equity
-  - `test_drawdown_analysis_empty_curve` - edge case handling
-  - `test_drawdown_analysis_serialization` - JSON round-trip
+### [MISSING] [MEDIUM] Database Backends
+- PostgreSQL / TimescaleDB support
+- Cloud storage (S3, GCS)
+- Incremental data loading
 
-### 3.3 Add Market Impact Modeling - COMPLETE
-
-**Location:** `src/portfolio.rs`, `src/types.rs`, `src/engine.rs`
-
-**Summary:** Introduced `MarketImpactModel` on the `CostModel` (Linear, SquareRoot, Almgren-Chriss) with serde defaults, wired a new `VolumeProfile` into `DataManager`, `Portfolio`, and `StrategyContext`, and updated order execution to adjust prices by model-driven impact using per-symbol average volumes. Added dedicated tests (`test_market_impact_buy_adjusts_execution_price`, `test_market_impact_sell_direction`, and `types::tests::test_volume_profile_from_bars`) to validate price adjustments and statistical calculations. CLI/config glue now propagates the additional cost-model field for backwards-compatible configuration.
-
-**Verification:** `cargo fmt`, `cargo clippy -- -D warnings`, `cargo test`.
-
-### 3.4 Improve Order Execution Realism - COMPLETE
-
-**Summary:**
-- Added `ExecutionPrice` enum with CLI/config wiring plus deterministic `RandomInRange` support.
-- Introduced `FillResult` and `Portfolio::execute_with_fill_probability` to simulate partial fills while keeping fill metadata for strategies.
-- Added limit-order aging via `PendingOrder` management inside the engine, including TTL configuration and retry handling.
-- Added CLI flags (`--execution-price`, `--fill-probability`, `--limit-order-ttl`) and config fields to control the new behavior.
-- Updated multi-asset engine to honor the new execution settings.
-- Added regression tests for execution price selection, fill-probability edge cases, partial fill detection, and pending order queuing.
-
-**Verification:** `cargo test`, `cargo fmt`, `cargo clippy -- -D warnings`
-
-### 3.5 Add MultiAssetExporter Test Coverage - COMPLETE
-
-**Location:** `src/export.rs` tests module
-
-**Implementation Summary:**
-- Added `create_test_multi_asset_result()` helper that builds a realistic `MultiAssetResult` with weight history, equity curve, and per-symbol trade stats for reuse in tests.
-- Added regression tests `test_multi_asset_export_weights_csv`, `test_multi_asset_export_equity_csv`, and `test_multi_asset_export_report_md` to verify column headers, numeric formatting, and markdown tables for the multi-asset exporter API.
-- Ensured helper data covers multiple symbols so each export path exercises symbol iteration and `trades_by_symbol` logic.
-
-**Verification:** `cargo fmt`, `cargo fmt --check`, `cargo test`, `cargo clippy -- -D warnings`
-
-### 3.6 Add Streaming Indicator Serialization - COMPLETE
-
-**Location:** `src/streaming.rs`
-
-**Implementation Summary:**
-- Added `Serialize`/`Deserialize` derives to `StreamingBollinger`, `StreamingATR`, and `StreamingStdDev`, bringing serde support to every streaming indicator struct.
-- Introduced reusable serde helpers inside the tests plus tight float comparison to ensure we catch state mismatches.
-- Added serialization round-trip tests for SMA, EMA, RSI, MACD, Bollinger Bands, ATR (via OHLC updates), and StdDev to prove their internal buffers survive serde conversions.
-- Verification: `cargo fmt`, `cargo clippy -- -D warnings`, `cargo test streaming::tests`
+### [MISSING] [LOW] Nanosecond Timestamp Precision
+- Currently millisecond precision
+- Required for tick data and HFT strategies
 
 ---
 
-## Priority 4: Enhancements (LOW)
+## 3. Position Management & Execution
 
-Nice-to-have improvements that would enhance the engine beyond spec requirements.
+### [COMPLETE] Order Types
+- Market orders (execution at bar open/close + slippage)
+- Limit orders (fill when price crosses limit within bar)
+- Stop orders (trigger market when stop hit)
+- Stop-limit orders (trigger limit when stop hit)
 
-### 4.1 Lot-Level Position Tracking - COMPLETE
+### [COMPLETE] Position Tracking
+- Open/closed positions with P&L
+- Multi-symbol portfolio with per-asset tracking
+- Short positions with correct P&L sign
 
-**Location:** `src/portfolio.rs`, `src/types.rs`, `src/cli.rs`, `src/config.rs`
+### [COMPLETE] Cost Modeling
+- Fixed commission per trade
+- Percentage commission
+- Slippage modeling (percentage-based)
+- Market impact models (Linear, Square-Root, Almgren-Chriss)
+- Asset-class specific fees (futures clearing, crypto maker/taker, forex spreads)
 
-**Implementation Summary (2026-01-15):**
-- Added `TaxLot` storage plus `LotSelectionMethod` core types with serde/UUID support and per-order overrides through `Order::with_lot_selection`.
-- CLI/config/backtest settings expose a shared `lot_selection` knob (fifo/lifo/highest-cost/lowest-cost) so users can pick defaults without code changes; specific-lot targeting is still available per order.
-- `Portfolio` execution now mutates tax lots for spot/futures orders (including partial fills and fill-prob paths) and honors `SpecificLot` targeting with safe fallbacks.
-- Added helper getters (`Portfolio::tax_lots`, `lot_selection_method`) and regression tests (`test_tax_lot_fifo_consumption`, `test_tax_lot_specific_selection`, `test_tax_lot_lifo_policy`) covering FIFO/LIFO/specific behaviors.
+### [COMPLETE] Position Sizing
+- Fixed quantity
+- Fixed dollar amount
+- Risk-based sizing (% of equity at risk)
+- Kelly Criterion support
 
-### 4.2 Add Risk-Free Rate to Monte Carlo
+### [COMPLETE] Tax Lot Tracking
+- FIFO, LIFO, highest-cost, lowest-cost methods
+- Specific lot selection
+- Per-order lot selection override
 
-**Location:** `src/monte_carlo.rs` line 428
+### [COMPLETE] Execution Price Models
+- Open, Close, VWAP, TWAP, Midpoint, RandomInRange
+- Configurable via CLI and config
 
-**Current state:** Sharpe calculation assumes risk-free rate = 0%
+### [COMPLETE] Partial Fill Support
+- Probabilistic fill model
+- Remaining quantity tracking
+- Pending order queue with TTL
 
-**Enhancement:**
-```rust
-pub struct MonteCarloConfig {
-    // ... existing fields
-    pub risk_free_rate: f64,  // Add this, default 0.0
-}
-```
+### [PARTIAL ~50%] [HIGH] Queue Position Simulation
+- **IMPLEMENTED**: Basic limit order fill logic
+- **MISSING**:
+  - Order book depth modeling
+  - Time-priority queue position
+  - Volume participation rate limits
+  - Fill probability based on order book state
 
-### 4.3 Improve HMM Implementation
+### [MISSING] [HIGH] Margin Requirements
+- Reg T margin calculation
+- Portfolio margin support
+- Margin call triggering
+- Leverage limit enforcement
 
-**Location:** `src/regime.rs` lines 670+
+### [MISSING] [MEDIUM] Volume Participation Limits
+- Limit trade size to % of bar volume (e.g., 10%)
+- Prevent unrealistic large order fills
+- Dynamic sizing based on liquidity
 
-**Current state:** Named "HMM" but uses percentile-based state assignment, not actual Hidden Markov Model with transition probabilities.
+### [MISSING] [MEDIUM] Latency Simulation
+- Strategy latency (signal to order)
+- Network latency (order to exchange)
+- Exchange processing latency
+- Total latency configurable per order type
 
-**Enhancement options:**
-1. Implement actual HMM with Baum-Welch algorithm
-2. Rename to `PercentileRegimeDetector` to avoid confusion
-3. Add proper transition probability matrix to regime detection
-
-### 4.4 Add RegimeLabel Confidence Scores
-
-**Location:** `src/regime.rs`
-
-**Current state:** `RegimeLabel.confidence` field is always `None`
-
-**Enhancement:**
-```rust
-impl RegimeDetector {
-    fn calculate_confidence(&self, indicators: &RegimeIndicators) -> f64 {
-        // Calculate based on indicator agreement, distance from thresholds, etc.
-    }
-}
-```
-
-### 4.5 Add Large-Scale Performance Benchmarks
-
-**Location:** `benches/backtest_bench.rs`
-
-**Current state:** Tests use small datasets (up to 2000 bars)
-
-**Spec requirement:** "Handle 10+ years of minute-level data efficiently"
-
-**Enhancement:**
-```rust
-fn bench_large_scale(c: &mut Criterion) {
-    let bars = generate_minute_bars(10 * 252 * 390);  // 10 years of minute data
-    // Benchmark backtest execution time
-}
-```
-
-Target: < 10 seconds for 979,200 bars (10 years * 252 days * 390 minutes)
-
-### 4.6 Add Walk-Forward ML Integration Example
-
-**Location:** `examples/`
-
-**Current state:** No example combining walk-forward with ML strategies
-
-**Enhancement:** Create `examples/walkforward_ml.rs`:
-```rust
-// Demonstrate:
-// 1. Training window feature extraction
-// 2. External model training (simulated)
-// 3. Walk-forward validation with rolling windows
-// 4. Performance comparison across windows
-```
-
-### 4.7 Optimization Support for All Strategies
-
-**Location:** `src/cli.rs` lines 417-420
-
-**Current state:** Breakout and MeanReversion show "Optimization not implemented"
-
-**Enhancement:** Add parameter ranges for these strategies:
-```rust
-fn get_breakout_param_ranges() -> Vec<ParamRange> {
-    vec![
-        ParamRange::new("lookback", 10, 100, 10),
-        ParamRange::new("num_std", 1.0, 3.0, 0.5),
-    ]
-}
-
-fn get_mean_reversion_param_ranges() -> Vec<ParamRange> {
-    vec![
-        ParamRange::new("period", 10, 50, 5),
-        ParamRange::new("entry_std", 1.5, 3.0, 0.5),
-        ParamRange::new("exit_std", 0.0, 1.0, 0.25),
-    ]
-}
-```
+### [MISSING] [LOW] Dividend Payment Processing
+- Credit cash balance on ex-dividend date
+- Handle dividend reinvestment (DRIP)
 
 ---
 
-## Implementation Order Recommendation
+## 4. ML/Deep Learning Integration
 
-### Phase 1: Fix Acceptance Criteria - COMPLETE
-All clippy errors fixed and code formatted. Verification passes.
+### [COMPLETE] Feature Engineering Pipeline
+- 40+ technical indicators (SMA, RSI, MACD, Bollinger, ATR, etc.)
+- Feature configuration profiles (minimal, default, comprehensive)
+- Automatic lag feature generation
+- Rolling window features
+- Feature normalization (rolling z-score)
 
-### Phase 2: Core Data Features - COMPLETE
-1. ~~Implement Parquet loading (2.2)~~ - COMPLETE
-2. ~~Implement time-series alignment/resampling (2.3)~~ - COMPLETE
-3. ~~Implement missing data handling (2.4)~~ - COMPLETE
+### [COMPLETE] Data Export for Training
+- Export to NumPy .npy format
+- Export to Parquet for pandas/polars
+- Export to CSV
+- Train/validation/test split with temporal ordering
 
-### Phase 3: Analytics and Benchmarks - COMPLETE
-1. ~~Add benchmark comparison (2.1)~~ - COMPLETE
-2. ~~Fix daily returns calculation (3.1)~~ - COMPLETE
-3. ~~Fix drawdown analysis (3.2)~~ - COMPLETE
+### [COMPLETE] External Signal Strategy
+- Load predictions from external models
+- Signal-to-order conversion
+- Integration point for PyTorch/TensorFlow models
 
-### Phase 4: Asset Classes and Corporate Actions
-1. ~~Add corporate actions support (2.5)~~ - COMPLETE
-2. ~~Add asset class differentiation (2.6)~~ - COMPLETE
+### [PARTIAL ~60%] [HIGH] ONNX Model Inference
+- **Status**: PARTIAL (~60%) - Infrastructure complete, awaiting ort crate stabilization
+- **IMPLEMENTED**:
+  - Complete ONNX inference module architecture in src/onnx.rs
+  - ModelConfig with normalization, versioning, fallback support
+  - InferenceStats tracking (latency, success rate)
+  - Batch inference API design
+  - GPU/CUDA support architecture
+  - Sub-millisecond latency target design
+- **MISSING**:
+  - Active ort crate dependency (v2.0 API in flux, v1.x yanked from crates.io)
+  - Integration testing with actual ONNX models
+  - ONNXModelStrategy for live inference during backtest
+  - Example demonstrating end-to-end ONNX workflow
+- **BLOCKERS**: ort crate version instability - v1.15-1.16 yanked, v2.0.0-rc.11 has breaking API changes
+- **NEXT STEPS**: Monitor ort crate for stable 2.0 release, update API calls, add integration tests
 
-### Phase 5: Polish
-1. Order execution improvements (3.4)
-2. Test coverage (3.5)
-3. Streaming indicator serialization (3.6)
-4. Enhancement items as time permits
+### [MISSING] [HIGH] Cross-Sectional Features
+- Rank features across universe
+- Z-score across universe
+- Relative strength features
+
+### [MISSING] [HIGH] Combinatorial Purged Cross-Validation (CPCV)
+- Non-overlapping, temporally ordered folds
+- Embargo period between train/test
+- Remove overlapping bars between splits
+
+### [MISSING] [MEDIUM] Feature Store Integration
+- Read features from Feast/Tecton/custom stores
+- Point-in-time feature retrieval
+- Feature freshness validation
+- Feature drift detection
+
+### [MISSING] [MEDIUM] RL Environment (Gym-Compatible)
+- Observation space: features + portfolio state
+- Action space: continuous (position size) or discrete (buy/sell/hold)
+- Reward shaping options (Sharpe, return, risk-adjusted)
+- Episode management for rolling windows
+
+### [MISSING] [MEDIUM] Synthetic Data Augmentation
+- Bootstrap resampling
+- Block bootstrapping (preserve autocorrelation)
+- Scenario generation for stress tests
+
+### [MISSING] [LOW] Temporal Features
+- Day of week encoding
+- Time of day features
+- Days to earnings/events
 
 ---
 
-## Completed Features (Reference)
+## 5. Multi-Timeframe Support
 
-The following spec requirements are fully implemented and verified:
+### [COMPLETE] Timeframe Resampling
+- Standard timeframes: 1m, 5m, 15m, 30m, 1h, 4h, 1d, 1w, 1M
+- OHLCV aggregation (open=first, high=max, low=min, close=last, volume=sum)
 
-- [x] Event-driven backtesting architecture
-- [x] Accurate position and portfolio management
-- [x] Transaction cost modeling (commissions, slippage)
-- [x] Support for fractional shares and various lot sizes
-- [x] CSV data loading with flexible date parsing
-- [x] Parquet data loading with auto-detection
-- [x] Sharpe ratio, Sortino ratio, max drawdown, Calmar ratio
-- [x] Equity curve generation and storage
-- [x] Trade-level statistics
-- [x] Risk-adjusted returns
-- [x] Export in ML-ready formats (Parquet, NPY, CSV, JSON)
-- [x] Feature engineering pipeline (`src/features.rs`)
-- [x] Walk-forward validation support (`src/walkforward.rs`)
-- [x] Signal generation from model predictions (`ExternalSignalStrategy`)
-- [x] Intuitive CLI (`src/cli.rs`)
-- [x] Configuration via files and arguments
-- [x] Progress reporting (indicatif progress bars)
-- [x] Output in multiple formats
-- [x] Comprehensive test coverage (238 tests)
-- [x] Stop-loss, take-profit, trailing stops (`src/risk.rs`)
-- [x] Position sizing (risk-based, volatility-based, Kelly)
-- [x] Monte Carlo simulation (`src/monte_carlo.rs`)
-- [x] Multi-symbol portfolio backtesting (`src/multi_asset.rs`)
-- [x] Market regime detection (`src/regime.rs`)
-- [x] Streaming/incremental indicators (`src/streaming.rs`)
-- [x] Example strategies (7 types + ML variants)
-- [x] Realistic order execution simulation (market, limit, stop, stop-limit orders)
-- [x] Time-series resampling (minute to hourly/daily/weekly/monthly)
-- [x] Multi-symbol time-series alignment (inner join, outer join with forward fill)
-- [x] Missing data handling (gap detection, fill methods, data quality reports)
-- [x] Benchmark comparison metrics (alpha, beta, tracking error, information ratio, correlation, capture ratios)
-- [x] Actual daily returns from equity curve (meaningful volatility calculations)
-- [x] Proper drawdown analysis from equity curve (DrawdownPeriod, DrawdownAnalysis, Ulcer Index)
-- [x] Corporate actions support (splits, dividends, reverse splits, spin-offs)
+### [PARTIAL ~20%] [HIGH] Multi-Timeframe Strategy Interface
+- **Status**: Verified - only resampling works, no strategy interface
+- **IMPLEMENTED**: Time-series resampling (minute to monthly)
+- **MISSING**:
+  - Strategy access to multiple timeframes simultaneously
+  - Automatic temporal alignment across timeframes
+  - Lazy evaluation (only compute requested timeframes)
+  - Historical lookback at each timeframe
+  - Cross-timeframe indicator calculation
+
+### [MISSING] [MEDIUM] Custom Timeframe Support
+- Non-standard intervals (7m, 33m, etc.)
+- User-defined aggregation rules
+
+### [MISSING] [MEDIUM] Partial Bar Handling
+- Incomplete bar detection during live trading
+- Configurable partial bar behavior
+
+### [MISSING] [LOW] Timezone-Aware Alignment
+- DST transition handling
+- Market-specific timezone support
+- 24/7 market support (crypto)
+
+---
+
+## 6. Multi-Asset Portfolio
+
+### [COMPLETE] Multi-Symbol Backtesting
+- Portfolio strategy trait
+- Allocation signals (target weights, rebalance)
+- Per-symbol position tracking
+
+### [COMPLETE] Asset Class Support
+- Equities, futures, crypto, forex, options
+- Asset-specific cost models
+- Notional multiplier handling
+
+### [COMPLETE] Correlation Analysis
+- Rolling correlation between symbols
+- Correlation matrix estimation
+
+### [PARTIAL ~40%] [HIGH] Portfolio Construction Methods
+- **Status**: Verified - only equal-weight and momentum implemented
+- **IMPLEMENTED**: Equal-weight allocation, momentum-based allocation
+- **MISSING**:
+  - Risk parity (inverse volatility weighting)
+  - Mean-variance optimization (Markowitz)
+  - Hierarchical Risk Parity (HRP)
+  - Black-Litterman model
+  - Target volatility portfolios
+  - Max diversification portfolios
+
+### [MISSING] [HIGH] Portfolio Constraints
+- Maximum position size per symbol
+- Maximum sector exposure
+- Maximum leverage
+- Minimum number of holdings
+- Turnover constraints
+
+### [MISSING] [HIGH] Rebalancing Rules
+- Periodic rebalancing (daily, weekly, monthly)
+- Threshold rebalancing (drift-based)
+- Transaction cost-aware rebalancing
+
+### [MISSING] [MEDIUM] Dynamic Universe Management
+- Symbols added/removed over time
+- Universe filters (market cap, volume, sector)
+- Survivorship bias correction (delisting tracking)
+
+### [MISSING] [MEDIUM] Cross-Currency Support
+- Currency conversion for cross-currency portfolios
+- FX exposure tracking
+
+### [MISSING] [LOW] Sector/Industry Attribution
+- GICS sector classification
+- Sector-level risk attribution
+
+---
+
+## 7. Options & Derivatives
+
+### [PARTIAL ~10%] [HIGH] Options Contract Representation
+- **IMPLEMENTED**: Basic option-type asset class
+- **MISSING**:
+  - Full contract attributes (strike, expiration, exercise style)
+  - Options chain representation
+  - Moneyness filtering (ITM, ATM, OTM)
+  - DTE-based filtering
+
+### [MISSING] [HIGH] Options Pricing Models
+- Black-Scholes model (European options)
+- Binomial tree model (American options)
+- Put-call parity validation
+- Auto-detect exercise style, select appropriate model
+
+### [MISSING] [HIGH] Greeks Calculation
+- Delta, Gamma, Theta, Vega, Rho
+- Analytic Greeks from Black-Scholes
+- Numerical Greeks from binomial trees
+- Portfolio Greeks aggregation
+
+### [MISSING] [HIGH] Implied Volatility
+- IV solver (Newton-Raphson, Brent's method)
+- Volatility surface representation
+- Surface interpolation for missing strikes
+
+### [MISSING] [MEDIUM] Options Expiration Handling
+- Automatic expiration at market close
+- ITM automatic exercise
+- Cash settlement vs physical delivery
+- Assignment risk modeling
+
+### [MISSING] [MEDIUM] Options Strategies
+- Vertical spreads (bull call, bear put)
+- Straddles, strangles
+- Iron condors, butterflies
+- Strategy builders with max profit/loss calculation
+
+### [MISSING] [MEDIUM] Early Exercise (American Options)
+- Optimal exercise boundary
+- Dividend-aware exercise logic
+
+### [MISSING] [LOW] Volatility Surface Modeling
+- SVI, SABR parametric models
+- Historical IV surface storage
+- Arbitrage detection
+
+---
+
+## 8. Risk Management & Validation
+
+### [COMPLETE] Stop-Loss & Take-Profit
+- Percentage-based stop-loss
+- Fixed take-profit targets
+- Trailing stops
+
+### [COMPLETE] Monte Carlo Simulation
+- Return distribution analysis
+- Confidence interval generation
+
+### [PARTIAL ~40%] [HIGH] Overfitting Detection
+- **IMPLEMENTED**: Walk-forward validation
+- **MISSING**:
+  - Deflated Sharpe Ratio (Lopez de Prado)
+  - Probabilistic Sharpe Ratio
+  - Out-of-sample performance threshold checks
+  - Parameter stability testing (small changes -> small performance changes)
+
+### [MISSING] [HIGH] Lookahead Bias Prevention
+- Compile-time PIT data type guarantees
+- Automatic future-peeking detection
+- Audit logs of data available at each decision point
+
+### [MISSING] [HIGH] Transaction Cost Sensitivity
+- Test with 2x, 5x, 10x higher costs
+- Breakeven cost analysis
+
+### [MISSING] [MEDIUM] Cross-Validation
+- K-fold validation with temporal ordering
+- Embargo period between train/test
+- CPCV implementation
+
+### [MISSING] [MEDIUM] Robustness Tests
+- Parameter sensitivity analysis
+- Regime testing (bull/bear/sideways performance)
+- Data quality stress tests (missing data, outliers)
+
+### [MISSING] [MEDIUM] Bias Detection
+- Survivorship bias check
+- Selection bias check
+- Data snooping check
+- Reporting bias check
+
+### [MISSING] [LOW] Smoke Tests
+- Multi-symbol generalization testing
+- Multi-period temporal stability
+- Synthetic data verification
+- Zero-cost upper bound test
+
+---
+
+## 9. Performance Analytics
+
+### [COMPLETE] Core Metrics
+- Total return, annualized return (CAGR)
+- Sharpe ratio, Sortino ratio, Calmar ratio
+- Maximum drawdown (% and duration)
+- Win rate, profit factor, average win/loss
+
+### [COMPLETE] Benchmark Comparison
+- Alpha (Jensen's alpha, annualized)
+- Beta (portfolio sensitivity to benchmark)
+- Tracking error
+- Information ratio
+- Correlation with benchmark
+- Upside/downside capture ratios
+
+### [COMPLETE] Drawdown Analysis
+- Drawdown periods with start/trough/end dates
+- Drawdown depth and duration
+- Ulcer Index (proper calculation from equity curve)
+- Time underwater percentage
+
+### [PARTIAL ~40%] [HIGH] Advanced Risk Metrics
+- **IMPLEMENTED**: Basic VaR approximation
+- **MISSING**:
+  - Historical VaR at 95%, 99% confidence
+  - Conditional VaR (CVaR / Expected Shortfall)
+  - Tail ratio (95th percentile gain/loss)
+  - Omega ratio
+  - Kurtosis and skewness
+
+### [MISSING] [HIGH] Factor Attribution
+- Fama-French 5-factor model regression
+- Factor loadings (betas)
+- Alpha after factor adjustment
+- R-squared for factor explanatory power
+- Momentum factor (Carhart 4-factor)
+
+### [MISSING] [MEDIUM] Brinson Attribution
+- Allocation effect (sector over/underweighting)
+- Selection effect (stock picking within sectors)
+- Interaction effect
+
+### [MISSING] [MEDIUM] Transaction Cost Analysis (TCA)
+- Pre-trade cost estimation
+- Post-trade cost measurement
+- Implementation shortfall
+- VWAP/TWAP benchmark comparison
+
+### [MISSING] [MEDIUM] Risk-Based Attribution
+- Contribution to total risk (CTR)
+- Marginal contribution to risk (MCR)
+- Component VaR
+- Factor risk attribution
+
+### [MISSING] [LOW] Statistical Tests
+- Normality tests (Shapiro-Wilk, Jarque-Bera)
+- Autocorrelation of returns (Durbin-Watson)
+- Stationarity tests (ADF, KPSS)
+
+---
+
+## 10. Production Operations
+
+### [MISSING] [CRITICAL] Real-Time Monitoring Infrastructure
+- Order execution latency tracking (target <10ms)
+- Fill rate and slippage monitoring
+- System health metrics (CPU, memory, network)
+- Structured logging (JSON lines format)
+- Performance dashboards (Grafana-compatible)
+
+### [MISSING] [CRITICAL] Risk Limits and Circuit Breakers
+- Pre-trade risk checks (order size limits, price bands)
+- Daily loss limits with automatic trading halt
+- Position-level and portfolio-level breakers
+- Kill switch for emergency stop (<100ms response)
+- Message throttle limits
+
+### [MISSING] [CRITICAL] Position Reconciliation
+- Trade reconciliation (match transactions)
+- Position reconciliation (verify balances vs broker)
+- Cash reconciliation
+- End-of-day mark-to-market
+- Discrepancy flagging and escalation
+
+### [MISSING] [HIGH] Error Handling and Recovery
+- Permanent vs transient error classification
+- Automatic retry with exponential backoff
+- Circuit breaker patterns
+- Graceful degradation on data feed failure
+- Failover to backup connectivity
+
+### [MISSING] [HIGH] State Checkpointing
+- Periodic state snapshots during long backtests
+- Resume after crash without reprocessing
+- Exactly-once processing semantics
+- Incremental snapshots (delta encoding)
+- Configurable checkpoint interval
+
+### [MISSING] [HIGH] Broker Integration
+- REST API support (Alpaca, IBKR)
+- WebSocket live data feeds
+- Authentication and credential management
+- Rate limit handling
+- Order status tracking and reconciliation
+
+### [MISSING] [MEDIUM] Audit Trails and Compliance
+- Every trade with microsecond timestamps
+- Algorithm parameter change logging
+- User action logging
+- Immutable records (append-only logs)
+- Cryptographic verification (hash chains)
+- Regulatory compliance (SEC, FINRA, MiFID II)
+
+### [MISSING] [MEDIUM] Deployment and Release Management
+- Blue-green deployment
+- Canary releases (gradual rollout)
+- Shadow mode (run without trading)
+- One-click rollback (<2 minutes)
+
+### [MISSING] [LOW] Configuration Management
+- Environment-specific configs (dev, staging, prod)
+- Secrets management (environment variables/vault)
+- Hot-reload for non-critical config changes
+- Configuration drift detection
+
+---
+
+## 11. Model Governance
+
+### [MISSING] [HIGH] Model Registry
+- Centralized model store with APIs
+- Model lineage (data version, code version, hyperparameters)
+- Stage management (experimental -> staging -> production -> archived)
+- Model aliases (@champion, @challenger)
+- One-click rollback to previous version
+
+### [MISSING] [HIGH] Concept Drift Detection
+- ADDM, DDM, ECDD statistical methods
+- Prediction error rate monitoring
+- Sharpe ratio / P&L degradation alerts
+- Response actions (flag for retraining, automatic rollback)
+
+### [MISSING] [HIGH] Feature Drift Monitoring
+- Distribution monitoring (PSI, KS test, Chi-square)
+- Per-feature drift scoring
+- Feature importance tracking over time
+- Alert on critical feature drift
+
+### [MISSING] [MEDIUM] A/B Testing Infrastructure
+- Shadow mode (run new model alongside old)
+- Champion-challenger comparison
+- Statistical significance testing (t-test, Mann-Whitney)
+- Minimum sample size calculation
+- Early stopping rules
+
+### [MISSING] [MEDIUM] Model Explainability
+- SHAP values for feature contribution
+- LIME local explanations
+- Feature importance rankings
+- Partial dependence plots
+
+### [MISSING] [LOW] Canary Deployments
+- Gradual traffic increase (1% -> 5% -> 20% -> 100%)
+- Automatic rollback on metrics degradation
+- Real-time metric comparison (canary vs control)
+
+---
+
+## 12. Research Workflow
+
+### [NOT STARTED] [HIGH] Python Bindings / Jupyter Integration
+- **Status**: Verified incomplete - no PyO3 in Cargo.toml dependencies
+- **IMPLEMENTED**: None
+- **MISSING**:
+  - PyO3 crate integration
+  - Pre-built Python bindings
+  - Jupyter kernel for interactive development
+  - Inline plotting and visualization
+  - Rich output formatting (DataFrames, equity curves)
+
+### [MISSING] [HIGH] Experiment Tracking
+- Automatic backtest logging with unique ID
+- Hyperparameter capture
+- Metrics logging
+- Code version tracking (git SHA)
+- MLflow integration
+- Weights & Biases integration
+
+### [MISSING] [MEDIUM] Strategy Debugging
+- Time-travel debugging (step through backtest)
+- Conditional breakpoints (pause on drawdown > 10%)
+- Event tracing and filtering
+- Web-based debugger UI
+
+### [MISSING] [MEDIUM] Performance Profiling
+- CPU profiling (hotspot identification)
+- Memory profiling
+- I/O profiling
+- Flame graph generation
+
+### [MISSING] [MEDIUM] Parameter Tuning UI
+- Interactive parameter sliders
+- Real-time backtest updates
+- Heatmaps for 2D parameter sweeps
+- Bayesian optimization, genetic algorithms, Hyperband
+
+### [MISSING] [LOW] Strategy Comparison Dashboard
+- Side-by-side metrics tables
+- Overlaid equity curves
+- Statistical significance tests
+- Multi-criteria ranking system
+
+### [MISSING] [LOW] Visualization and Reporting
+- Interactive Plotly-based charts
+- HTML/PDF report generation
+- Quantopian-style tearsheets
+- Custom plotting API
+
+---
+
+## 13. CLI & Configuration
+
+### [COMPLETE] Core Commands
+- `backtest` - Run single backtest
+- `optimize` - Parameter grid search
+- `walk-forward` - Walk-forward optimization
+- `resample` - Time-series resampling
+- `quality` - Data quality analysis
+
+### [COMPLETE] Configuration
+- TOML configuration file support
+- Command-line flag overrides
+- Sensible defaults
+
+### [COMPLETE] Progress and Output
+- Progress bars for long-running tasks
+- Multiple output formats (text, JSON, CSV)
+- Colorized terminal output
+
+### [PARTIAL ~60%] [MEDIUM] Additional Commands
+- **IMPLEMENTED**: Basic export functionality
+- **MISSING**:
+  - `monte-carlo` - Full Monte Carlo CLI
+  - `export` - Enhanced feature/result export
+  - `live` - Live trading mode
+  - `validate` - Data/strategy validation
+  - `analyze` - Performance report generation
+  - `compare` - Compare multiple backtest results
+
+### [MISSING] [MEDIUM] Shell Completion
+- Bash autocomplete
+- Zsh autocomplete
+- Fish autocomplete
+
+### [MISSING] [MEDIUM] Enhanced Error Messages
+- Actionable suggestions on errors
+- Similar file name suggestions on typos
+- Config line number on parse errors
+
+### [MISSING] [LOW] Dry-Run Mode
+- `--dry-run` to preview without executing
+- Show what would be executed
+
+### [MISSING] [LOW] Resume Interrupted Operations
+- `--resume` for interrupted optimizations
+- Checkpoint-based resume
+
+---
+
+## 14. Execution Realism
+
+### [COMPLETE] Transaction Costs
+- Fixed and percentage commissions
+- Slippage modeling
+- Market impact models (Linear, Square-Root, Almgren-Chriss)
+
+### [COMPLETE] Asset-Class Specific Costs
+- Futures clearing/exchange fees, margin interest
+- Crypto maker/taker fees, withdrawal fees
+- Forex spread and swap rates
+
+### [PARTIAL ~30%] [HIGH] Execution Algorithms
+- **IMPLEMENTED**: Basic execution price models
+- **MISSING**:
+  - TWAP (Time-Weighted Average Price) algorithm
+  - VWAP (Volume-Weighted Average Price) algorithm
+  - POV (Percentage of Volume) algorithm
+  - Implementation Shortfall algorithm
+  - Arrival Price algorithms
+  - Parent-child order architecture
+  - Adaptive execution
+
+### [MISSING] [MEDIUM] Bid-Ask Spread Modeling
+- Symbol-specific spreads
+- Volatility-dependent spreads
+- Time-of-day spread variation
+
+### [MISSING] [MEDIUM] Stress Testing
+- Flash crash simulation
+- Liquidity crisis scenarios
+- Fat finger error handling
+- Exchange outage behavior
+
+### [MISSING] [LOW] Crypto-Specific Mechanics
+- Funding rates for perpetual futures
+- Liquidation risk modeling
+- Exchange-specific fee structures
+
+---
+
+## 15. Reproducibility Requirements
+
+### [PARTIAL ~40%] [HIGH] Deterministic Backtesting
+- **IMPLEMENTED**: Basic seeded RNG for RandomInRange execution
+- **MISSING**:
+  - Documented RNG seed exposure
+  - Multiple seed ensemble support
+  - `--seed` CLI argument
+  - Logging of all random operations
+
+### [MISSING] [HIGH] Environment Versioning
+- Cargo.lock committed (lock file for reproducibility)
+- Rust toolchain pinned in `rust-toolchain.toml`
+- Dockerfile for consistent build environment
+- Build environment documentation
+
+### [PARTIAL ~30%] [HIGH] Experiment Metadata
+- **IMPLEMENTED**: Basic result serialization
+- **MISSING**:
+  - Unique experiment ID (UUID)
+  - Git commit SHA auto-detection
+  - Dirty working tree warning
+  - Configuration hash
+  - Data file checksum logging
+  - Hostname for distributed runs
+
+### [MISSING] [MEDIUM] Results Caching
+- Content-addressed caching for expensive operations
+- Cache key = hash(input_data + parameters + code_version)
+- Indicator calculation caching
+- Monte Carlo result caching
+- Cache invalidation on code changes
+
+---
+
+## Implementation Phases
+
+### Phase 1: Critical Production Gaps [CRITICAL]
+1. Real-time monitoring infrastructure
+2. Risk limits and circuit breakers
+3. Position reconciliation
+4. Kill switch functionality
+
+### Phase 2: ML/DL Workflow Support [HIGH]
+1. ONNX model inference integration
+2. Cross-sectional features
+3. CPCV implementation
+4. Jupyter/Python bindings
+5. Experiment tracking (MLflow integration)
+
+### Phase 3: Advanced Trading Features [HIGH]
+1. Live trading mode with broker integration
+2. Options pricing and Greeks
+3. Multi-timeframe strategy interface
+4. Portfolio optimization methods
+5. Execution algorithms (TWAP, VWAP, POV)
+
+### Phase 4: Robustness & Validation [MEDIUM]
+1. Deflated Sharpe Ratio
+2. Lookahead bias compile-time prevention
+3. Factor attribution analysis
+4. Comprehensive robustness test suite
+
+### Phase 5: Production Operations [MEDIUM]
+1. State checkpointing and recovery
+2. Audit trails and compliance
+3. Model governance (registry, drift detection)
+4. Deployment management (canary, shadow mode)
+
+### Phase 6: Research & Polish [LOW]
+1. Research workflow tools (debugging, profiling)
+2. Visualization and reporting
+3. Strategy comparison dashboard
+4. Performance optimization (SoA, mmap)
 
 ---
 
@@ -456,3 +914,72 @@ cargo build --release
 # Generate docs
 cargo doc --no-deps --open
 ```
+
+---
+
+## Summary Statistics
+
+| Category | Complete | Partial | Not Started | Missing | Total Items |
+|----------|----------|---------|-------------|---------|-------------|
+| Core Engine | 4 | 0 | 2 | 4 | 10 |
+| Data Handling | 6 | 1 | 1 | 6 | 14 |
+| Position Management | 8 | 1 | 0 | 4 | 13 |
+| ML Integration | 4 | 1 | 0 | 6 | 11 |
+| Multi-Timeframe | 1 | 1 | 0 | 3 | 5 |
+| Multi-Asset Portfolio | 3 | 1 | 0 | 5 | 9 |
+| Options & Derivatives | 0 | 1 | 0 | 8 | 9 |
+| Risk & Validation | 2 | 1 | 0 | 6 | 9 |
+| Performance Analytics | 3 | 1 | 0 | 5 | 9 |
+| Production Operations | 0 | 0 | 0 | 7 | 7 |
+| Model Governance | 0 | 0 | 0 | 6 | 6 |
+| Research Workflow | 0 | 0 | 1 | 6 | 7 |
+| CLI & Configuration | 3 | 1 | 0 | 4 | 8 |
+| Execution Realism | 2 | 1 | 0 | 3 | 6 |
+| Reproducibility | 0 | 2 | 0 | 2 | 4 |
+| **TOTAL** | **36** | **12** | **4** | **75** | **127** |
+
+**Estimated Completion: ~32%** (core backtesting solid; ONNX inference architecture complete but blocked by ort crate instability; live trading and Python bindings not started)
+
+---
+
+## Completed Features Reference
+
+The following spec requirements are fully implemented and verified:
+
+- [x] Event-driven backtesting architecture
+- [x] Accurate position and portfolio management
+- [x] Transaction cost modeling (commissions, slippage, market impact)
+- [x] Support for fractional shares and various lot sizes
+- [x] Tax lot tracking (FIFO, LIFO, highest-cost, lowest-cost, specific)
+- [x] CSV data loading with flexible date parsing
+- [x] Parquet data loading with auto-detection
+- [x] Sharpe ratio, Sortino ratio, max drawdown, Calmar ratio
+- [x] Equity curve generation and storage
+- [x] Trade-level statistics
+- [x] Risk-adjusted returns
+- [x] Export in ML-ready formats (Parquet, NPY, CSV, JSON)
+- [x] Feature engineering pipeline (40+ indicators)
+- [x] Walk-forward validation support
+- [x] Signal generation from model predictions (ExternalSignalStrategy)
+- [x] Intuitive CLI with multiple commands
+- [x] Configuration via files and arguments
+- [x] Progress reporting (indicatif progress bars)
+- [x] Output in multiple formats (text, JSON, CSV)
+- [x] Comprehensive test coverage (254+ tests)
+- [x] Stop-loss, take-profit, trailing stops
+- [x] Position sizing (risk-based, volatility-based, Kelly)
+- [x] Monte Carlo simulation
+- [x] Multi-symbol portfolio backtesting
+- [x] Multi-asset class support (equities, futures, crypto, forex)
+- [x] Market regime detection
+- [x] Streaming/incremental indicators
+- [x] Example strategies (7 types + ML variants)
+- [x] Realistic order execution (market, limit, stop, stop-limit)
+- [x] Partial fills with probabilistic model
+- [x] Time-series resampling (minute to monthly)
+- [x] Multi-symbol time-series alignment
+- [x] Missing data handling (gap detection, fill methods)
+- [x] Benchmark comparison metrics (alpha, beta, tracking error, IR, capture ratios)
+- [x] Actual daily returns from equity curve
+- [x] Proper drawdown analysis (DrawdownPeriod, DrawdownAnalysis, Ulcer Index)
+- [x] Corporate actions support (splits, dividends, spin-offs)

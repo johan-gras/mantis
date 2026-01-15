@@ -39,6 +39,11 @@ indicatif = "0.17"
 # Parallelism (for parameter optimization)
 rayon = "1.8"
 
+# ML/AI - ONNX Runtime for model inference
+# TODO: Re-enable when ort crate stabilizes (v2.0 in RC, v1.x yanked)
+# ort = "2.0.0-rc.11"
+# ndarray = "0.15"
+
 # Output formatting
 tabled = "0.15"
 colored = "2.1"
