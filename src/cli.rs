@@ -501,6 +501,59 @@ enum StrategyParam {
     },
 }
 
+impl std::hash::Hash for StrategyParam {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        match self {
+            StrategyParam::Sma { fast, slow } => {
+                std::mem::discriminant(self).hash(state);
+                fast.hash(state);
+                slow.hash(state);
+            }
+            StrategyParam::Momentum { lookback, threshold } => {
+                std::mem::discriminant(self).hash(state);
+                lookback.hash(state);
+                threshold.to_bits().hash(state);
+            }
+            StrategyParam::MeanReversion {
+                period,
+                num_std,
+                entry_std,
+                exit_std,
+            } => {
+                std::mem::discriminant(self).hash(state);
+                period.hash(state);
+                num_std.to_bits().hash(state);
+                entry_std.to_bits().hash(state);
+                exit_std.to_bits().hash(state);
+            }
+            StrategyParam::Rsi {
+                period,
+                oversold,
+                overbought,
+            } => {
+                std::mem::discriminant(self).hash(state);
+                period.hash(state);
+                oversold.to_bits().hash(state);
+                overbought.to_bits().hash(state);
+            }
+            StrategyParam::Breakout {
+                entry_period,
+                exit_period,
+            } => {
+                std::mem::discriminant(self).hash(state);
+                entry_period.hash(state);
+                exit_period.hash(state);
+            }
+            StrategyParam::Macd { fast, slow, signal } => {
+                std::mem::discriminant(self).hash(state);
+                fast.hash(state);
+                slow.hash(state);
+                signal.hash(state);
+            }
+        }
+    }
+}
+
 /// Load data based on format argument.
 fn load_data_with_format(
     path: &PathBuf,
@@ -926,11 +979,45 @@ fn print_walk_forward_text(result: &WalkForwardResult) {
         "  WF Efficiency      : {:.2}%",
         result.walk_forward_efficiency * 100.0
     );
+    println!("\nOverfitting Detection:");
+    println!("  Avg IS Sharpe      : {:.3}", result.avg_is_sharpe);
+    println!("  Avg OOS Sharpe     : {:.3}", result.avg_oos_sharpe);
+    println!(
+        "  OOS/IS Sharpe Ratio: {:.2}%",
+        result.oos_sharpe_ratio() * 100.0
+    );
+    println!(
+        "  OOS Sharpe Threshold: {} (>= 60% of IS required)",
+        if result.oos_sharpe_threshold_met {
+            "PASSED"
+        } else {
+            "FAILED"
+        }
+    );
+    println!(
+        "  Parameter Stability: {:.2}% (higher is more robust)",
+        result.parameter_stability * 100.0
+    );
 
-    if result.is_robust(0.5) {
-        println!("\nResult: PASSED (walk-forward efficiency >= 50%)");
+    let basic_robust = result.is_robust(0.5);
+    let sharpe_robust = result.is_robust_with_sharpe(0.5, 0.6);
+
+    println!("\nRobustness Assessment:");
+    println!(
+        "  Basic Test (WF Efficiency >= 50%): {}",
+        if basic_robust { "PASSED" } else { "FAILED" }
+    );
+    println!(
+        "  Sharpe Test (OOS >= 60% of IS):     {}",
+        if sharpe_robust { "PASSED" } else { "FAILED" }
+    );
+
+    if basic_robust && sharpe_robust {
+        println!("\nOverall Result: PASSED - Strategy shows robust out-of-sample performance");
+    } else if basic_robust {
+        println!("\nOverall Result: WARNING - Efficiency passed but Sharpe degraded significantly");
     } else {
-        println!("\nResult: FAILED (walk-forward efficiency < 50%)");
+        println!("\nOverall Result: FAILED - Strategy shows signs of overfitting");
     }
 }
 
@@ -1195,6 +1282,12 @@ fn run_optimization(
         return Ok(());
     };
 
+    let n_trials = params.len();
+    info!(
+        "Testing {} parameter combinations (n_trials for deflated Sharpe)",
+        n_trials
+    );
+
     // Extract just BacktestResults, discarding the parameter info
     let mut results: Vec<mantis::BacktestResult> = engine
         .optimize(symbol, params, |param| strategy_from_param(param))?
@@ -1225,10 +1318,28 @@ fn run_optimization(
     });
 
     println!("\nOptimization Results (sorted by {:?}):\n", metric);
+    println!(
+        "Note: {} parameter combinations tested. Deflated Sharpe ratio accounts for multiple testing.\n",
+        n_trials
+    );
 
     match output {
         OutputFormat::Text => {
             ResultFormatter::print_table(&results);
+
+            // Show deflated Sharpe for top result
+            if let Some(best) = results.first() {
+                use mantis::analytics::PerformanceMetrics;
+                let metrics = PerformanceMetrics::from_result_with_trials(best, n_trials);
+                println!(
+                    "\n--- Overfitting Detection Metrics (Best Result) ---\n\
+                     Sharpe Ratio: {:.3}\n\
+                     Deflated Sharpe Ratio: {:.3} (adjusted for {} trials)\n\
+                     Probabilistic Sharpe Ratio: {:.3}\n\
+                     Note: Deflated SR < 0 suggests performance may be due to luck/overfitting",
+                    best.sharpe_ratio, metrics.deflated_sharpe_ratio, n_trials, metrics.probabilistic_sharpe_ratio
+                );
+            }
         }
         OutputFormat::Json => {
             let json = serde_json::to_string_pretty(&results).unwrap();

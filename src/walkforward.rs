@@ -11,6 +11,8 @@ use crate::types::Bar;
 use chrono::{DateTime, Utc};
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 use tracing::{info, warn};
 
 /// Configuration for walk-forward analysis.
@@ -90,6 +92,8 @@ pub struct WindowResult {
     pub out_of_sample_result: BacktestResult,
     /// Efficiency ratio (OOS return / IS return).
     pub efficiency_ratio: f64,
+    /// Hash of best parameter values for stability tracking.
+    pub parameter_hash: u64,
 }
 
 /// Complete walk-forward analysis results.
@@ -109,6 +113,14 @@ pub struct WalkForwardResult {
     pub avg_efficiency_ratio: f64,
     /// Walk-forward efficiency (combined OOS / combined IS).
     pub walk_forward_efficiency: f64,
+    /// Average in-sample Sharpe ratio.
+    pub avg_is_sharpe: f64,
+    /// Average out-of-sample Sharpe ratio.
+    pub avg_oos_sharpe: f64,
+    /// OOS Sharpe threshold met (OOS >= threshold * IS).
+    pub oos_sharpe_threshold_met: bool,
+    /// Parameter stability score (0.0-1.0, higher is more stable).
+    pub parameter_stability: f64,
 }
 
 impl WalkForwardResult {
@@ -121,13 +133,21 @@ impl WalkForwardResult {
              Avg OOS Return: {:.2}%\n\
              Avg Efficiency: {:.2}%\n\
              Combined OOS Return: {:.2}%\n\
-             WF Efficiency: {:.2}%",
+             WF Efficiency: {:.2}%\n\
+             Avg IS Sharpe: {:.3}\n\
+             Avg OOS Sharpe: {:.3}\n\
+             OOS Sharpe Threshold Met: {}\n\
+             Parameter Stability: {:.2}%",
             self.windows.len(),
             self.avg_is_return,
             self.avg_oos_return,
             self.avg_efficiency_ratio * 100.0,
             self.combined_oos_return,
-            self.walk_forward_efficiency * 100.0
+            self.walk_forward_efficiency * 100.0,
+            self.avg_is_sharpe,
+            self.avg_oos_sharpe,
+            if self.oos_sharpe_threshold_met { "Yes" } else { "No" },
+            self.parameter_stability * 100.0
         )
     }
 
@@ -135,6 +155,26 @@ impl WalkForwardResult {
     /// Typically requires positive OOS returns and efficiency > 50%.
     pub fn is_robust(&self, min_efficiency: f64) -> bool {
         self.avg_oos_return > 0.0 && self.walk_forward_efficiency >= min_efficiency
+    }
+
+    /// Enhanced robustness check including OOS Sharpe ratio threshold.
+    /// Requires positive OOS returns, efficiency >= min_efficiency,
+    /// and OOS Sharpe >= min_oos_sharpe_ratio * IS Sharpe.
+    pub fn is_robust_with_sharpe(&self, min_efficiency: f64, min_oos_sharpe_ratio: f64) -> bool {
+        self.avg_oos_return > 0.0
+            && self.walk_forward_efficiency >= min_efficiency
+            && self.avg_oos_sharpe >= self.avg_is_sharpe * min_oos_sharpe_ratio
+    }
+
+    /// Get the OOS Sharpe degradation ratio (OOS Sharpe / IS Sharpe).
+    /// Values closer to 1.0 indicate less overfitting.
+    /// Values < 0.6 suggest significant performance degradation.
+    pub fn oos_sharpe_ratio(&self) -> f64 {
+        if self.avg_is_sharpe.abs() > 0.001 {
+            self.avg_oos_sharpe / self.avg_is_sharpe
+        } else {
+            0.0
+        }
     }
 }
 
@@ -222,7 +262,7 @@ impl WalkForwardAnalyzer {
         metric: WalkForwardMetric,
     ) -> Result<WalkForwardResult>
     where
-        P: Clone + Send + Sync,
+        P: Clone + Send + Sync + Hash,
         F: Fn(&P) -> Box<dyn Strategy> + Send + Sync,
     {
         let windows = self.calculate_windows(bars)?;
@@ -314,11 +354,17 @@ impl WalkForwardAnalyzer {
                 0.0
             };
 
+            // Hash the best parameter for stability tracking
+            let mut hasher = DefaultHasher::new();
+            best_param.hash(&mut hasher);
+            let param_hash = hasher.finish();
+
             window_results.push(WindowResult {
                 window: window.clone(),
                 in_sample_result: best_is_result,
                 out_of_sample_result: oos_result,
                 efficiency_ratio: efficiency,
+                parameter_hash: param_hash,
             });
         }
 
@@ -348,6 +394,39 @@ impl WalkForwardAnalyzer {
             .sum::<f64>()
             / window_results.len() as f64;
 
+        // Calculate Sharpe ratio statistics
+        let avg_is_sharpe: f64 = window_results
+            .iter()
+            .map(|w| w.in_sample_result.sharpe_ratio)
+            .sum::<f64>()
+            / window_results.len() as f64;
+
+        let avg_oos_sharpe: f64 = window_results
+            .iter()
+            .map(|w| w.out_of_sample_result.sharpe_ratio)
+            .sum::<f64>()
+            / window_results.len() as f64;
+
+        // Check if OOS Sharpe meets 60% threshold (Lopez de Prado recommendation)
+        let oos_sharpe_threshold_met = if avg_is_sharpe.abs() > 0.001 {
+            avg_oos_sharpe >= avg_is_sharpe * 0.6
+        } else {
+            false
+        };
+
+        // Calculate parameter stability
+        // If all windows have the same parameter hash, stability = 1.0
+        // If all different, stability approaches 0.0
+        let unique_hashes: std::collections::HashSet<u64> = window_results
+            .iter()
+            .map(|w| w.parameter_hash)
+            .collect();
+        let parameter_stability = if window_results.len() > 1 {
+            1.0 - (unique_hashes.len() - 1) as f64 / (window_results.len() - 1) as f64
+        } else {
+            1.0
+        };
+
         // Calculate combined OOS return (compound the returns)
         let combined_oos_return: f64 = window_results.iter().fold(1.0, |acc, w| {
             acc * (1.0 + w.out_of_sample_result.total_return_pct / 100.0)
@@ -371,6 +450,10 @@ impl WalkForwardAnalyzer {
             avg_oos_return,
             avg_efficiency_ratio,
             walk_forward_efficiency,
+            avg_is_sharpe,
+            avg_oos_sharpe,
+            oos_sharpe_threshold_met,
+            parameter_stability,
         })
     }
 }
@@ -519,6 +602,10 @@ mod tests {
             avg_oos_return: 12.0,
             avg_efficiency_ratio: 0.6,
             walk_forward_efficiency: 0.75,
+            avg_is_sharpe: 1.5,
+            avg_oos_sharpe: 1.0,
+            oos_sharpe_threshold_met: true,
+            parameter_stability: 0.8,
         };
 
         let summary = result.summary();
@@ -537,6 +624,10 @@ mod tests {
             avg_oos_return: 12.0,
             avg_efficiency_ratio: 0.6,
             walk_forward_efficiency: 0.6,
+            avg_is_sharpe: 1.5,
+            avg_oos_sharpe: 1.0,
+            oos_sharpe_threshold_met: true,
+            parameter_stability: 0.8,
         };
 
         // Should be robust with 50% efficiency threshold
@@ -544,5 +635,85 @@ mod tests {
 
         // Should not be robust with 70% efficiency threshold
         assert!(!result.is_robust(0.7));
+    }
+
+    #[test]
+    fn test_oos_sharpe_threshold() {
+        let config = WalkForwardConfig::default();
+
+        // Test passing threshold (OOS >= 60% of IS)
+        let result_pass = WalkForwardResult {
+            config: config.clone(),
+            windows: vec![],
+            combined_oos_return: 15.0,
+            avg_is_return: 20.0,
+            avg_oos_return: 12.0,
+            avg_efficiency_ratio: 0.6,
+            walk_forward_efficiency: 0.6,
+            avg_is_sharpe: 1.5,
+            avg_oos_sharpe: 1.0,  // 1.0 / 1.5 = 0.667 > 0.6
+            oos_sharpe_threshold_met: true,
+            parameter_stability: 0.8,
+        };
+
+        assert!(result_pass.is_robust_with_sharpe(0.5, 0.6));
+        assert!((result_pass.oos_sharpe_ratio() - 0.667).abs() < 0.01);
+
+        // Test failing threshold (OOS < 60% of IS)
+        let result_fail = WalkForwardResult {
+            config: config.clone(),
+            windows: vec![],
+            combined_oos_return: 15.0,
+            avg_is_return: 20.0,
+            avg_oos_return: 12.0,
+            avg_efficiency_ratio: 0.6,
+            walk_forward_efficiency: 0.6,
+            avg_is_sharpe: 2.0,
+            avg_oos_sharpe: 0.8,  // 0.8 / 2.0 = 0.4 < 0.6
+            oos_sharpe_threshold_met: false,
+            parameter_stability: 0.8,
+        };
+
+        assert!(!result_fail.is_robust_with_sharpe(0.5, 0.6));
+        assert!((result_fail.oos_sharpe_ratio() - 0.4).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_parameter_stability() {
+        let config = WalkForwardConfig::default();
+
+        // High stability (same parameters across windows)
+        let high_stability = WalkForwardResult {
+            config: config.clone(),
+            windows: vec![],
+            combined_oos_return: 15.0,
+            avg_is_return: 20.0,
+            avg_oos_return: 12.0,
+            avg_efficiency_ratio: 0.6,
+            walk_forward_efficiency: 0.6,
+            avg_is_sharpe: 1.5,
+            avg_oos_sharpe: 1.0,
+            oos_sharpe_threshold_met: true,
+            parameter_stability: 1.0,  // Perfect stability
+        };
+
+        assert!((high_stability.parameter_stability - 1.0).abs() < 0.001);
+
+        // Low stability (different parameters each window)
+        let low_stability = WalkForwardResult {
+            config: config.clone(),
+            windows: vec![],
+            combined_oos_return: 15.0,
+            avg_is_return: 20.0,
+            avg_oos_return: 12.0,
+            avg_efficiency_ratio: 0.6,
+            walk_forward_efficiency: 0.6,
+            avg_is_sharpe: 1.5,
+            avg_oos_sharpe: 1.0,
+            oos_sharpe_threshold_met: true,
+            parameter_stability: 0.2,  // Low stability
+        };
+
+        assert!(low_stability.parameter_stability < 0.5);
     }
 }

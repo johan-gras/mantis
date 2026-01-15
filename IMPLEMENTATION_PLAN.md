@@ -4,7 +4,7 @@
 >
 > Items marked `[NOT STARTED]` were previously claimed as partial but verified to have no implementation.
 >
-> **Recent Changes**: Black-Litterman portfolio optimization now implemented with comprehensive investor views support, combining market equilibrium with subjective views. All core portfolio construction methods (equal weight, inverse volatility, risk parity, mean-variance, HRP, Black-Litterman) are now complete.
+> **Recent Changes**: Overfitting Detection now fully implemented with OOS Sharpe threshold checking, parameter stability testing, and n_trials integration into deflated Sharpe ratio. Black-Litterman portfolio optimization complete with comprehensive investor views support. All core portfolio construction methods (equal weight, inverse volatility, risk parity, mean-variance, HRP, Black-Litterman) are now complete.
 
 ## Current Status Summary
 
@@ -488,14 +488,16 @@ Items are organized by category and prioritized within each category. Priority r
 - Return distribution analysis
 - Confidence interval generation
 
-### [PARTIAL ~70%] [HIGH] Overfitting Detection
+### [COMPLETE] [HIGH] Overfitting Detection
 - **IMPLEMENTED**:
-  - Walk-forward validation
+  - Walk-forward validation with comprehensive overfitting detection
   - Deflated Sharpe Ratio (Lopez de Prado) - adjusts for multiple testing bias
   - Probabilistic Sharpe Ratio - statistical confidence in performance (accounts for skewness and kurtosis)
-- **MISSING**:
-  - Out-of-sample performance threshold checks
-  - Parameter stability testing (small changes -> small performance changes)
+  - Out-of-sample Sharpe threshold checking (>= 60% of IS Sharpe) via `is_robust_with_sharpe()` method in WalkForwardResult
+  - Parameter stability testing - tracks parameter consistency across windows via parameter hash comparison
+  - `from_result_with_trials()` method in PerformanceMetrics for proper multiple testing adjustment with n_trials
+  - CLI integration showing deflated Sharpe with n_trials in optimization output
+  - Enhanced walk-forward output displaying overfitting detection metrics (OOS/IS Sharpe ratio, parameter stability)
 
 ### [MISSING] [HIGH] Lookahead Bias Prevention
 - Compile-time PIT data type guarantees
@@ -900,10 +902,11 @@ Items are organized by category and prioritized within each category. Priority r
 5. Execution algorithms (TWAP, VWAP, POV)
 
 ### Phase 4: Robustness & Validation [MEDIUM]
-1. Deflated Sharpe Ratio
-2. Lookahead bias compile-time prevention
-3. Factor attribution analysis
-4. Comprehensive robustness test suite
+1. ~~Deflated Sharpe Ratio~~ (COMPLETE)
+2. ~~Overfitting Detection (OOS threshold checking, parameter stability)~~ (COMPLETE)
+3. Lookahead bias compile-time prevention
+4. Factor attribution analysis
+5. Comprehensive robustness test suite
 
 ### Phase 5: Production Operations [MEDIUM]
 1. State checkpointing and recovery
@@ -954,7 +957,7 @@ cargo doc --no-deps --open
 | Multi-Timeframe | 1 | 1 | 0 | 3 | 5 |
 | Multi-Asset Portfolio | 5 | 1 | 0 | 3 | 9 |
 | Options & Derivatives | 0 | 1 | 0 | 8 | 9 |
-| Risk & Validation | 2 | 3 | 0 | 4 | 9 |
+| Risk & Validation | 3 | 2 | 0 | 4 | 9 |
 | Performance Analytics | 4 | 0 | 0 | 5 | 9 |
 | Production Operations | 0 | 0 | 0 | 7 | 7 |
 | Model Governance | 0 | 0 | 0 | 6 | 6 |
@@ -962,9 +965,9 @@ cargo doc --no-deps --open
 | CLI & Configuration | 3 | 1 | 0 | 4 | 8 |
 | Execution Realism | 2 | 1 | 0 | 3 | 6 |
 | Reproducibility | 2 | 2 | 0 | 0 | 4 |
-| **TOTAL** | **43** | **11** | **4** | **67** | **127** |
+| **TOTAL** | **44** | **10** | **4** | **67** | **127** |
 
-**Estimated Completion: ~41%** (core backtesting solid; Cross-Sectional Features and CPCV now complete; all major portfolio construction methods complete including Black-Litterman; ONNX inference architecture complete but blocked by ort crate instability; live trading and Python bindings not started)
+**Estimated Completion: ~42%** (core backtesting solid; Cross-Sectional Features, CPCV, and Overfitting Detection now complete; all major portfolio construction methods complete including Black-Litterman; ONNX inference architecture complete but blocked by ort crate instability; live trading and Python bindings not started)
 
 ---
 

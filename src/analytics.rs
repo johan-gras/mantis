@@ -441,7 +441,20 @@ pub struct PerformanceMetrics {
 
 impl PerformanceMetrics {
     /// Calculate comprehensive metrics from backtest results.
+    /// For optimization contexts with multiple parameter combinations,
+    /// use `from_result_with_trials` to properly adjust the deflated Sharpe ratio.
     pub fn from_result(result: &BacktestResult) -> Self {
+        Self::from_result_with_trials(result, 1)
+    }
+
+    /// Calculate comprehensive metrics from backtest results with multiple testing adjustment.
+    ///
+    /// # Arguments
+    /// * `result` - The backtest result to analyze
+    /// * `n_trials` - Number of parameter combinations tested (for deflated Sharpe ratio)
+    ///                Set to 1 for single backtest, or to the number of parameter
+    ///                combinations tested during optimization.
+    pub fn from_result_with_trials(result: &BacktestResult, n_trials: usize) -> Self {
         let _returns = Self::calculate_returns(&result.trades, result.initial_capital);
         let daily_returns = Self::calculate_daily_returns(result);
 
@@ -462,10 +475,7 @@ impl PerformanceMetrics {
         let kurtosis = Self::kurtosis(&daily_returns);
         let tail_ratio = Self::tail_ratio(&daily_returns);
 
-        // Overfitting detection metrics
-        // Note: n_trials defaults to 1 (no multiple testing adjustment)
-        // In optimization contexts, this should be set to the number of parameter combinations tested
-        let n_trials = 1; // TODO: Pass from optimization context
+        // Overfitting detection metrics with multiple testing adjustment
         let n_observations = daily_returns.len();
         let deflated_sharpe_ratio =
             Self::deflated_sharpe_ratio(result.sharpe_ratio, n_trials, n_observations);
