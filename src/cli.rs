@@ -509,7 +509,10 @@ impl std::hash::Hash for StrategyParam {
                 fast.hash(state);
                 slow.hash(state);
             }
-            StrategyParam::Momentum { lookback, threshold } => {
+            StrategyParam::Momentum {
+                lookback,
+                threshold,
+            } => {
                 std::mem::discriminant(self).hash(state);
                 lookback.hash(state);
                 threshold.to_bits().hash(state);
@@ -1337,7 +1340,10 @@ fn run_optimization(
                      Deflated Sharpe Ratio: {:.3} (adjusted for {} trials)\n\
                      Probabilistic Sharpe Ratio: {:.3}\n\
                      Note: Deflated SR < 0 suggests performance may be due to luck/overfitting",
-                    best.sharpe_ratio, metrics.deflated_sharpe_ratio, n_trials, metrics.probabilistic_sharpe_ratio
+                    best.sharpe_ratio,
+                    metrics.deflated_sharpe_ratio,
+                    n_trials,
+                    metrics.probabilistic_sharpe_ratio
                 );
             }
         }

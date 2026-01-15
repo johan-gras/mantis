@@ -93,6 +93,7 @@
 //! - [`strategies`]: Built-in example strategies
 //! - [`risk`]: Risk management (stop-loss, take-profit, position sizing)
 //! - [`walkforward`]: Walk-forward optimization analysis
+//! - [`cost_sensitivity`]: Transaction cost sensitivity analysis for robustness testing
 //! - [`config`]: TOML configuration file support
 //! - [`features`]: Feature extraction for ML/DL workflows
 
@@ -110,6 +111,7 @@ pub mod multi_asset;
 // TODO: ONNX module awaiting ort crate stabilization (v2.0 API in flux, v1.x yanked)
 // Infrastructure code complete in src/onnx.rs, needs: stable ort version + integration testing
 // pub mod onnx;
+pub mod cost_sensitivity;
 pub mod portfolio;
 pub mod regime;
 pub mod risk;

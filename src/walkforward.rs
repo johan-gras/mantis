@@ -146,7 +146,11 @@ impl WalkForwardResult {
             self.walk_forward_efficiency * 100.0,
             self.avg_is_sharpe,
             self.avg_oos_sharpe,
-            if self.oos_sharpe_threshold_met { "Yes" } else { "No" },
+            if self.oos_sharpe_threshold_met {
+                "Yes"
+            } else {
+                "No"
+            },
             self.parameter_stability * 100.0
         )
     }
@@ -417,10 +421,8 @@ impl WalkForwardAnalyzer {
         // Calculate parameter stability
         // If all windows have the same parameter hash, stability = 1.0
         // If all different, stability approaches 0.0
-        let unique_hashes: std::collections::HashSet<u64> = window_results
-            .iter()
-            .map(|w| w.parameter_hash)
-            .collect();
+        let unique_hashes: std::collections::HashSet<u64> =
+            window_results.iter().map(|w| w.parameter_hash).collect();
         let parameter_stability = if window_results.len() > 1 {
             1.0 - (unique_hashes.len() - 1) as f64 / (window_results.len() - 1) as f64
         } else {
@@ -651,7 +653,7 @@ mod tests {
             avg_efficiency_ratio: 0.6,
             walk_forward_efficiency: 0.6,
             avg_is_sharpe: 1.5,
-            avg_oos_sharpe: 1.0,  // 1.0 / 1.5 = 0.667 > 0.6
+            avg_oos_sharpe: 1.0, // 1.0 / 1.5 = 0.667 > 0.6
             oos_sharpe_threshold_met: true,
             parameter_stability: 0.8,
         };
@@ -669,7 +671,7 @@ mod tests {
             avg_efficiency_ratio: 0.6,
             walk_forward_efficiency: 0.6,
             avg_is_sharpe: 2.0,
-            avg_oos_sharpe: 0.8,  // 0.8 / 2.0 = 0.4 < 0.6
+            avg_oos_sharpe: 0.8, // 0.8 / 2.0 = 0.4 < 0.6
             oos_sharpe_threshold_met: false,
             parameter_stability: 0.8,
         };
@@ -694,7 +696,7 @@ mod tests {
             avg_is_sharpe: 1.5,
             avg_oos_sharpe: 1.0,
             oos_sharpe_threshold_met: true,
-            parameter_stability: 1.0,  // Perfect stability
+            parameter_stability: 1.0, // Perfect stability
         };
 
         assert!((high_stability.parameter_stability - 1.0).abs() < 0.001);
@@ -711,7 +713,7 @@ mod tests {
             avg_is_sharpe: 1.5,
             avg_oos_sharpe: 1.0,
             oos_sharpe_threshold_met: true,
-            parameter_stability: 0.2,  // Low stability
+            parameter_stability: 0.2, // Low stability
         };
 
         assert!(low_stability.parameter_stability < 0.5);
