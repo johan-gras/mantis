@@ -11,6 +11,7 @@ use mantis::experiments::{
     default_store_path, ensure_store_directory, ExperimentFilter, ExperimentRecord, ExperimentStore,
 };
 use mantis::features::{FeatureConfig, FeatureExtractor, TimeSeriesSplitter};
+use mantis::monte_carlo::{MonteCarloConfig, MonteCarloResult, MonteCarloSimulator};
 use mantis::portfolio::{CostModel, MarginConfig};
 use mantis::strategies::{
     BreakoutStrategy, MacdStrategy, MeanReversion, MomentumStrategy, RsiStrategy, SmaCrossover,
@@ -419,6 +420,77 @@ pub enum Commands {
         /// Expected interval between bars in seconds (e.g., 60 for 1-minute, 86400 for daily)
         #[arg(short = 'I', long)]
         interval_seconds: i64,
+
+        /// Data file format (auto-detects from extension if not specified)
+        #[arg(short, long, value_enum, default_value = "auto")]
+        format: DataFormatArg,
+    },
+
+    /// Run Monte Carlo simulation on a backtest for robustness testing
+    MonteCarlo {
+        /// Path to data file (CSV or Parquet)
+        #[arg(short, long)]
+        data: PathBuf,
+
+        /// Symbol name
+        #[arg(short, long, default_value = "SYMBOL")]
+        symbol: String,
+
+        /// Strategy to use
+        #[arg(short = 'S', long, value_enum, default_value = "sma-crossover")]
+        strategy: StrategyType,
+
+        /// Initial capital
+        #[arg(short, long, default_value = "100000")]
+        capital: f64,
+
+        /// Position size as fraction of equity (0.0-1.0)
+        #[arg(short, long, default_value = "1.0")]
+        position_size: f64,
+
+        /// Commission percentage (e.g., 0.1 for 0.1%)
+        #[arg(long, default_value = "0.1")]
+        commission: f64,
+
+        /// Slippage percentage (e.g., 0.05 for 0.05%)
+        #[arg(long, default_value = "0.05")]
+        slippage: f64,
+
+        /// Number of Monte Carlo simulations
+        #[arg(long, default_value = "1000")]
+        simulations: usize,
+
+        /// Confidence level for intervals (e.g., 0.95 for 95%)
+        #[arg(long, default_value = "0.95")]
+        confidence: f64,
+
+        /// Random seed for reproducibility
+        #[arg(long)]
+        seed: Option<u64>,
+
+        /// Use trade resampling (bootstrap with replacement)
+        #[arg(long, default_value = "true")]
+        resample_trades: bool,
+
+        /// Shuffle returns instead of resampling (destroys autocorrelation)
+        #[arg(long)]
+        shuffle_returns: bool,
+
+        /// Fast MA period (for SMA strategy)
+        #[arg(long, default_value = "10")]
+        fast_period: usize,
+
+        /// Slow MA period (for SMA strategy)
+        #[arg(long, default_value = "30")]
+        slow_period: usize,
+
+        /// RSI period
+        #[arg(long, default_value = "14")]
+        rsi_period: usize,
+
+        /// Momentum lookback period
+        #[arg(long, default_value = "20")]
+        lookback: usize,
 
         /// Data file format (auto-detects from extension if not specified)
         #[arg(short, long, value_enum, default_value = "auto")]
@@ -942,6 +1014,45 @@ pub fn run() -> Result<()> {
             interval_seconds,
             format,
         } => run_quality_report(data, *interval_seconds, *format),
+
+        Commands::MonteCarlo {
+            data,
+            symbol,
+            strategy,
+            capital,
+            position_size,
+            commission,
+            slippage,
+            simulations,
+            confidence,
+            seed,
+            resample_trades,
+            shuffle_returns,
+            fast_period,
+            slow_period,
+            rsi_period,
+            lookback,
+            format,
+        } => run_monte_carlo(
+            data,
+            symbol,
+            *strategy,
+            *capital,
+            *position_size,
+            *commission,
+            *slippage,
+            *simulations,
+            *confidence,
+            *seed,
+            *resample_trades,
+            *shuffle_returns,
+            *fast_period,
+            *slow_period,
+            *rsi_period,
+            *lookback,
+            *format,
+            cli.output,
+        ),
 
         Commands::Experiments(experiments_cmd) => match experiments_cmd {
             ExperimentsCommands::List {
@@ -2007,6 +2118,285 @@ fn run_quality_report(
     }
 
     Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_monte_carlo(
+    data_path: &PathBuf,
+    symbol: &str,
+    strategy_type: StrategyType,
+    capital: f64,
+    position_size: f64,
+    commission: f64,
+    slippage: f64,
+    simulations: usize,
+    confidence: f64,
+    seed: Option<u64>,
+    resample_trades: bool,
+    shuffle_returns: bool,
+    fast_period: usize,
+    slow_period: usize,
+    rsi_period: usize,
+    lookback: usize,
+    format: DataFormatArg,
+    output: OutputFormat,
+) -> Result<()> {
+    info!("Loading data from: {}", data_path.display());
+    let bars = load_data_with_format(data_path, &DataConfig::default(), format)?;
+
+    println!("Running backtest before Monte Carlo simulation...\n");
+
+    let cost_model = CostModel {
+        commission_pct: commission / 100.0,
+        slippage_pct: slippage / 100.0,
+        ..Default::default()
+    };
+
+    let config = BacktestConfig {
+        initial_capital: capital,
+        cost_model,
+        position_size,
+        show_progress: false,
+        ..Default::default()
+    };
+
+    let mut engine = Engine::new(config);
+    engine.add_data(symbol.to_string(), bars);
+
+    let mut strategy: Box<dyn Strategy> = match strategy_type {
+        StrategyType::SmaCrossover => Box::new(SmaCrossover::new(fast_period, slow_period)),
+        StrategyType::Momentum => Box::new(MomentumStrategy::new(lookback, 0.0)),
+        StrategyType::MeanReversion => Box::new(MeanReversion::default_params()),
+        StrategyType::Rsi => Box::new(RsiStrategy::new(rsi_period, 30.0, 70.0)),
+        StrategyType::Breakout => Box::new(BreakoutStrategy::default_params()),
+        StrategyType::Macd => Box::new(MacdStrategy::new(fast_period, slow_period, 9)),
+    };
+
+    let result = engine.run(strategy.as_mut(), symbol)?;
+
+    let closed_trades: Vec<_> = result.trades.iter().filter(|t| t.is_closed()).collect();
+    if closed_trades.is_empty() {
+        println!("No closed trades to analyze. Cannot run Monte Carlo simulation.");
+        return Ok(());
+    }
+
+    println!(
+        "Backtest complete: {} closed trades, {:.2}% return\n",
+        closed_trades.len(),
+        result.total_return_pct
+    );
+
+    println!("Running Monte Carlo simulation...");
+    println!(
+        "  Simulations: {}\n  Confidence: {:.0}%\n  Resample trades: {}\n  Shuffle returns: {}\n",
+        simulations,
+        confidence * 100.0,
+        resample_trades,
+        shuffle_returns
+    );
+
+    let mc_config = MonteCarloConfig {
+        num_simulations: simulations,
+        confidence_level: confidence,
+        seed,
+        resample_trades,
+        shuffle_returns,
+    };
+
+    let mut simulator = MonteCarloSimulator::new(mc_config);
+    let mc_result = simulator.simulate_from_result(&result);
+
+    match output {
+        OutputFormat::Text => print_monte_carlo_text(&mc_result),
+        OutputFormat::Json => {
+            let json = serde_json::to_string_pretty(&mc_result)?;
+            println!("{}", json);
+        }
+        OutputFormat::Csv => print_monte_carlo_csv(&mc_result),
+    }
+
+    Ok(())
+}
+
+fn print_monte_carlo_text(result: &MonteCarloResult) {
+    println!("\n{}", "Monte Carlo Simulation Results".bold().underline());
+    println!("{}", "=".repeat(50));
+    println!();
+
+    println!("{}", "Configuration".bold());
+    println!("  Simulations:      {}", result.num_simulations);
+    println!("  Trades analyzed:  {}", result.num_trades);
+    println!(
+        "  Confidence level: {:.0}%",
+        result.config.confidence_level * 100.0
+    );
+    println!();
+
+    println!("{}", "Return Statistics".bold());
+    let mean_colored = if result.mean_return > 0.0 {
+        format!("{:.2}%", result.mean_return).green()
+    } else {
+        format!("{:.2}%", result.mean_return).red()
+    };
+    let median_colored = if result.median_return > 0.0 {
+        format!("{:.2}%", result.median_return).green()
+    } else {
+        format!("{:.2}%", result.median_return).red()
+    };
+    println!("  Mean return:      {}", mean_colored);
+    println!("  Median return:    {}", median_colored);
+    println!("  Std deviation:    {:.2}%", result.return_std);
+    println!(
+        "  {:.0}% CI:          [{:.2}%, {:.2}%]",
+        result.config.confidence_level * 100.0,
+        result.return_ci.0,
+        result.return_ci.1
+    );
+    let prob_colored = if result.prob_positive_return > 0.6 {
+        format!("{:.1}%", result.prob_positive_return * 100.0).green()
+    } else if result.prob_positive_return > 0.5 {
+        format!("{:.1}%", result.prob_positive_return * 100.0).yellow()
+    } else {
+        format!("{:.1}%", result.prob_positive_return * 100.0).red()
+    };
+    println!("  P(Return > 0):    {}", prob_colored);
+    println!();
+
+    println!("{}", "Risk Metrics".bold());
+    println!(
+        "  Mean max DD:      {}",
+        format!("{:.2}%", result.mean_max_drawdown).red()
+    );
+    println!(
+        "  Median max DD:    {}",
+        format!("{:.2}%", result.median_max_drawdown).red()
+    );
+    println!(
+        "  95th %ile DD:     {}",
+        format!("{:.2}%", result.max_drawdown_95th).red()
+    );
+    println!(
+        "  VaR ({:.0}%):        {:.2}%",
+        result.config.confidence_level * 100.0,
+        result.var
+    );
+    println!("  CVaR (ES):        {:.2}%", result.cvar);
+    println!();
+
+    println!("{}", "Sharpe Ratio".bold());
+    let sharpe_mean_colored = if result.mean_sharpe > 1.0 {
+        format!("{:.3}", result.mean_sharpe).green()
+    } else if result.mean_sharpe > 0.0 {
+        format!("{:.3}", result.mean_sharpe).yellow()
+    } else {
+        format!("{:.3}", result.mean_sharpe).red()
+    };
+    println!("  Mean Sharpe:      {}", sharpe_mean_colored);
+    println!("  Median Sharpe:    {:.3}", result.median_sharpe);
+    println!(
+        "  {:.0}% CI:          [{:.3}, {:.3}]",
+        result.config.confidence_level * 100.0,
+        result.sharpe_ci.0,
+        result.sharpe_ci.1
+    );
+    let sharpe_prob_colored = if result.prob_positive_sharpe > 0.6 {
+        format!("{:.1}%", result.prob_positive_sharpe * 100.0).green()
+    } else if result.prob_positive_sharpe > 0.5 {
+        format!("{:.1}%", result.prob_positive_sharpe * 100.0).yellow()
+    } else {
+        format!("{:.1}%", result.prob_positive_sharpe * 100.0).red()
+    };
+    println!("  P(Sharpe > 0):    {}", sharpe_prob_colored);
+    println!();
+
+    println!("{}", "Return Distribution Percentiles".bold());
+    let percentile_order = ["5th", "10th", "25th", "50th", "75th", "90th", "95th"];
+    for p in &percentile_order {
+        if let Some(&val) = result.return_percentiles.get(*p) {
+            let val_colored = if val > 0.0 {
+                format!("{:.2}%", val).green()
+            } else {
+                format!("{:.2}%", val).red()
+            };
+            println!("  {}:             {}", p, val_colored);
+        }
+    }
+    println!();
+
+    println!("{}", "Robustness Assessment".bold());
+    let score = result.robustness_score();
+    let score_colored = if score > 70.0 {
+        format!("{:.1}/100", score).green()
+    } else if score > 50.0 {
+        format!("{:.1}/100", score).yellow()
+    } else {
+        format!("{:.1}/100", score).red()
+    };
+    println!("  Robustness score: {}", score_colored);
+
+    let verdict = if result.is_robust() {
+        "ROBUST".green().bold()
+    } else {
+        "NOT ROBUST".red().bold()
+    };
+    println!("  Verdict:          {}", verdict);
+    println!();
+
+    // Explanation of verdict
+    if result.is_robust() {
+        println!(
+            "{}",
+            "Strategy shows robust performance across simulated scenarios."
+                .green()
+                .dimmed()
+        );
+    } else {
+        println!(
+            "{}",
+            "Strategy may not be robust. Consider:".yellow().dimmed()
+        );
+        if result.prob_positive_return <= 0.6 {
+            println!(
+                "{}",
+                "  - Low probability of positive returns".yellow().dimmed()
+            );
+        }
+        if result.prob_positive_sharpe <= 0.5 {
+            println!(
+                "{}",
+                "  - Low probability of positive Sharpe ratio"
+                    .yellow()
+                    .dimmed()
+            );
+        }
+        if result.median_return <= 0.0 {
+            println!("{}", "  - Negative median return".yellow().dimmed());
+        }
+    }
+}
+
+fn print_monte_carlo_csv(result: &MonteCarloResult) {
+    println!("metric,value");
+    println!("num_simulations,{}", result.num_simulations);
+    println!("num_trades,{}", result.num_trades);
+    println!("mean_return,{:.4}", result.mean_return);
+    println!("median_return,{:.4}", result.median_return);
+    println!("return_std,{:.4}", result.return_std);
+    println!("return_ci_lower,{:.4}", result.return_ci.0);
+    println!("return_ci_upper,{:.4}", result.return_ci.1);
+    println!("prob_positive_return,{:.4}", result.prob_positive_return);
+    println!("mean_max_drawdown,{:.4}", result.mean_max_drawdown);
+    println!("median_max_drawdown,{:.4}", result.median_max_drawdown);
+    println!("max_drawdown_95th,{:.4}", result.max_drawdown_95th);
+    println!("var,{:.4}", result.var);
+    println!("cvar,{:.4}", result.cvar);
+    println!("mean_sharpe,{:.4}", result.mean_sharpe);
+    println!("median_sharpe,{:.4}", result.median_sharpe);
+    println!("sharpe_ci_lower,{:.4}", result.sharpe_ci.0);
+    println!("sharpe_ci_upper,{:.4}", result.sharpe_ci.1);
+    println!("prob_positive_sharpe,{:.4}", result.prob_positive_sharpe);
+    println!("robustness_score,{:.4}", result.robustness_score());
+    println!("is_robust,{}", result.is_robust());
 }
 
 fn validate_data(data_path: &PathBuf) -> Result<()> {

@@ -2,9 +2,11 @@
 //!
 //! This module provides:
 //! - Black-Scholes pricing for European options
+//! - Binomial tree pricing for American options (Cox-Ross-Rubinstein model)
 //! - Greeks calculation (Delta, Gamma, Theta, Vega, Rho)
 //! - Put-call parity validation
 //! - Option contract representation
+//! - Implied volatility solver
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -606,6 +608,465 @@ fn brent_method_iv(
     }
 
     Some(b)
+}
+
+/// Configuration for binomial tree pricing model.
+#[derive(Debug, Clone, Copy)]
+pub struct BinomialTreeConfig {
+    /// Number of steps in the tree (higher = more accurate but slower).
+    /// Typical values: 50-200 for most options, 500+ for very accurate pricing.
+    pub steps: usize,
+}
+
+impl Default for BinomialTreeConfig {
+    fn default() -> Self {
+        Self { steps: 100 }
+    }
+}
+
+impl BinomialTreeConfig {
+    /// Create a fast configuration (50 steps, ~10ms).
+    pub fn fast() -> Self {
+        Self { steps: 50 }
+    }
+
+    /// Create an accurate configuration (200 steps, ~50ms).
+    pub fn accurate() -> Self {
+        Self { steps: 200 }
+    }
+
+    /// Create a high-precision configuration (500 steps, ~200ms).
+    pub fn high_precision() -> Self {
+        Self { steps: 500 }
+    }
+}
+
+/// Price an option using the Cox-Ross-Rubinstein (CRR) binomial tree model.
+///
+/// This model can price both American and European options. For American options,
+/// it correctly accounts for early exercise at each node.
+///
+/// # Algorithm
+///
+/// The CRR model constructs a recombining binomial tree:
+/// 1. At each time step, the stock price can move up by factor `u` or down by factor `d`
+/// 2. `u = exp(σ√Δt)` and `d = 1/u` where Δt = T/N
+/// 3. Risk-neutral probability `p = (exp(rΔt) - d) / (u - d)`
+/// 4. Terminal node values = intrinsic value of option
+/// 5. Work backwards: each node value = discounted expected value of children
+/// 6. For American options: at each node, check if early exercise is optimal
+///
+/// # Arguments
+/// * `underlying_price` - Current price of underlying asset (S)
+/// * `strike` - Strike price of option (K)
+/// * `time_to_expiration` - Time to expiration in years (T)
+/// * `risk_free_rate` - Annualized risk-free interest rate (r)
+/// * `volatility` - Annualized volatility (σ)
+/// * `option_type` - Call or Put
+/// * `exercise_style` - American or European
+/// * `config` - Configuration for tree depth
+///
+/// # Returns
+/// Option price calculated using the binomial tree model
+///
+/// # Example
+/// ```
+/// use mantis::options::{binomial_tree_price, OptionType, ExerciseStyle, BinomialTreeConfig};
+///
+/// // Price an American put option
+/// let price = binomial_tree_price(
+///     100.0,  // underlying price
+///     100.0,  // strike
+///     1.0,    // 1 year to expiration
+///     0.05,   // 5% risk-free rate
+///     0.20,   // 20% volatility
+///     OptionType::Put,
+///     ExerciseStyle::American,
+///     &BinomialTreeConfig::default(),
+/// );
+/// ```
+#[allow(clippy::too_many_arguments)]
+pub fn binomial_tree_price(
+    underlying_price: f64,
+    strike: f64,
+    time_to_expiration: f64,
+    risk_free_rate: f64,
+    volatility: f64,
+    option_type: OptionType,
+    exercise_style: ExerciseStyle,
+    config: &BinomialTreeConfig,
+) -> f64 {
+    // Handle edge cases
+    if time_to_expiration <= 0.0 {
+        // At expiration, option is worth intrinsic value
+        return match option_type {
+            OptionType::Call => (underlying_price - strike).max(0.0),
+            OptionType::Put => (strike - underlying_price).max(0.0),
+        };
+    }
+
+    if volatility <= 0.0 {
+        // With zero volatility, no uncertainty - price deterministically
+        let discount = (-risk_free_rate * time_to_expiration).exp();
+        return match option_type {
+            OptionType::Call => (underlying_price - strike * discount).max(0.0),
+            OptionType::Put => (strike * discount - underlying_price).max(0.0),
+        };
+    }
+
+    let n = config.steps;
+    let dt = time_to_expiration / n as f64;
+
+    // CRR parameters
+    let u = (volatility * dt.sqrt()).exp(); // Up factor
+    let d = 1.0 / u; // Down factor (ensures recombining tree)
+    let discount_factor = (-risk_free_rate * dt).exp();
+    let p = ((risk_free_rate * dt).exp() - d) / (u - d); // Risk-neutral probability
+
+    // Ensure probability is valid
+    if !(0.0..=1.0).contains(&p) {
+        // If probability is invalid, fall back to Black-Scholes
+        return black_scholes(
+            underlying_price,
+            strike,
+            time_to_expiration,
+            risk_free_rate,
+            volatility,
+            option_type,
+        );
+    }
+
+    // Build terminal stock prices and option values
+    // We use a single array and update in place for memory efficiency
+    let mut option_values = Vec::with_capacity(n + 1);
+
+    // Calculate stock prices at terminal nodes (time = T)
+    // Stock price at node (n, j) = S * u^j * d^(n-j) = S * u^(2j-n)
+    for j in 0..=n {
+        let stock_price = underlying_price * u.powi(2 * j as i32 - n as i32);
+        let intrinsic = match option_type {
+            OptionType::Call => (stock_price - strike).max(0.0),
+            OptionType::Put => (strike - stock_price).max(0.0),
+        };
+        option_values.push(intrinsic);
+    }
+
+    // Work backwards through the tree
+    for i in (0..n).rev() {
+        for j in 0..=i {
+            // Expected option value (discounted)
+            let expected_value =
+                discount_factor * (p * option_values[j + 1] + (1.0 - p) * option_values[j]);
+
+            // For American options, check if early exercise is optimal
+            let option_value = match exercise_style {
+                ExerciseStyle::European => expected_value,
+                ExerciseStyle::American => {
+                    // Stock price at node (i, j)
+                    let stock_price = underlying_price * u.powi(2 * j as i32 - i as i32);
+                    let intrinsic = match option_type {
+                        OptionType::Call => (stock_price - strike).max(0.0),
+                        OptionType::Put => (strike - stock_price).max(0.0),
+                    };
+                    // Take the maximum of holding vs exercising
+                    expected_value.max(intrinsic)
+                }
+            };
+
+            option_values[j] = option_value;
+        }
+    }
+
+    option_values[0]
+}
+
+/// Calculate Greeks for an option using the binomial tree model with finite differences.
+///
+/// This provides numerical Greeks that work for both American and European options.
+/// The finite difference method uses small perturbations to estimate sensitivities.
+///
+/// # Arguments
+/// * `underlying_price` - Current price of underlying asset
+/// * `strike` - Strike price of option
+/// * `time_to_expiration` - Time to expiration in years
+/// * `risk_free_rate` - Annualized risk-free interest rate
+/// * `volatility` - Annualized volatility
+/// * `option_type` - Call or Put
+/// * `exercise_style` - American or European
+/// * `config` - Configuration for tree depth
+///
+/// # Returns
+/// Greeks struct with Delta, Gamma, Theta, Vega, and Rho
+#[allow(clippy::too_many_arguments)]
+pub fn binomial_tree_greeks(
+    underlying_price: f64,
+    strike: f64,
+    time_to_expiration: f64,
+    risk_free_rate: f64,
+    volatility: f64,
+    option_type: OptionType,
+    exercise_style: ExerciseStyle,
+    config: &BinomialTreeConfig,
+) -> Greeks {
+    // Handle edge case: option at expiration
+    if time_to_expiration <= 0.0 {
+        return Greeks {
+            delta: match option_type {
+                OptionType::Call => {
+                    if underlying_price > strike {
+                        1.0
+                    } else {
+                        0.0
+                    }
+                }
+                OptionType::Put => {
+                    if underlying_price < strike {
+                        -1.0
+                    } else {
+                        0.0
+                    }
+                }
+            },
+            gamma: 0.0,
+            theta: 0.0,
+            vega: 0.0,
+            rho: 0.0,
+        };
+    }
+
+    let price =
+        |s, t, r, v| binomial_tree_price(s, strike, t, r, v, option_type, exercise_style, config);
+
+    let base_price = price(
+        underlying_price,
+        time_to_expiration,
+        risk_free_rate,
+        volatility,
+    );
+
+    // Delta: ∂V/∂S (using central difference)
+    let ds = underlying_price * 0.01; // 1% perturbation
+    let price_up = price(
+        underlying_price + ds,
+        time_to_expiration,
+        risk_free_rate,
+        volatility,
+    );
+    let price_down = price(
+        underlying_price - ds,
+        time_to_expiration,
+        risk_free_rate,
+        volatility,
+    );
+    let delta = (price_up - price_down) / (2.0 * ds);
+
+    // Gamma: ∂²V/∂S² (using central difference)
+    let gamma = (price_up - 2.0 * base_price + price_down) / (ds * ds);
+
+    // Theta: -∂V/∂t (time decay per day)
+    let dt = 1.0 / 365.0; // 1 day
+    let theta = if time_to_expiration > dt {
+        let price_later = price(
+            underlying_price,
+            time_to_expiration - dt,
+            risk_free_rate,
+            volatility,
+        );
+        (price_later - base_price) / dt / 365.0 // Per day
+    } else {
+        0.0
+    };
+
+    // Vega: ∂V/∂σ (sensitivity to 1% change in volatility)
+    let dv = 0.01; // 1% volatility change
+    let price_vol_up = price(
+        underlying_price,
+        time_to_expiration,
+        risk_free_rate,
+        volatility + dv,
+    );
+    let price_vol_down = price(
+        underlying_price,
+        time_to_expiration,
+        risk_free_rate,
+        volatility - dv.min(volatility - 0.01),
+    );
+    let vega = (price_vol_up - price_vol_down) / (2.0 * dv) / 100.0; // Per 1% vol change
+
+    // Rho: ∂V/∂r (sensitivity to 1% change in interest rate)
+    let dr = 0.01; // 1% rate change
+    let price_rate_up = price(
+        underlying_price,
+        time_to_expiration,
+        risk_free_rate + dr,
+        volatility,
+    );
+    let price_rate_down = price(
+        underlying_price,
+        time_to_expiration,
+        (risk_free_rate - dr).max(0.0),
+        volatility,
+    );
+    let rho = (price_rate_up - price_rate_down) / (2.0 * dr) / 100.0; // Per 1% rate change
+
+    Greeks {
+        delta,
+        gamma,
+        theta,
+        vega,
+        rho,
+    }
+}
+
+/// Calculate the early exercise premium for an American option.
+///
+/// The early exercise premium is the difference between the American option price
+/// and the equivalent European option price. This premium is always non-negative.
+///
+/// For calls on non-dividend paying stocks, the premium is typically zero
+/// (early exercise is never optimal). For puts, there's often a positive premium,
+/// especially for deep ITM puts near expiration.
+///
+/// # Arguments
+/// * `underlying_price` - Current price of underlying asset
+/// * `strike` - Strike price of option
+/// * `time_to_expiration` - Time to expiration in years
+/// * `risk_free_rate` - Annualized risk-free interest rate
+/// * `volatility` - Annualized volatility
+/// * `option_type` - Call or Put
+/// * `config` - Configuration for tree depth
+///
+/// # Returns
+/// Early exercise premium (always >= 0)
+#[allow(clippy::too_many_arguments)]
+pub fn early_exercise_premium(
+    underlying_price: f64,
+    strike: f64,
+    time_to_expiration: f64,
+    risk_free_rate: f64,
+    volatility: f64,
+    option_type: OptionType,
+    config: &BinomialTreeConfig,
+) -> f64 {
+    let american_price = binomial_tree_price(
+        underlying_price,
+        strike,
+        time_to_expiration,
+        risk_free_rate,
+        volatility,
+        option_type,
+        ExerciseStyle::American,
+        config,
+    );
+
+    let european_price = binomial_tree_price(
+        underlying_price,
+        strike,
+        time_to_expiration,
+        risk_free_rate,
+        volatility,
+        option_type,
+        ExerciseStyle::European,
+        config,
+    );
+
+    (american_price - european_price).max(0.0)
+}
+
+/// Price an option using the appropriate model based on exercise style.
+///
+/// This is a convenience function that automatically selects:
+/// - Black-Scholes for European options (faster, closed-form solution)
+/// - Binomial tree for American options (handles early exercise)
+///
+/// # Arguments
+/// * `underlying_price` - Current price of underlying asset
+/// * `strike` - Strike price of option
+/// * `time_to_expiration` - Time to expiration in years
+/// * `risk_free_rate` - Annualized risk-free interest rate
+/// * `volatility` - Annualized volatility
+/// * `option_type` - Call or Put
+/// * `exercise_style` - American or European
+///
+/// # Returns
+/// Option price using the appropriate model
+pub fn price_option(
+    underlying_price: f64,
+    strike: f64,
+    time_to_expiration: f64,
+    risk_free_rate: f64,
+    volatility: f64,
+    option_type: OptionType,
+    exercise_style: ExerciseStyle,
+) -> f64 {
+    match exercise_style {
+        ExerciseStyle::European => black_scholes(
+            underlying_price,
+            strike,
+            time_to_expiration,
+            risk_free_rate,
+            volatility,
+            option_type,
+        ),
+        ExerciseStyle::American => binomial_tree_price(
+            underlying_price,
+            strike,
+            time_to_expiration,
+            risk_free_rate,
+            volatility,
+            option_type,
+            ExerciseStyle::American,
+            &BinomialTreeConfig::default(),
+        ),
+    }
+}
+
+/// Calculate Greeks using the appropriate model based on exercise style.
+///
+/// This is a convenience function that automatically selects:
+/// - Analytical Greeks for European options (faster, exact)
+/// - Numerical Greeks from binomial tree for American options
+///
+/// # Arguments
+/// * `underlying_price` - Current price of underlying asset
+/// * `strike` - Strike price of option
+/// * `time_to_expiration` - Time to expiration in years
+/// * `risk_free_rate` - Annualized risk-free interest rate
+/// * `volatility` - Annualized volatility
+/// * `option_type` - Call or Put
+/// * `exercise_style` - American or European
+///
+/// # Returns
+/// Greeks struct with Delta, Gamma, Theta, Vega, and Rho
+pub fn greeks_for_option(
+    underlying_price: f64,
+    strike: f64,
+    time_to_expiration: f64,
+    risk_free_rate: f64,
+    volatility: f64,
+    option_type: OptionType,
+    exercise_style: ExerciseStyle,
+) -> Greeks {
+    match exercise_style {
+        ExerciseStyle::European => calculate_greeks(
+            underlying_price,
+            strike,
+            time_to_expiration,
+            risk_free_rate,
+            volatility,
+            option_type,
+        ),
+        ExerciseStyle::American => binomial_tree_greeks(
+            underlying_price,
+            strike,
+            time_to_expiration,
+            risk_free_rate,
+            volatility,
+            option_type,
+            ExerciseStyle::American,
+            &BinomialTreeConfig::default(),
+        ),
+    }
 }
 
 #[cfg(test)]
@@ -1287,6 +1748,612 @@ mod tests {
             duration.as_millis() < 10,
             "IV solver took too long: {:?}",
             duration
+        );
+    }
+
+    // ========== Binomial Tree Tests ==========
+
+    #[test]
+    fn test_binomial_tree_european_matches_black_scholes() {
+        // For European options, binomial tree should converge to Black-Scholes
+        let s = 100.0;
+        let k = 100.0;
+        let t = 1.0;
+        let r = 0.05;
+        let sigma = 0.20;
+
+        let bs_call = black_scholes(s, k, t, r, sigma, OptionType::Call);
+        let bs_put = black_scholes(s, k, t, r, sigma, OptionType::Put);
+
+        let config = BinomialTreeConfig::accurate(); // Use more steps for accuracy
+        let bt_call = binomial_tree_price(
+            s,
+            k,
+            t,
+            r,
+            sigma,
+            OptionType::Call,
+            ExerciseStyle::European,
+            &config,
+        );
+        let bt_put = binomial_tree_price(
+            s,
+            k,
+            t,
+            r,
+            sigma,
+            OptionType::Put,
+            ExerciseStyle::European,
+            &config,
+        );
+
+        // Should match Black-Scholes within 1%
+        assert!(
+            (bt_call - bs_call).abs() / bs_call < 0.01,
+            "Call mismatch: BS={}, BT={}",
+            bs_call,
+            bt_call
+        );
+        assert!(
+            (bt_put - bs_put).abs() / bs_put < 0.01,
+            "Put mismatch: BS={}, BT={}",
+            bs_put,
+            bt_put
+        );
+    }
+
+    #[test]
+    fn test_binomial_tree_american_put_greater_than_european() {
+        // American put should be worth at least as much as European put
+        let s = 100.0;
+        let k = 100.0;
+        let t = 1.0;
+        let r = 0.05;
+        let sigma = 0.20;
+
+        let config = BinomialTreeConfig::default();
+        let american_put = binomial_tree_price(
+            s,
+            k,
+            t,
+            r,
+            sigma,
+            OptionType::Put,
+            ExerciseStyle::American,
+            &config,
+        );
+        let european_put = binomial_tree_price(
+            s,
+            k,
+            t,
+            r,
+            sigma,
+            OptionType::Put,
+            ExerciseStyle::European,
+            &config,
+        );
+
+        assert!(
+            american_put >= european_put - 1e-6,
+            "American put {} should be >= European put {}",
+            american_put,
+            european_put
+        );
+    }
+
+    #[test]
+    fn test_binomial_tree_american_call_equals_european() {
+        // For non-dividend paying stocks, American call = European call
+        // (early exercise is never optimal)
+        let s = 100.0;
+        let k = 100.0;
+        let t = 1.0;
+        let r = 0.05;
+        let sigma = 0.20;
+
+        let config = BinomialTreeConfig::default();
+        let american_call = binomial_tree_price(
+            s,
+            k,
+            t,
+            r,
+            sigma,
+            OptionType::Call,
+            ExerciseStyle::American,
+            &config,
+        );
+        let european_call = binomial_tree_price(
+            s,
+            k,
+            t,
+            r,
+            sigma,
+            OptionType::Call,
+            ExerciseStyle::European,
+            &config,
+        );
+
+        // Should be very close (within 0.1%)
+        assert!(
+            (american_call - european_call).abs() / european_call < 0.001,
+            "American call {} should equal European call {}",
+            american_call,
+            european_call
+        );
+    }
+
+    #[test]
+    fn test_binomial_tree_deep_itm_put_early_exercise() {
+        // Deep ITM American put should have significant early exercise value
+        let s = 60.0; // Deep ITM (S << K)
+        let k = 100.0;
+        let t = 1.0;
+        let r = 0.05;
+        let sigma = 0.20;
+
+        let config = BinomialTreeConfig::default();
+        let american_put = binomial_tree_price(
+            s,
+            k,
+            t,
+            r,
+            sigma,
+            OptionType::Put,
+            ExerciseStyle::American,
+            &config,
+        );
+        let european_put = binomial_tree_price(
+            s,
+            k,
+            t,
+            r,
+            sigma,
+            OptionType::Put,
+            ExerciseStyle::European,
+            &config,
+        );
+
+        // American should be worth more than European for deep ITM put
+        let premium = american_put - european_put;
+        assert!(
+            premium > 0.0,
+            "Deep ITM American put should have early exercise premium"
+        );
+    }
+
+    #[test]
+    fn test_binomial_tree_at_expiration() {
+        let s = 105.0;
+        let k = 100.0;
+        let t = 0.0; // At expiration
+        let r = 0.05;
+        let sigma = 0.20;
+
+        let config = BinomialTreeConfig::default();
+        let call = binomial_tree_price(
+            s,
+            k,
+            t,
+            r,
+            sigma,
+            OptionType::Call,
+            ExerciseStyle::American,
+            &config,
+        );
+        let put = binomial_tree_price(
+            s,
+            k,
+            t,
+            r,
+            sigma,
+            OptionType::Put,
+            ExerciseStyle::American,
+            &config,
+        );
+
+        // At expiration, worth intrinsic value
+        assert!((call - 5.0).abs() < 1e-6, "Call should be worth 5.0");
+        assert!((put - 0.0).abs() < 1e-6, "Put should be worth 0.0");
+    }
+
+    #[test]
+    fn test_binomial_tree_zero_volatility() {
+        let s = 105.0;
+        let k = 100.0;
+        let t = 1.0;
+        let r = 0.05;
+        let sigma = 0.0; // Zero vol
+
+        let config = BinomialTreeConfig::default();
+        let call = binomial_tree_price(
+            s,
+            k,
+            t,
+            r,
+            sigma,
+            OptionType::Call,
+            ExerciseStyle::American,
+            &config,
+        );
+
+        // With zero vol, deterministic payoff
+        let discount = (-r * t).exp();
+        let expected = (s - k * discount).max(0.0);
+        assert!(
+            (call - expected).abs() < 0.1,
+            "Call {} should match expected {}",
+            call,
+            expected
+        );
+    }
+
+    #[test]
+    fn test_binomial_tree_config_presets() {
+        let fast = BinomialTreeConfig::fast();
+        assert_eq!(fast.steps, 50);
+
+        let accurate = BinomialTreeConfig::accurate();
+        assert_eq!(accurate.steps, 200);
+
+        let high_precision = BinomialTreeConfig::high_precision();
+        assert_eq!(high_precision.steps, 500);
+
+        let default = BinomialTreeConfig::default();
+        assert_eq!(default.steps, 100);
+    }
+
+    #[test]
+    fn test_early_exercise_premium_put() {
+        let s = 80.0; // ITM put
+        let k = 100.0;
+        let t = 1.0;
+        let r = 0.05;
+        let sigma = 0.20;
+
+        let config = BinomialTreeConfig::default();
+        let premium = early_exercise_premium(s, k, t, r, sigma, OptionType::Put, &config);
+
+        // Premium should be non-negative
+        assert!(
+            premium >= 0.0,
+            "Premium should be non-negative: {}",
+            premium
+        );
+
+        // For ITM put, premium should be positive
+        assert!(
+            premium > 0.0,
+            "ITM put should have positive early exercise premium"
+        );
+    }
+
+    #[test]
+    fn test_early_exercise_premium_call() {
+        let s = 120.0; // ITM call
+        let k = 100.0;
+        let t = 1.0;
+        let r = 0.05;
+        let sigma = 0.20;
+
+        let config = BinomialTreeConfig::default();
+        let premium = early_exercise_premium(s, k, t, r, sigma, OptionType::Call, &config);
+
+        // For call on non-dividend stock, premium should be ~0
+        assert!(
+            premium < 0.01,
+            "Call should have near-zero early exercise premium: {}",
+            premium
+        );
+    }
+
+    #[test]
+    fn test_price_option_auto_select() {
+        let s = 100.0;
+        let k = 100.0;
+        let t = 1.0;
+        let r = 0.05;
+        let sigma = 0.20;
+
+        // European call should use Black-Scholes
+        let european_price =
+            price_option(s, k, t, r, sigma, OptionType::Call, ExerciseStyle::European);
+        let bs_price = black_scholes(s, k, t, r, sigma, OptionType::Call);
+        assert!(
+            (european_price - bs_price).abs() < 1e-6,
+            "European should use Black-Scholes"
+        );
+
+        // American put should use binomial tree
+        let american_price =
+            price_option(s, k, t, r, sigma, OptionType::Put, ExerciseStyle::American);
+        let config = BinomialTreeConfig::default();
+        let bt_price = binomial_tree_price(
+            s,
+            k,
+            t,
+            r,
+            sigma,
+            OptionType::Put,
+            ExerciseStyle::American,
+            &config,
+        );
+        assert!(
+            (american_price - bt_price).abs() < 1e-6,
+            "American should use binomial tree"
+        );
+    }
+
+    #[test]
+    fn test_binomial_tree_greeks_call() {
+        let s = 100.0;
+        let k = 100.0;
+        let t = 1.0;
+        let r = 0.05;
+        let sigma = 0.20;
+
+        let config = BinomialTreeConfig::default();
+        let greeks = binomial_tree_greeks(
+            s,
+            k,
+            t,
+            r,
+            sigma,
+            OptionType::Call,
+            ExerciseStyle::American,
+            &config,
+        );
+
+        // Delta for ATM call should be around 0.5-0.7
+        assert!(
+            greeks.delta > 0.4 && greeks.delta < 0.8,
+            "Delta {} should be around 0.5-0.7",
+            greeks.delta
+        );
+
+        // Gamma should be positive
+        assert!(greeks.gamma > 0.0, "Gamma should be positive");
+
+        // Theta should be negative (time decay)
+        assert!(greeks.theta < 0.0, "Theta should be negative");
+
+        // Vega should be positive
+        assert!(greeks.vega > 0.0, "Vega should be positive");
+    }
+
+    #[test]
+    fn test_binomial_tree_greeks_put() {
+        let s = 100.0;
+        let k = 100.0;
+        let t = 1.0;
+        let r = 0.05;
+        let sigma = 0.20;
+
+        let config = BinomialTreeConfig::default();
+        let greeks = binomial_tree_greeks(
+            s,
+            k,
+            t,
+            r,
+            sigma,
+            OptionType::Put,
+            ExerciseStyle::American,
+            &config,
+        );
+
+        // Delta for ATM put should be around -0.5 to -0.3
+        assert!(
+            greeks.delta < 0.0 && greeks.delta > -0.7,
+            "Delta {} should be around -0.5 to -0.3",
+            greeks.delta
+        );
+
+        // Gamma should be positive
+        assert!(greeks.gamma > 0.0, "Gamma should be positive");
+    }
+
+    #[test]
+    fn test_greeks_for_option_auto_select() {
+        let s = 100.0;
+        let k = 100.0;
+        let t = 1.0;
+        let r = 0.05;
+        let sigma = 0.20;
+
+        // European call should use analytical Greeks
+        let european_greeks =
+            greeks_for_option(s, k, t, r, sigma, OptionType::Call, ExerciseStyle::European);
+        let analytical = calculate_greeks(s, k, t, r, sigma, OptionType::Call);
+        assert!(
+            (european_greeks.delta - analytical.delta).abs() < 1e-6,
+            "European should use analytical Greeks"
+        );
+
+        // American put should use numerical Greeks
+        let american_greeks =
+            greeks_for_option(s, k, t, r, sigma, OptionType::Put, ExerciseStyle::American);
+        // Just check it's valid
+        assert!(american_greeks.delta < 0.0, "Put delta should be negative");
+    }
+
+    #[test]
+    fn test_binomial_tree_convergence() {
+        // Test that increasing steps improves accuracy
+        let s = 100.0;
+        let k = 100.0;
+        let t = 1.0;
+        let r = 0.05;
+        let sigma = 0.20;
+
+        let bs_price = black_scholes(s, k, t, r, sigma, OptionType::Call);
+
+        let config_50 = BinomialTreeConfig { steps: 50 };
+        let config_200 = BinomialTreeConfig { steps: 200 };
+
+        let bt_50 = binomial_tree_price(
+            s,
+            k,
+            t,
+            r,
+            sigma,
+            OptionType::Call,
+            ExerciseStyle::European,
+            &config_50,
+        );
+        let bt_200 = binomial_tree_price(
+            s,
+            k,
+            t,
+            r,
+            sigma,
+            OptionType::Call,
+            ExerciseStyle::European,
+            &config_200,
+        );
+
+        // 200 steps should be closer to Black-Scholes than 50 steps
+        let error_50 = (bt_50 - bs_price).abs();
+        let error_200 = (bt_200 - bs_price).abs();
+        assert!(
+            error_200 <= error_50,
+            "200 steps error {} should be <= 50 steps error {}",
+            error_200,
+            error_50
+        );
+    }
+
+    #[test]
+    fn test_binomial_tree_otm_options() {
+        // Test OTM options
+        let s = 100.0;
+        let k_call = 120.0; // OTM call
+        let k_put = 80.0; // OTM put
+        let t = 0.5;
+        let r = 0.05;
+        let sigma = 0.25;
+
+        let config = BinomialTreeConfig::default();
+
+        let otm_call = binomial_tree_price(
+            s,
+            k_call,
+            t,
+            r,
+            sigma,
+            OptionType::Call,
+            ExerciseStyle::American,
+            &config,
+        );
+        let otm_put = binomial_tree_price(
+            s,
+            k_put,
+            t,
+            r,
+            sigma,
+            OptionType::Put,
+            ExerciseStyle::American,
+            &config,
+        );
+
+        // OTM options should have positive value (time value)
+        assert!(otm_call > 0.0, "OTM call should have positive value");
+        assert!(otm_put > 0.0, "OTM put should have positive value");
+
+        // OTM options should be worth less than ATM
+        let atm_call = binomial_tree_price(
+            s,
+            s,
+            t,
+            r,
+            sigma,
+            OptionType::Call,
+            ExerciseStyle::American,
+            &config,
+        );
+        assert!(otm_call < atm_call, "OTM call should be less than ATM call");
+    }
+
+    #[test]
+    fn test_binomial_tree_itm_options() {
+        // Test ITM options
+        let s = 100.0;
+        let k_call = 80.0; // ITM call
+        let k_put = 120.0; // ITM put
+        let t = 0.5;
+        let r = 0.05;
+        let sigma = 0.25;
+
+        let config = BinomialTreeConfig::default();
+
+        let itm_call = binomial_tree_price(
+            s,
+            k_call,
+            t,
+            r,
+            sigma,
+            OptionType::Call,
+            ExerciseStyle::American,
+            &config,
+        );
+        let itm_put = binomial_tree_price(
+            s,
+            k_put,
+            t,
+            r,
+            sigma,
+            OptionType::Put,
+            ExerciseStyle::American,
+            &config,
+        );
+
+        // ITM options should be worth at least intrinsic value
+        assert!(
+            itm_call >= (s - k_call),
+            "ITM call should be >= intrinsic value"
+        );
+        assert!(
+            itm_put >= (k_put - s),
+            "ITM put should be >= intrinsic value"
+        );
+    }
+
+    #[test]
+    fn test_binomial_tree_short_expiration() {
+        // Test with very short time to expiration (1 week)
+        let s = 100.0;
+        let k = 100.0;
+        let t = 7.0 / 365.0; // 1 week
+        let r = 0.05;
+        let sigma = 0.20;
+
+        let config = BinomialTreeConfig::default();
+
+        let american_put = binomial_tree_price(
+            s,
+            k,
+            t,
+            r,
+            sigma,
+            OptionType::Put,
+            ExerciseStyle::American,
+            &config,
+        );
+        let european_put = binomial_tree_price(
+            s,
+            k,
+            t,
+            r,
+            sigma,
+            OptionType::Put,
+            ExerciseStyle::European,
+            &config,
+        );
+
+        // Both should be positive and reasonable
+        assert!(american_put > 0.0, "American put should be positive");
+        assert!(european_put > 0.0, "European put should be positive");
+        assert!(
+            american_put >= european_put - 1e-6,
+            "American should be >= European"
         );
     }
 }

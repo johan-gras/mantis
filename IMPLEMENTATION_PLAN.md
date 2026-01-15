@@ -1,18 +1,32 @@
 # Mantis Implementation Plan
 
-> **Last Verified**: 2026-01-15 via comprehensive code analysis
+> **Last Verified**: 2026-01-15 via comprehensive multi-agent code analysis
 >
-> Items marked `[NOT STARTED]` were verified to have no implementation.
+> Items marked `[NOT STARTED]` were verified via grep and direct code inspection to have no implementation.
 >
-> **Verification Method**: Direct inspection of source files (engine.rs: 998 lines, data.rs: 3150 lines, portfolio.rs: 2400 lines, features.rs: 865 lines, multi_asset.rs: 5596 lines, options.rs: 1292 lines, timeframe.rs: 382 lines, onnx.rs: 523 lines).
+> **Verification Method**: 20+ parallel code analysis agents inspected all source files against 17 specification documents. Key files: engine.rs (998 lines), data.rs (3150 lines), portfolio.rs (2400 lines), features.rs (865 lines), multi_asset.rs (5596 lines), options.rs (1292 lines), timeframe.rs (382 lines), onnx.rs (523 lines), analytics.rs (4117 lines), experiments.rs (618 lines), walkforward.rs (722 lines), cpcv.rs (663 lines), cost_sensitivity.rs (725 lines), monte_carlo.rs (492 lines).
 >
-> **Recent Changes**: Factor Attribution now complete with Fama-French 3-factor, Carhart 4-factor, Fama-French 5-factor, and full 6-factor models using multiple linear regression with OLS, factor loadings (betas), alpha calculation, R-squared/adjusted R-squared, and t-statistics/p-values for significance testing (21 new tests). Drift-Based Rebalancing complete with threshold-based triggering when portfolio weights drift beyond configurable thresholds, DriftRebalancingConfig with conservative/moderate/relaxed presets, DriftEqualWeightStrategy and DriftMomentumStrategy implementations. Volume participation limits complete with --max-volume-participation CLI flag and TOML configuration. Deterministic backtesting complete with seeded RNG via --seed CLI argument. Implied volatility solver complete with Newton-Raphson + Brent's method fallback. All core portfolio construction methods (equal weight, inverse volatility, risk parity, mean-variance, HRP, Black-Litterman) are complete with comprehensive constraint support.
+> **Recent Changes**:
+> - **Monte Carlo CLI command** now complete with `mantis monte-carlo` command for robustness testing
+> - **Binomial Tree model** for American options now complete with Cox-Ross-Rubinstein implementation, early exercise premium calculation, numerical Greeks
+>
+> **Recent Verification Findings**:
+> - **Factor Attribution COMPLETE**: Fama-French 3/4/5/6-factor models with full OLS regression, factor loadings (betas), alpha, R²/adjusted R², t-statistics, p-values (21 tests in analytics.rs)
+> - **Deflated/Probabilistic Sharpe COMPLETE**: Both implemented in analytics.rs (lines 846-922) with proper multiple testing adjustment
+> - **Transaction Cost Sensitivity COMPLETE**: Full analysis module in cost_sensitivity.rs with breakeven, elasticity, degradation metrics (7 tests)
+> - **ONNX Inference BLOCKED**: Infrastructure complete in onnx.rs but ort crate commented out in Cargo.toml pending v2.0 stable release
+> - **Live Trading NOT STARTED**: Zero broker integration, WebSocket, or real-time infrastructure exists
+> - **Python Bindings NOT STARTED**: No PyO3 dependency in Cargo.toml
+> - **Production Ops NOT STARTED**: No circuit breakers, kill switch, monitoring, or reconciliation code exists
+> - **Model Governance NOT STARTED**: No model registry, drift detection, or deployment infrastructure exists
+>
+> **Code Quality**: Only 2 TODOs found (both related to ort crate). Zero unimplemented!() or todo!() macros. Zero ignored tests.
 
 ## Current Status Summary
 
 | Metric | Status |
 |--------|--------|
-| **Tests** | 433 passing (0 failing) |
+| **Tests** | 450 passing (0 failing) |
 | **Clippy** | 0 errors (PASSING) |
 | **Cargo fmt** | PASSING |
 | **Architecture** | Production-quality modular design |
@@ -511,13 +525,15 @@ Items are organized by category and prioritized within each category. Priority r
   - Surface interpolation for missing strikes
   - Historical IV storage and parametric models (SVI, SABR)
 
-### [NOT STARTED] [MEDIUM] Binomial Tree Model
-- **Status**: Verified incomplete - only Black-Scholes implemented
-- **IMPLEMENTED**: None
-- **MISSING**:
-  - Cox-Ross-Rubinstein binomial tree
-  - American option pricing
+### [COMPLETE] [MEDIUM] Binomial Tree Model
+- **IMPLEMENTED**:
+  - Cox-Ross-Rubinstein binomial tree model
+  - American option pricing with early exercise
   - Early exercise premium calculation
+  - Numerical Greeks via finite differences
+  - Configurable tree depth (fast/accurate/high_precision presets)
+  - Auto-selection between Black-Scholes (European) and binomial tree (American)
+- **Tests**: 17 new tests added
 
 ### [NOT STARTED] [MEDIUM] Options Chain / Vol Surface
 - **Status**: Verified incomplete - single contracts only
@@ -895,10 +911,11 @@ Items are organized by category and prioritized within each category. Priority r
 - Multiple output formats (text, JSON, CSV)
 - Colorized terminal output
 
-### [PARTIAL ~70%] [MEDIUM] Additional Commands
-- **IMPLEMENTED**: Basic export functionality
+### [PARTIAL ~80%] [MEDIUM] Additional Commands
+- **IMPLEMENTED**:
+  - Basic export functionality
+  - `monte-carlo` - Full Monte Carlo CLI command now complete (`mantis monte-carlo` for robustness testing)
 - **MISSING**:
-  - `monte-carlo` - Full Monte Carlo CLI (library exists, no CLI)
   - `export` - Enhanced feature/result export
   - `live` - Live trading mode
   - `validate` - Data/strategy validation
@@ -1007,45 +1024,67 @@ Items are organized by category and prioritized within each category. Priority r
 
 ## Implementation Phases
 
-### Phase 1: Critical Production Gaps [CRITICAL]
-1. Real-time monitoring infrastructure
-2. Risk limits and circuit breakers
-3. Position reconciliation
-4. Kill switch functionality
+### Phase 1: ML/DL Research Workflow [HIGHEST - Enables Core Use Case]
+**Goal**: Enable end-to-end deep learning strategy development workflow
+1. **Python bindings (PyO3)** - NOT STARTED - Critical for DL researchers using PyTorch/TensorFlow
+2. **ONNX model inference** - BLOCKED (ort crate instability) - Infrastructure complete, awaiting stable ort v2.0
+3. ~~Cross-sectional features~~ (COMPLETE)
+4. ~~CPCV implementation~~ (COMPLETE)
+5. ~~Experiment tracking~~ (COMPLETE - SQLite with full metadata)
+6. ~~Factor attribution~~ (COMPLETE - Fama-French 3/4/5/6 factors)
+7. ~~Monte Carlo CLI command~~ (COMPLETE - `mantis monte-carlo` for robustness testing)
+8. **Feature store integration (Feast/Tecton)** - NOT STARTED
 
-### Phase 2: ML/DL Workflow Support [HIGH]
-1. ~~ONNX model inference integration~~ (PARTIAL - architecture complete, blocked by ort crate)
-2. ~~Cross-sectional features~~ (COMPLETE)
-3. ~~CPCV implementation~~ (COMPLETE)
-4. ~~Experiment tracking~~ (COMPLETE)
-5. Python bindings (PyO3) - NOT STARTED
+### Phase 2: Backtesting Completeness [HIGH]
+**Goal**: Fill remaining gaps in professional backtesting capabilities
+1. ~~Options pricing and Greeks~~ (COMPLETE - Black-Scholes, Greeks, IV solver)
+2. ~~Multi-timeframe strategy interface~~ (COMPLETE)
+3. ~~Portfolio optimization methods~~ (COMPLETE - all major methods)
+4. ~~Binomial tree for American options~~ (COMPLETE - Cox-Ross-Rubinstein, early exercise, numerical Greeks)
+5. **Options chain/volatility surface** - NOT STARTED
+6. **Block bootstrapping** - NOT STARTED (Monte Carlo has simple bootstrap only)
+7. **Statistical tests** - NOT STARTED (normality, autocorrelation, stationarity)
+8. **Brinson attribution** - NOT STARTED
+9. **True MCR-based risk parity** - NOT STARTED (currently using inverse vol proxy)
 
-### Phase 3: Advanced Trading Features [HIGH]
-1. Live trading mode with broker integration - NOT STARTED
-2. ~~Options pricing and Greeks~~ (COMPLETE - Black-Scholes, Greeks, IV solver)
-3. ~~Multi-timeframe strategy interface~~ (COMPLETE)
-4. ~~Portfolio optimization methods~~ (COMPLETE - all major methods)
-5. Execution algorithms (TWAP, VWAP, POV) - NOT STARTED
+### Phase 3: Critical Production Gaps [CRITICAL for Live Trading]
+**Goal**: Enable transition from backtest to live trading
+1. **Live trading mode with broker integration** - NOT STARTED (zero broker code exists)
+2. **Real-time monitoring infrastructure** - NOT STARTED
+3. **Risk limits and circuit breakers** - NOT STARTED
+4. **Position reconciliation** - NOT STARTED
+5. **Kill switch functionality** - NOT STARTED
+6. **True execution algorithms (TWAP, VWAP, POV)** - NOT STARTED (current are static price models)
+7. **Parent-child order architecture** - NOT STARTED
+8. **Multi-leg order support** - NOT STARTED
+9. **WebSocket live data feeds** - NOT STARTED
+10. **Latency simulation** - NOT STARTED
 
 ### Phase 4: Robustness & Validation [MEDIUM]
-1. ~~Deflated Sharpe Ratio~~ (COMPLETE)
-2. ~~Overfitting Detection~~ (COMPLETE)
-3. Lookahead bias compile-time prevention - NOT STARTED
-4. ~~Factor attribution analysis~~ (COMPLETE)
-5. Comprehensive robustness test suite
+1. ~~Deflated Sharpe Ratio~~ (COMPLETE - analytics.rs)
+2. ~~Overfitting Detection~~ (COMPLETE - walkforward.rs)
+3. ~~Transaction cost sensitivity~~ (COMPLETE - cost_sensitivity.rs)
+4. **Lookahead bias compile-time prevention (PIT types)** - NOT STARTED
+5. **K-fold blocked/gap time series splits** - NOT STARTED (only CPCV implemented)
 
-### Phase 5: Production Operations [MEDIUM]
-1. State checkpointing and recovery
-2. Audit trails and compliance
-3. Model governance (registry, drift detection) - NOT STARTED
-4. Deployment management (canary, shadow mode)
+### Phase 5: Model Governance & MLOps [MEDIUM]
+1. **Model registry** - NOT STARTED
+2. **Concept drift detection** - NOT STARTED
+3. **Feature drift monitoring** - NOT STARTED
+4. **Shadow/canary deployment** - NOT STARTED
+5. **A/B testing infrastructure** - NOT STARTED
 
-### Phase 6: Research & Polish [LOW]
-1. Research workflow tools (debugging, profiling)
-2. Visualization and reporting
-3. Strategy comparison dashboard
-4. Performance optimization (SoA, mmap)
-5. Documentation/Onboarding
+### Phase 6: Infrastructure & Polish [LOW]
+1. **Database backends (PostgreSQL, TimescaleDB)** - NOT STARTED (only SQLite)
+2. **Memory-mapped file support** - NOT STARTED
+3. **Shell autocomplete** - NOT STARTED
+4. **Dry-run mode** - NOT STARTED
+5. **Resume capability for interrupted operations** - NOT STARTED
+6. Research workflow tools (debugging, profiling) - NOT STARTED
+7. Visualization and reporting - NOT STARTED
+8. Strategy comparison dashboard - NOT STARTED
+9. Performance optimization (SoA layout) - NOT STARTED
+10. Documentation/Onboarding - NOT STARTED
 
 ---
 
@@ -1110,7 +1149,7 @@ cargo doc --no-deps --open
 | ML Integration | 5 | 2 | 1 | 4 | 12 |
 | Multi-Timeframe | 2 | 0 | 0 | 3 | 5 |
 | Multi-Asset Portfolio | 6 | 0 | 0 | 3 | 9 |
-| Options & Derivatives | 4 | 0 | 2 | 3 | 9 |
+| Options & Derivatives | 5 | 0 | 1 | 3 | 9 |
 | Risk & Validation | 4 | 1 | 0 | 4 | 9 |
 | Performance Analytics | 5 | 0 | 1 | 4 | 10 |
 | Production Operations | 0 | 0 | 3 | 6 | 9 |
@@ -1119,11 +1158,27 @@ cargo doc --no-deps --open
 | CLI & Configuration | 3 | 1 | 0 | 4 | 8 |
 | Execution Realism | 2 | 0 | 1 | 3 | 6 |
 | Reproducibility | 3 | 0 | 0 | 1 | 4 |
-| **TOTAL** | **53** | **6** | **17** | **53** | **129** |
+| **TOTAL** | **54** | **6** | **16** | **53** | **129** |
 
-**Estimated Completion: ~46%**
+**Estimated Completion: ~47%**
 
-Core backtesting is solid and production-ready. All major portfolio construction methods complete (equal weight, inverse volatility, risk parity, mean-variance, HRP, Black-Litterman) with drift-based rebalancing. Options pricing with Black-Scholes, full Greeks, and IV solver complete. Experiment tracking, cross-sectional features, CPCV, overfitting detection, and factor attribution complete. ONNX inference architecture complete but blocked by ort crate instability. Live trading, Python bindings, production operations, and model governance are NOT STARTED. Execution algorithms are NOT STARTED.
+**Verified via comprehensive multi-agent code analysis (2026-01-15):**
+
+Core backtesting is solid and production-ready. All major portfolio construction methods complete (equal weight, inverse volatility, risk parity proxy, mean-variance, HRP, Black-Litterman) with drift-based rebalancing. Options pricing with Black-Scholes, full Greeks, and IV solver complete. Experiment tracking (SQLite), cross-sectional features, CPCV, overfitting detection (Deflated/Probabilistic Sharpe), transaction cost sensitivity analysis, and factor attribution (Fama-French 3/4/5/6-factor models) complete with comprehensive test coverage.
+
+**BLOCKED**: ONNX inference architecture complete in src/onnx.rs but ort crate commented out in Cargo.toml pending v2.0 stable release.
+
+**NOT STARTED (verified via grep)**:
+- Live trading (zero broker/WebSocket code)
+- Python bindings (no PyO3 in Cargo.toml)
+- Production operations (no circuit breakers, kill switch, monitoring, reconciliation)
+- Model governance (no registry, drift detection, shadow/canary deployment)
+- True execution algorithms (TWAP/VWAP are static price models, not schedulers)
+- Options chain/volatility surface modeling
+- Brinson attribution, TCA, statistical tests (normality, autocorrelation, stationarity)
+- Database backends (only SQLite for experiments)
+- Alternative data integration
+- Feature store/drift monitoring
 
 ---
 
@@ -1150,7 +1205,7 @@ The following spec requirements are fully implemented and verified:
 - [x] Configuration via files and arguments
 - [x] Progress reporting (indicatif progress bars)
 - [x] Output in multiple formats (text, JSON, CSV)
-- [x] Comprehensive test coverage (433 tests passing)
+- [x] Comprehensive test coverage (450 tests passing)
 - [x] Stop-loss, take-profit, trailing stops
 - [x] Position sizing (risk-based, volatility-based, Kelly)
 - [x] Monte Carlo simulation
@@ -1185,3 +1240,5 @@ The following spec requirements are fully implemented and verified:
 - [x] Margin requirements (Reg T, portfolio margin, margin calls)
 - [x] Drift-based rebalancing (threshold-triggered, configurable presets)
 - [x] Factor attribution (Fama-French 3/5-factor, Carhart 4-factor, 6-factor models)
+- [x] Binomial tree model for American options (Cox-Ross-Rubinstein, early exercise premium, numerical Greeks)
+- [x] Monte Carlo CLI command (`mantis monte-carlo` for robustness testing)
