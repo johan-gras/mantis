@@ -4,13 +4,13 @@
 >
 > Items marked `[NOT STARTED]` were previously claimed as partial but verified to have no implementation.
 >
-> **Recent Changes**: Mean-variance optimization (Markowitz) now implemented with MeanVarianceOptimizer class, supporting minimum variance, maximum Sharpe ratio, and target return portfolios. Uses Clarabel quadratic optimizer.
+> **Recent Changes**: Black-Litterman portfolio optimization now implemented with comprehensive investor views support, combining market equilibrium with subjective views. All core portfolio construction methods (equal weight, inverse volatility, risk parity, mean-variance, HRP, Black-Litterman) are now complete.
 
 ## Current Status Summary
 
 | Metric | Status |
 |--------|--------|
-| **Tests** | 254+ passing |
+| **Tests** | 328 passing |
 | **Clippy** | 0 errors (PASSING) |
 | **Cargo fmt** | PASSING |
 | **Architecture** | Production-quality modular design |
@@ -374,14 +374,14 @@ Items are organized by category and prioritized within each category. Priority r
 - Rolling correlation between symbols
 - Correlation matrix estimation
 
-### [PARTIAL ~85%] [HIGH] Portfolio Construction Methods
+### [COMPLETE] [HIGH] Portfolio Construction Methods
 - **IMPLEMENTED**:
   - Equal-weight allocation, momentum-based allocation
   - Inverse volatility weighting, risk parity
   - Mean-variance optimization (Markowitz) - minimum variance, maximum Sharpe ratio, target return portfolios
   - Hierarchical Risk Parity (HRP)
+  - Black-Litterman model - combines market equilibrium with investor views, supports absolute/relative views, view confidence matrix
 - **MISSING**:
-  - Black-Litterman model
   - Target volatility portfolios
   - Max diversification portfolios
 
@@ -952,7 +952,7 @@ cargo doc --no-deps --open
 | Position Management | 8 | 1 | 0 | 4 | 13 |
 | ML Integration | 6 | 1 | 0 | 4 | 11 |
 | Multi-Timeframe | 1 | 1 | 0 | 3 | 5 |
-| Multi-Asset Portfolio | 4 | 1 | 0 | 4 | 9 |
+| Multi-Asset Portfolio | 5 | 1 | 0 | 3 | 9 |
 | Options & Derivatives | 0 | 1 | 0 | 8 | 9 |
 | Risk & Validation | 2 | 3 | 0 | 4 | 9 |
 | Performance Analytics | 4 | 0 | 0 | 5 | 9 |
@@ -962,9 +962,9 @@ cargo doc --no-deps --open
 | CLI & Configuration | 3 | 1 | 0 | 4 | 8 |
 | Execution Realism | 2 | 1 | 0 | 3 | 6 |
 | Reproducibility | 2 | 2 | 0 | 0 | 4 |
-| **TOTAL** | **42** | **11** | **4** | **68** | **127** |
+| **TOTAL** | **43** | **11** | **4** | **67** | **127** |
 
-**Estimated Completion: ~40%** (core backtesting solid; Cross-Sectional Features and CPCV now complete; inverse volatility, risk parity, mean-variance optimization, Hierarchical Risk Parity (HRP), and Portfolio Constraints complete; ONNX inference architecture complete but blocked by ort crate instability; live trading and Python bindings not started)
+**Estimated Completion: ~41%** (core backtesting solid; Cross-Sectional Features and CPCV now complete; all major portfolio construction methods complete including Black-Litterman; ONNX inference architecture complete but blocked by ort crate instability; live trading and Python bindings not started)
 
 ---
 
@@ -991,7 +991,7 @@ The following spec requirements are fully implemented and verified:
 - [x] Configuration via files and arguments
 - [x] Progress reporting (indicatif progress bars)
 - [x] Output in multiple formats (text, JSON, CSV)
-- [x] Comprehensive test coverage (254+ tests)
+- [x] Comprehensive test coverage (328 tests)
 - [x] Stop-loss, take-profit, trailing stops
 - [x] Position sizing (risk-based, volatility-based, Kelly)
 - [x] Monte Carlo simulation

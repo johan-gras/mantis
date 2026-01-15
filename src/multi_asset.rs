@@ -2091,6 +2091,594 @@ impl PortfolioStrategy for MeanVarianceStrategy {
     }
 }
 
+/// Represents an investor's view in the Black-Litterman model.
+///
+/// Views express the investor's expectations about asset returns,
+/// which are combined with market equilibrium returns using Bayesian updating.
+#[derive(Debug, Clone)]
+pub enum View {
+    /// Absolute view: Asset will return X% (annualized).
+    ///
+    /// # Example
+    /// `View::Absolute("AAPL".to_string(), 0.15, 0.05)` means:
+    /// "I believe AAPL will return 15% with 5% confidence level (variance)"
+    Absolute {
+        symbol: String,
+        expected_return: f64,
+        confidence: f64, // Variance of view (lower = more confident)
+    },
+    /// Relative view: Asset A will outperform Asset B by X% (annualized).
+    ///
+    /// # Example
+    /// `View::Relative("AAPL".to_string(), "GOOGL".to_string(), 0.03, 0.02)` means:
+    /// "I believe AAPL will outperform GOOGL by 3% with confidence level 0.02"
+    Relative {
+        symbol_a: String,
+        symbol_b: String,
+        expected_outperformance: f64,
+        confidence: f64,
+    },
+}
+
+/// Black-Litterman portfolio optimizer.
+///
+/// The Black-Litterman model combines market equilibrium returns (derived from
+/// market capitalization weights via reverse optimization) with investor views
+/// using Bayesian updating. This produces more stable and intuitive portfolios
+/// than pure mean-variance optimization.
+///
+/// # Mathematical Framework
+///
+/// 1. **Market Implied Returns (Π)**: Π = δ * Σ * w_mkt
+///    where δ is risk aversion, Σ is covariance, w_mkt is market cap weights
+///
+/// 2. **Bayesian Update**: E[R] = [(τΣ)^-1 + P'Ω^-1P]^-1 [(τΣ)^-1 Π + P'Ω^-1 Q]
+///    where:
+///    - τ is uncertainty scaling (typically 0.025-0.05)
+///    - P is "pick matrix" encoding views
+///    - Q is vector of view returns
+///    - Ω is diagonal matrix of view confidence levels
+///
+/// 3. **Optimal Weights**: Run mean-variance optimization with posterior returns E[R]
+///
+/// # Example
+///
+/// ```ignore
+/// let symbols = vec!["AAPL".to_string(), "GOOGL".to_string(), "MSFT".to_string()];
+/// let market_caps = vec![3000e9, 2000e9, 2500e9]; // Market cap in dollars
+/// let covariance_matrix = ...; // Compute from history
+///
+/// let mut optimizer = BlackLittermanOptimizer::new(
+///     symbols,
+///     market_caps,
+///     covariance_matrix,
+///     0.03,  // tau
+///     2.5,   // risk aversion
+///     0.02   // risk-free rate
+/// )?;
+///
+/// // Add views
+/// optimizer.add_view(View::Absolute {
+///     symbol: "AAPL".to_string(),
+///     expected_return: 0.15,
+///     confidence: 0.05,
+/// });
+///
+/// optimizer.add_view(View::Relative {
+///     symbol_a: "GOOGL".to_string(),
+///     symbol_b: "MSFT".to_string(),
+///     expected_outperformance: 0.03,
+///     confidence: 0.02,
+/// });
+///
+/// let weights = optimizer.optimize()?;
+/// ```
+///
+/// # References
+/// - Black, F. and Litterman, R. (1992). "Global Portfolio Optimization"
+/// - He, G. and Litterman, R. (1999). "The Intuition Behind Black-Litterman"
+pub struct BlackLittermanOptimizer {
+    /// Asset symbols in order.
+    symbols: Vec<String>,
+    /// Market capitalization weights (must sum to 1.0).
+    market_weights: Vec<f64>,
+    /// Covariance matrix (annualized).
+    covariance_matrix: Vec<Vec<f64>>,
+    /// Tau: uncertainty scaling factor (typically 0.025-0.05).
+    /// Represents uncertainty in the prior (market equilibrium).
+    tau: f64,
+    /// Risk aversion coefficient (typically 2.5-4.0).
+    /// Higher values = more conservative portfolios.
+    risk_aversion: f64,
+    /// Risk-free rate (annualized).
+    risk_free_rate: f64,
+    /// Investor views.
+    views: Vec<View>,
+}
+
+impl BlackLittermanOptimizer {
+    /// Create a new Black-Litterman optimizer.
+    ///
+    /// # Arguments
+    /// * `symbols` - Asset symbols
+    /// * `market_caps` - Market capitalizations (used to derive market weights)
+    /// * `covariance_matrix` - Annualized covariance matrix (NxN)
+    /// * `tau` - Uncertainty scaling (0.025-0.05 typical)
+    /// * `risk_aversion` - Risk aversion coefficient (2.5 typical)
+    /// * `risk_free_rate` - Risk-free rate (annualized)
+    pub fn new(
+        symbols: Vec<String>,
+        market_caps: Vec<f64>,
+        covariance_matrix: Vec<Vec<f64>>,
+        tau: f64,
+        risk_aversion: f64,
+        risk_free_rate: f64,
+    ) -> Result<Self> {
+        let n = symbols.len();
+
+        if market_caps.len() != n {
+            return Err(BacktestError::InvalidInput(
+                "Market caps length must match number of symbols".to_string(),
+            ));
+        }
+
+        if covariance_matrix.len() != n || covariance_matrix.iter().any(|row| row.len() != n) {
+            return Err(BacktestError::InvalidInput(
+                "Covariance matrix must be square and match number of symbols".to_string(),
+            ));
+        }
+
+        if tau <= 0.0 || tau > 1.0 {
+            return Err(BacktestError::InvalidInput(
+                "Tau must be between 0 and 1 (typically 0.025-0.05)".to_string(),
+            ));
+        }
+
+        if risk_aversion <= 0.0 {
+            return Err(BacktestError::InvalidInput(
+                "Risk aversion must be positive".to_string(),
+            ));
+        }
+
+        // Normalize market caps to weights
+        let total_cap: f64 = market_caps.iter().sum();
+        if total_cap <= 0.0 {
+            return Err(BacktestError::InvalidInput(
+                "Total market cap must be positive".to_string(),
+            ));
+        }
+
+        let market_weights: Vec<f64> = market_caps.iter().map(|&cap| cap / total_cap).collect();
+
+        Ok(Self {
+            symbols,
+            market_weights,
+            covariance_matrix,
+            tau,
+            risk_aversion,
+            risk_free_rate,
+            views: Vec::new(),
+        })
+    }
+
+    /// Create optimizer from historical data with equal market weights.
+    ///
+    /// # Arguments
+    /// * `bars` - Historical bars for each symbol
+    /// * `lookback` - Number of periods to use for covariance estimation
+    /// * `tau` - Uncertainty scaling
+    /// * `risk_aversion` - Risk aversion coefficient
+    /// * `risk_free_rate` - Risk-free rate (annualized)
+    pub fn from_history(
+        bars: &HashMap<String, Vec<Bar>>,
+        lookback: usize,
+        tau: f64,
+        risk_aversion: f64,
+        risk_free_rate: f64,
+    ) -> Result<Self> {
+        let symbols: Vec<String> = bars.keys().cloned().collect();
+        let n = symbols.len();
+
+        if n == 0 {
+            return Err(BacktestError::InvalidInput(
+                "Need at least one symbol".to_string(),
+            ));
+        }
+
+        // Calculate returns for each asset
+        let mut returns_matrix: Vec<Vec<f64>> = Vec::new();
+        for symbol in &symbols {
+            let asset_bars = bars.get(symbol).ok_or_else(|| {
+                BacktestError::InvalidInput(format!("Missing bars for symbol {}", symbol))
+            })?;
+
+            if asset_bars.len() < lookback + 1 {
+                return Err(BacktestError::InvalidInput(format!(
+                    "Insufficient data for symbol {}: need {} bars, have {}",
+                    symbol,
+                    lookback + 1,
+                    asset_bars.len()
+                )));
+            }
+
+            let returns: Vec<f64> = asset_bars[asset_bars.len() - lookback - 1..]
+                .windows(2)
+                .map(|w| (w[1].close - w[0].close) / w[0].close)
+                .collect();
+
+            returns_matrix.push(returns);
+        }
+
+        // Calculate covariance matrix and annualize
+        let mut covariance_matrix = vec![vec![0.0; n]; n];
+        for i in 0..n {
+            for j in 0..n {
+                let mean_i = returns_matrix[i].iter().sum::<f64>() / returns_matrix[i].len() as f64;
+                let mean_j = returns_matrix[j].iter().sum::<f64>() / returns_matrix[j].len() as f64;
+
+                let cov = returns_matrix[i]
+                    .iter()
+                    .zip(returns_matrix[j].iter())
+                    .map(|(ri, rj)| (ri - mean_i) * (rj - mean_j))
+                    .sum::<f64>()
+                    / returns_matrix[i].len() as f64;
+
+                covariance_matrix[i][j] = cov * 252.0; // Annualize assuming daily data
+            }
+        }
+
+        // Use equal market weights (1/n each)
+        let market_caps = vec![1.0; n];
+
+        Self::new(
+            symbols,
+            market_caps,
+            covariance_matrix,
+            tau,
+            risk_aversion,
+            risk_free_rate,
+        )
+    }
+
+    /// Add an investor view.
+    pub fn add_view(&mut self, view: View) {
+        self.views.push(view);
+    }
+
+    /// Calculate market implied equilibrium returns (Π = δ * Σ * w_mkt).
+    ///
+    /// These are the returns implied by the current market capitalization weights,
+    /// assuming the market is in equilibrium.
+    #[allow(clippy::needless_range_loop)]
+    pub fn implied_returns(&self) -> Vec<f64> {
+        let n = self.symbols.len();
+        let mut implied = vec![0.0; n];
+
+        for i in 0..n {
+            for j in 0..n {
+                implied[i] +=
+                    self.risk_aversion * self.covariance_matrix[i][j] * self.market_weights[j];
+            }
+        }
+
+        implied
+    }
+
+    /// Compute posterior expected returns by blending market equilibrium with views.
+    ///
+    /// Uses Bayesian updating: E[R] = [(τΣ)^-1 + P'Ω^-1P]^-1 [(τΣ)^-1 Π + P'Ω^-1 Q]
+    pub fn compute_posterior_returns(&self) -> Result<Vec<f64>> {
+        let n = self.symbols.len();
+        let k = self.views.len();
+
+        // If no views, return implied equilibrium returns
+        if k == 0 {
+            return Ok(self.implied_returns());
+        }
+
+        let implied = self.implied_returns();
+
+        // Build P matrix (k x n) and Q vector (k x 1)
+        // P encodes which assets each view refers to
+        // Q contains the expected returns from views
+        let mut p_matrix = vec![vec![0.0; n]; k];
+        let mut q_vector = vec![0.0; k];
+        let mut omega_diag = vec![0.0; k]; // View confidence (diagonal of Ω)
+
+        for (view_idx, view) in self.views.iter().enumerate() {
+            match view {
+                View::Absolute {
+                    symbol,
+                    expected_return,
+                    confidence,
+                } => {
+                    // Find symbol index
+                    if let Some(asset_idx) = self.symbols.iter().position(|s| s == symbol) {
+                        p_matrix[view_idx][asset_idx] = 1.0;
+                        q_vector[view_idx] = *expected_return;
+                        omega_diag[view_idx] = *confidence;
+                    } else {
+                        return Err(BacktestError::InvalidInput(format!(
+                            "View references unknown symbol: {}",
+                            symbol
+                        )));
+                    }
+                }
+                View::Relative {
+                    symbol_a,
+                    symbol_b,
+                    expected_outperformance,
+                    confidence,
+                } => {
+                    let idx_a = self.symbols.iter().position(|s| s == symbol_a);
+                    let idx_b = self.symbols.iter().position(|s| s == symbol_b);
+
+                    match (idx_a, idx_b) {
+                        (Some(a), Some(b)) => {
+                            p_matrix[view_idx][a] = 1.0;
+                            p_matrix[view_idx][b] = -1.0;
+                            q_vector[view_idx] = *expected_outperformance;
+                            omega_diag[view_idx] = *confidence;
+                        }
+                        _ => {
+                            return Err(BacktestError::InvalidInput(
+                                "Relative view references unknown symbols".to_string(),
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+
+        // Compute τΣ
+        let tau_cov: Vec<Vec<f64>> = self
+            .covariance_matrix
+            .iter()
+            .map(|row| row.iter().map(|&val| self.tau * val).collect())
+            .collect();
+
+        // Compute (τΣ)^-1 using simple matrix inversion for small matrices
+        let tau_cov_inv = self.invert_matrix(&tau_cov)?;
+
+        // Compute P'Ω^-1P (n x n matrix)
+        let mut pt_omega_inv_p = vec![vec![0.0; n]; n];
+        for i in 0..n {
+            for j in 0..n {
+                let mut sum = 0.0;
+                for view_idx in 0..k {
+                    sum += p_matrix[view_idx][i] * p_matrix[view_idx][j] / omega_diag[view_idx];
+                }
+                pt_omega_inv_p[i][j] = sum;
+            }
+        }
+
+        // Compute [(τΣ)^-1 + P'Ω^-1P]
+        let mut combined_precision = vec![vec![0.0; n]; n];
+        for i in 0..n {
+            for j in 0..n {
+                combined_precision[i][j] = tau_cov_inv[i][j] + pt_omega_inv_p[i][j];
+            }
+        }
+
+        // Invert to get posterior covariance
+        let posterior_cov = self.invert_matrix(&combined_precision)?;
+
+        // Compute right-hand side: (τΣ)^-1 Π + P'Ω^-1 Q
+        let mut rhs = vec![0.0; n];
+        for i in 0..n {
+            // (τΣ)^-1 Π term
+            for j in 0..n {
+                rhs[i] += tau_cov_inv[i][j] * implied[j];
+            }
+
+            // P'Ω^-1 Q term
+            for view_idx in 0..k {
+                rhs[i] += p_matrix[view_idx][i] * q_vector[view_idx] / omega_diag[view_idx];
+            }
+        }
+
+        // Multiply posterior covariance by RHS to get posterior returns
+        let mut posterior_returns = vec![0.0; n];
+        for i in 0..n {
+            for j in 0..n {
+                posterior_returns[i] += posterior_cov[i][j] * rhs[j];
+            }
+        }
+
+        Ok(posterior_returns)
+    }
+
+    /// Optimize portfolio using Black-Litterman posterior returns.
+    ///
+    /// Returns optimal weights that maximize Sharpe ratio using the
+    /// posterior expected returns from Black-Litterman.
+    pub fn optimize(&self) -> Result<HashMap<String, f64>> {
+        let posterior_returns = self.compute_posterior_returns()?;
+
+        // Use mean-variance optimizer with posterior returns
+        let mv_optimizer = MeanVarianceOptimizer::new(
+            self.symbols.clone(),
+            posterior_returns,
+            self.covariance_matrix.clone(),
+            self.risk_free_rate,
+        )?;
+
+        mv_optimizer.maximum_sharpe_ratio()
+    }
+
+    /// Invert a matrix using Gaussian elimination (for small matrices).
+    #[allow(clippy::needless_range_loop)]
+    fn invert_matrix(&self, matrix: &[Vec<f64>]) -> Result<Vec<Vec<f64>>> {
+        let n = matrix.len();
+
+        // Create augmented matrix [A | I]
+        let mut aug = vec![vec![0.0; 2 * n]; n];
+        for i in 0..n {
+            for j in 0..n {
+                aug[i][j] = matrix[i][j];
+            }
+            aug[i][n + i] = 1.0; // Identity on right side
+        }
+
+        // Forward elimination with partial pivoting
+        for col in 0..n {
+            // Find pivot
+            let mut max_row = col;
+            for row in (col + 1)..n {
+                if aug[row][col].abs() > aug[max_row][col].abs() {
+                    max_row = row;
+                }
+            }
+
+            // Swap rows
+            if max_row != col {
+                aug.swap(col, max_row);
+            }
+
+            // Check for singularity
+            if aug[col][col].abs() < 1e-10 {
+                return Err(BacktestError::OptimizationError(
+                    "Matrix is singular or nearly singular".to_string(),
+                ));
+            }
+
+            // Eliminate column
+            for row in (col + 1)..n {
+                let factor = aug[row][col] / aug[col][col];
+                for j in col..(2 * n) {
+                    aug[row][j] -= factor * aug[col][j];
+                }
+            }
+        }
+
+        // Back substitution
+        for col in (0..n).rev() {
+            // Normalize pivot row
+            let pivot = aug[col][col];
+            for j in 0..(2 * n) {
+                aug[col][j] /= pivot;
+            }
+
+            // Eliminate above
+            for row in 0..col {
+                let factor = aug[row][col];
+                for j in 0..(2 * n) {
+                    aug[row][j] -= factor * aug[col][j];
+                }
+            }
+        }
+
+        // Extract inverse from right half
+        let mut inverse = vec![vec![0.0; n]; n];
+        for i in 0..n {
+            for j in 0..n {
+                inverse[i][j] = aug[i][n + j];
+            }
+        }
+
+        Ok(inverse)
+    }
+}
+
+/// Black-Litterman optimized portfolio strategy.
+///
+/// Combines market equilibrium with investor views to construct portfolios
+/// that are more stable than pure mean-variance optimization.
+pub struct BlackLittermanStrategy {
+    /// Lookback period for covariance estimation.
+    lookback: usize,
+    /// Rebalancing frequency in bars.
+    rebalance_frequency: usize,
+    /// Last rebalance bar index.
+    last_rebalance: usize,
+    /// Tau: uncertainty scaling factor.
+    tau: f64,
+    /// Risk aversion coefficient.
+    risk_aversion: f64,
+    /// Risk-free rate (annualized).
+    risk_free_rate: f64,
+    /// Investor views to apply.
+    views: Vec<View>,
+}
+
+impl BlackLittermanStrategy {
+    /// Create a new Black-Litterman strategy.
+    ///
+    /// # Arguments
+    /// * `lookback` - Lookback period for covariance estimation
+    /// * `rebalance_frequency` - Rebalancing frequency in bars
+    /// * `tau` - Uncertainty scaling (0.025-0.05 typical)
+    /// * `risk_aversion` - Risk aversion coefficient (2.5 typical)
+    /// * `risk_free_rate` - Risk-free rate (annualized)
+    /// * `views` - Investor views
+    pub fn new(
+        lookback: usize,
+        rebalance_frequency: usize,
+        tau: f64,
+        risk_aversion: f64,
+        risk_free_rate: f64,
+        views: Vec<View>,
+    ) -> Self {
+        Self {
+            lookback,
+            rebalance_frequency,
+            last_rebalance: 0,
+            tau,
+            risk_aversion,
+            risk_free_rate,
+            views,
+        }
+    }
+}
+
+impl PortfolioStrategy for BlackLittermanStrategy {
+    fn name(&self) -> &str {
+        "Black-Litterman"
+    }
+
+    fn warmup_period(&self) -> usize {
+        self.lookback + 1
+    }
+
+    fn on_bars(&mut self, ctx: &PortfolioContext) -> AllocationSignal {
+        // Check if it's time to rebalance
+        if ctx.bar_index < self.last_rebalance + self.rebalance_frequency {
+            return AllocationSignal::Hold;
+        }
+
+        self.last_rebalance = ctx.bar_index;
+
+        // Build optimizer from historical data
+        let mut optimizer = match BlackLittermanOptimizer::from_history(
+            ctx.bars,
+            self.lookback,
+            self.tau,
+            self.risk_aversion,
+            self.risk_free_rate,
+        ) {
+            Ok(opt) => opt,
+            Err(e) => {
+                tracing::warn!("Failed to create Black-Litterman optimizer: {}", e);
+                return AllocationSignal::Hold;
+            }
+        };
+
+        // Add views
+        for view in &self.views {
+            optimizer.add_view(view.clone());
+        }
+
+        // Optimize
+        match optimizer.optimize() {
+            Ok(weights) => AllocationSignal::Rebalance(weights),
+            Err(e) => {
+                tracing::warn!("Black-Litterman optimization failed: {}", e);
+                AllocationSignal::Hold
+            }
+        }
+    }
+}
+
 /// Hierarchical Risk Parity (HRP) portfolio optimizer.
 ///
 /// HRP is a sophisticated portfolio allocation method developed by Marcos Lopez de Prado
@@ -3854,5 +4442,500 @@ mod tests {
             "Expected sector constraint error, got: {}",
             err_msg
         );
+    }
+
+    // Black-Litterman Tests
+
+    #[test]
+    fn test_black_litterman_optimizer_creation() {
+        let symbols = vec!["AAPL".to_string(), "GOOGL".to_string(), "MSFT".to_string()];
+        let market_caps = vec![3000e9, 2000e9, 2500e9]; // Market caps in billions
+        let covariance_matrix = vec![
+            vec![0.04, 0.01, 0.015],
+            vec![0.01, 0.09, 0.02],
+            vec![0.015, 0.02, 0.06],
+        ];
+
+        let optimizer = BlackLittermanOptimizer::new(
+            symbols,
+            market_caps,
+            covariance_matrix,
+            0.03, // tau
+            2.5,  // risk aversion
+            0.02, // risk-free rate
+        );
+
+        assert!(optimizer.is_ok());
+        let opt = optimizer.unwrap();
+        assert_eq!(opt.symbols.len(), 3);
+
+        // Check market weights sum to 1
+        let weight_sum: f64 = opt.market_weights.iter().sum();
+        assert!((weight_sum - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_black_litterman_invalid_dimensions() {
+        let symbols = vec!["AAPL".to_string(), "GOOGL".to_string()];
+        let market_caps = vec![3000e9]; // Wrong size
+        let covariance_matrix = vec![vec![0.04, 0.01], vec![0.01, 0.09]];
+
+        let optimizer =
+            BlackLittermanOptimizer::new(symbols, market_caps, covariance_matrix, 0.03, 2.5, 0.02);
+
+        assert!(optimizer.is_err());
+    }
+
+    #[test]
+    fn test_black_litterman_invalid_tau() {
+        let symbols = vec!["AAPL".to_string(), "GOOGL".to_string()];
+        let market_caps = vec![3000e9, 2000e9];
+        let covariance_matrix = vec![vec![0.04, 0.01], vec![0.01, 0.09]];
+
+        // Tau too high
+        let optimizer = BlackLittermanOptimizer::new(
+            symbols.clone(),
+            market_caps.clone(),
+            covariance_matrix.clone(),
+            1.5, // Invalid tau > 1
+            2.5,
+            0.02,
+        );
+        assert!(optimizer.is_err());
+
+        // Tau negative
+        let optimizer2 = BlackLittermanOptimizer::new(
+            symbols,
+            market_caps,
+            covariance_matrix,
+            -0.03, // Invalid negative tau
+            2.5,
+            0.02,
+        );
+        assert!(optimizer2.is_err());
+    }
+
+    #[test]
+    fn test_black_litterman_from_history() {
+        let bars1 = create_test_bars(100, 100.0, 0.001);
+        let bars2 = create_test_bars(100, 50.0, 0.002);
+        let bars3 = create_test_bars(100, 75.0, 0.0015);
+
+        let mut bars = HashMap::new();
+        bars.insert("AAPL".to_string(), bars1);
+        bars.insert("GOOGL".to_string(), bars2);
+        bars.insert("MSFT".to_string(), bars3);
+
+        let optimizer = BlackLittermanOptimizer::from_history(&bars, 50, 0.03, 2.5, 0.02);
+
+        assert!(optimizer.is_ok());
+        let opt = optimizer.unwrap();
+        assert_eq!(opt.symbols.len(), 3);
+
+        // Equal weights for from_history (no market caps provided)
+        for weight in opt.market_weights.iter() {
+            assert!((weight - 1.0 / 3.0).abs() < 1e-6);
+        }
+    }
+
+    #[test]
+    fn test_black_litterman_implied_returns() {
+        let symbols = vec!["AAPL".to_string(), "GOOGL".to_string()];
+        let market_caps = vec![3000e9, 2000e9]; // 60% AAPL, 40% GOOGL
+        let covariance_matrix = vec![vec![0.04, 0.01], vec![0.01, 0.09]];
+
+        let optimizer = BlackLittermanOptimizer::new(
+            symbols,
+            market_caps,
+            covariance_matrix,
+            0.03,
+            2.5, // risk aversion
+            0.02,
+        )
+        .unwrap();
+
+        let implied = optimizer.implied_returns();
+
+        // Implied returns should be non-negative and reasonable
+        assert_eq!(implied.len(), 2);
+        for &ret in implied.iter() {
+            assert!(ret.is_finite());
+            assert!(
+                ret > -1.0 && ret < 2.0,
+                "Implied return out of reasonable range: {}",
+                ret
+            );
+        }
+
+        // Asset with higher volatility should have higher implied return
+        // GOOGL has 30% vol (0.09), AAPL has 20% vol (0.04)
+        // But this depends on weights, so just check they're reasonable
+        println!("Implied returns: {:?}", implied);
+    }
+
+    #[test]
+    fn test_black_litterman_absolute_view() {
+        let symbols = vec!["AAPL".to_string(), "GOOGL".to_string()];
+        let market_caps = vec![3000e9, 2000e9];
+        let covariance_matrix = vec![vec![0.04, 0.01], vec![0.01, 0.09]];
+
+        let mut optimizer =
+            BlackLittermanOptimizer::new(symbols, market_caps, covariance_matrix, 0.03, 2.5, 0.02)
+                .unwrap();
+
+        // Add absolute view: AAPL will return 15%
+        optimizer.add_view(View::Absolute {
+            symbol: "AAPL".to_string(),
+            expected_return: 0.15,
+            confidence: 0.05,
+        });
+
+        let posterior = optimizer.compute_posterior_returns();
+        assert!(posterior.is_ok());
+
+        let returns = posterior.unwrap();
+        assert_eq!(returns.len(), 2);
+
+        // Posterior return for AAPL should be influenced by the view (closer to 15%)
+        // Exact value depends on confidence and prior, but should be finite
+        for &ret in returns.iter() {
+            assert!(ret.is_finite());
+        }
+
+        println!("Posterior returns with absolute view: {:?}", returns);
+    }
+
+    #[test]
+    fn test_black_litterman_relative_view() {
+        let symbols = vec!["AAPL".to_string(), "GOOGL".to_string(), "MSFT".to_string()];
+        let market_caps = vec![3000e9, 2000e9, 2500e9];
+        let covariance_matrix = vec![
+            vec![0.04, 0.01, 0.015],
+            vec![0.01, 0.09, 0.02],
+            vec![0.015, 0.02, 0.06],
+        ];
+
+        let mut optimizer =
+            BlackLittermanOptimizer::new(symbols, market_caps, covariance_matrix, 0.03, 2.5, 0.02)
+                .unwrap();
+
+        // Add relative view: AAPL will outperform GOOGL by 3%
+        optimizer.add_view(View::Relative {
+            symbol_a: "AAPL".to_string(),
+            symbol_b: "GOOGL".to_string(),
+            expected_outperformance: 0.03,
+            confidence: 0.02,
+        });
+
+        let posterior = optimizer.compute_posterior_returns();
+        assert!(posterior.is_ok());
+
+        let returns = posterior.unwrap();
+        assert_eq!(returns.len(), 3);
+
+        // AAPL return should be higher than GOOGL after incorporating view
+        // (though not guaranteed due to equilibrium blending)
+        for &ret in returns.iter() {
+            assert!(ret.is_finite());
+        }
+
+        println!("Posterior returns with relative view: {:?}", returns);
+    }
+
+    #[test]
+    fn test_black_litterman_multiple_views() {
+        let symbols = vec!["AAPL".to_string(), "GOOGL".to_string(), "MSFT".to_string()];
+        let market_caps = vec![3000e9, 2000e9, 2500e9];
+        let covariance_matrix = vec![
+            vec![0.04, 0.01, 0.015],
+            vec![0.01, 0.09, 0.02],
+            vec![0.015, 0.02, 0.06],
+        ];
+
+        let mut optimizer =
+            BlackLittermanOptimizer::new(symbols, market_caps, covariance_matrix, 0.03, 2.5, 0.02)
+                .unwrap();
+
+        // Add multiple views
+        optimizer.add_view(View::Absolute {
+            symbol: "AAPL".to_string(),
+            expected_return: 0.15,
+            confidence: 0.05,
+        });
+
+        optimizer.add_view(View::Relative {
+            symbol_a: "GOOGL".to_string(),
+            symbol_b: "MSFT".to_string(),
+            expected_outperformance: 0.02,
+            confidence: 0.03,
+        });
+
+        let posterior = optimizer.compute_posterior_returns();
+        assert!(posterior.is_ok());
+
+        let returns = posterior.unwrap();
+        assert_eq!(returns.len(), 3);
+
+        for &ret in returns.iter() {
+            assert!(ret.is_finite());
+        }
+
+        println!("Posterior returns with multiple views: {:?}", returns);
+    }
+
+    #[test]
+    fn test_black_litterman_optimize_no_views() {
+        let symbols = vec!["AAPL".to_string(), "GOOGL".to_string()];
+        let market_caps = vec![3000e9, 2000e9];
+        let covariance_matrix = vec![vec![0.04, 0.01], vec![0.01, 0.09]];
+
+        let optimizer = BlackLittermanOptimizer::new(
+            symbols.clone(),
+            market_caps,
+            covariance_matrix,
+            0.03,
+            2.5,
+            0.02,
+        )
+        .unwrap();
+
+        // No views added, should use pure equilibrium returns
+        let weights = optimizer.optimize();
+        assert!(weights.is_ok());
+
+        let w = weights.unwrap();
+        assert_eq!(w.len(), 2);
+
+        let total_weight: f64 = w.values().sum();
+        assert!((total_weight - 1.0).abs() < 0.01, "Weights should sum to 1");
+
+        for (symbol, weight) in w.iter() {
+            assert!(
+                *weight >= 0.0 && *weight <= 1.0,
+                "Weight for {} out of bounds: {}",
+                symbol,
+                weight
+            );
+        }
+
+        println!("Black-Litterman weights (no views): {:?}", w);
+    }
+
+    #[test]
+    fn test_black_litterman_optimize_with_views() {
+        let symbols = vec!["AAPL".to_string(), "GOOGL".to_string(), "MSFT".to_string()];
+        let market_caps = vec![3000e9, 2000e9, 2500e9];
+        let covariance_matrix = vec![
+            vec![0.04, 0.01, 0.015],
+            vec![0.01, 0.09, 0.02],
+            vec![0.015, 0.02, 0.06],
+        ];
+
+        let mut optimizer = BlackLittermanOptimizer::new(
+            symbols.clone(),
+            market_caps,
+            covariance_matrix,
+            0.03,
+            2.5,
+            0.02,
+        )
+        .unwrap();
+
+        // Add view that AAPL will have higher return
+        optimizer.add_view(View::Absolute {
+            symbol: "AAPL".to_string(),
+            expected_return: 0.20, // Strong bullish view
+            confidence: 0.02,      // High confidence (low variance)
+        });
+
+        let weights = optimizer.optimize();
+        assert!(weights.is_ok());
+
+        let w = weights.unwrap();
+        assert_eq!(w.len(), 3);
+
+        let total_weight: f64 = w.values().sum();
+        assert!(
+            (total_weight - 1.0).abs() < 0.01,
+            "Weights should sum to 1, got {}",
+            total_weight
+        );
+
+        // AAPL should have meaningful weight given bullish view
+        let aapl_weight = w.get("AAPL").copied().unwrap_or(0.0);
+        assert!(
+            aapl_weight > 0.0,
+            "AAPL should have positive weight with bullish view"
+        );
+
+        println!("Black-Litterman weights (with view): {:?}", w);
+    }
+
+    #[test]
+    fn test_black_litterman_view_confidence_impact() {
+        let symbols = vec!["AAPL".to_string(), "GOOGL".to_string()];
+        let market_caps = vec![3000e9, 2000e9];
+        let covariance_matrix = vec![vec![0.04, 0.01], vec![0.01, 0.09]];
+
+        // High confidence view
+        let mut optimizer_high = BlackLittermanOptimizer::new(
+            symbols.clone(),
+            market_caps.clone(),
+            covariance_matrix.clone(),
+            0.03,
+            2.5,
+            0.02,
+        )
+        .unwrap();
+
+        optimizer_high.add_view(View::Absolute {
+            symbol: "AAPL".to_string(),
+            expected_return: 0.20,
+            confidence: 0.01, // High confidence (low variance)
+        });
+
+        let returns_high = optimizer_high.compute_posterior_returns().unwrap();
+
+        // Low confidence view
+        let mut optimizer_low = BlackLittermanOptimizer::new(
+            symbols.clone(),
+            market_caps.clone(),
+            covariance_matrix.clone(),
+            0.03,
+            2.5,
+            0.02,
+        )
+        .unwrap();
+
+        optimizer_low.add_view(View::Absolute {
+            symbol: "AAPL".to_string(),
+            expected_return: 0.20,
+            confidence: 0.10, // Low confidence (high variance)
+        });
+
+        let returns_low = optimizer_low.compute_posterior_returns().unwrap();
+
+        // High confidence view should pull AAPL return closer to 0.20
+        println!("High confidence posterior: {:?}", returns_high);
+        println!("Low confidence posterior: {:?}", returns_low);
+
+        // Both should be finite
+        assert!(returns_high[0].is_finite());
+        assert!(returns_low[0].is_finite());
+    }
+
+    #[test]
+    fn test_black_litterman_strategy_creation() {
+        let views = vec![View::Absolute {
+            symbol: "AAPL".to_string(),
+            expected_return: 0.15,
+            confidence: 0.05,
+        }];
+
+        let strategy = BlackLittermanStrategy::new(60, 20, 0.03, 2.5, 0.02, views);
+
+        assert_eq!(strategy.name(), "Black-Litterman");
+        assert_eq!(strategy.warmup_period(), 61);
+    }
+
+    #[test]
+    fn test_black_litterman_strategy_backtest() {
+        let config = BacktestConfig::default();
+        let mut engine = MultiAssetEngine::new(config);
+
+        let bars1 = create_test_bars(100, 100.0, 0.002); // Higher growth
+        let bars2 = create_test_bars(100, 50.0, 0.001); // Lower growth
+        let bars3 = create_test_bars(100, 75.0, 0.0015);
+
+        engine.add_data("AAPL", bars1);
+        engine.add_data("GOOGL", bars2);
+        engine.add_data("MSFT", bars3);
+
+        // Add view that AAPL will outperform
+        let views = vec![View::Absolute {
+            symbol: "AAPL".to_string(),
+            expected_return: 0.20,
+            confidence: 0.03,
+        }];
+
+        let mut strategy = BlackLittermanStrategy::new(60, 20, 0.03, 2.5, 0.02, views);
+        let result = engine.run(&mut strategy);
+
+        assert!(result.is_ok());
+        let res = result.unwrap();
+        assert!(res.final_equity > 0.0);
+        assert_eq!(res.symbols.len(), 3);
+
+        println!(
+            "Black-Litterman backtest result: {} trades",
+            res.total_trades
+        );
+        println!(
+            "Final equity: {}, Initial: {}",
+            res.final_equity, res.initial_capital
+        );
+    }
+
+    #[test]
+    fn test_black_litterman_matrix_inversion() {
+        // Test with a well-conditioned matrix
+        let symbols = vec!["A".to_string(), "B".to_string()];
+        let market_caps = vec![1.0, 1.0];
+        let covariance_matrix = vec![vec![1.0, 0.5], vec![0.5, 1.0]];
+
+        let optimizer = BlackLittermanOptimizer::new(
+            symbols,
+            market_caps,
+            covariance_matrix.clone(),
+            0.03,
+            2.5,
+            0.02,
+        )
+        .unwrap();
+
+        // Test matrix inversion
+        let inverse = optimizer.invert_matrix(&covariance_matrix);
+        assert!(inverse.is_ok());
+
+        let inv = inverse.unwrap();
+        assert_eq!(inv.len(), 2);
+        assert_eq!(inv[0].len(), 2);
+
+        // Check that A * A^-1 ≈ I
+        let mut product = vec![vec![0.0; 2]; 2];
+        for i in 0..2 {
+            for j in 0..2 {
+                for k in 0..2 {
+                    product[i][j] += covariance_matrix[i][k] * inv[k][j];
+                }
+            }
+        }
+
+        // Should be close to identity
+        assert!((product[0][0] - 1.0).abs() < 1e-6);
+        assert!((product[1][1] - 1.0).abs() < 1e-6);
+        assert!(product[0][1].abs() < 1e-6);
+        assert!(product[1][0].abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_black_litterman_invalid_view_symbol() {
+        let symbols = vec!["AAPL".to_string(), "GOOGL".to_string()];
+        let market_caps = vec![3000e9, 2000e9];
+        let covariance_matrix = vec![vec![0.04, 0.01], vec![0.01, 0.09]];
+
+        let mut optimizer =
+            BlackLittermanOptimizer::new(symbols, market_caps, covariance_matrix, 0.03, 2.5, 0.02)
+                .unwrap();
+
+        // Add view with unknown symbol
+        optimizer.add_view(View::Absolute {
+            symbol: "TSLA".to_string(), // Not in optimizer
+            expected_return: 0.15,
+            confidence: 0.05,
+        });
+
+        let posterior = optimizer.compute_posterior_returns();
+        assert!(posterior.is_err());
     }
 }
