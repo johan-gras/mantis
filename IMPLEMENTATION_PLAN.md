@@ -464,11 +464,12 @@ Items are organized by category and prioritized within each category. Priority r
 - Return distribution analysis
 - Confidence interval generation
 
-### [PARTIAL ~40%] [HIGH] Overfitting Detection
-- **IMPLEMENTED**: Walk-forward validation
+### [PARTIAL ~70%] [HIGH] Overfitting Detection
+- **IMPLEMENTED**:
+  - Walk-forward validation
+  - Deflated Sharpe Ratio (Lopez de Prado) - adjusts for multiple testing bias
+  - Probabilistic Sharpe Ratio - statistical confidence in performance (accounts for skewness and kurtosis)
 - **MISSING**:
-  - Deflated Sharpe Ratio (Lopez de Prado)
-  - Probabilistic Sharpe Ratio
   - Out-of-sample performance threshold checks
   - Parameter stability testing (small changes -> small performance changes)
 
@@ -928,7 +929,7 @@ cargo doc --no-deps --open
 | Multi-Timeframe | 1 | 1 | 0 | 3 | 5 |
 | Multi-Asset Portfolio | 3 | 1 | 0 | 5 | 9 |
 | Options & Derivatives | 0 | 1 | 0 | 8 | 9 |
-| Risk & Validation | 2 | 1 | 0 | 6 | 9 |
+| Risk & Validation | 2 | 2 | 0 | 5 | 9 |
 | Performance Analytics | 4 | 0 | 0 | 5 | 9 |
 | Production Operations | 0 | 0 | 0 | 7 | 7 |
 | Model Governance | 0 | 0 | 0 | 6 | 6 |
@@ -936,9 +937,9 @@ cargo doc --no-deps --open
 | CLI & Configuration | 3 | 1 | 0 | 4 | 8 |
 | Execution Realism | 2 | 1 | 0 | 3 | 6 |
 | Reproducibility | 0 | 2 | 0 | 2 | 4 |
-| **TOTAL** | **37** | **11** | **4** | **75** | **127** |
+| **TOTAL** | **37** | **12** | **4** | **74** | **127** |
 
-**Estimated Completion: ~33%** (core backtesting solid; ONNX inference architecture complete but blocked by ort crate instability; live trading and Python bindings not started)
+**Estimated Completion: ~34%** (core backtesting solid; ONNX inference architecture complete but blocked by ort crate instability; live trading and Python bindings not started)
 
 ---
 

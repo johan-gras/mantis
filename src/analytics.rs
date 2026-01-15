@@ -407,6 +407,10 @@ pub struct PerformanceMetrics {
     pub kurtosis: f64,
     pub tail_ratio: f64,
 
+    // Overfitting detection metrics
+    pub deflated_sharpe_ratio: f64,
+    pub probabilistic_sharpe_ratio: f64,
+
     // Trade statistics
     pub total_trades: usize,
     pub winning_trades: usize,
@@ -457,6 +461,21 @@ impl PerformanceMetrics {
         let skewness = Self::skewness(&daily_returns);
         let kurtosis = Self::kurtosis(&daily_returns);
         let tail_ratio = Self::tail_ratio(&daily_returns);
+
+        // Overfitting detection metrics
+        // Note: n_trials defaults to 1 (no multiple testing adjustment)
+        // In optimization contexts, this should be set to the number of parameter combinations tested
+        let n_trials = 1; // TODO: Pass from optimization context
+        let n_observations = daily_returns.len();
+        let deflated_sharpe_ratio =
+            Self::deflated_sharpe_ratio(result.sharpe_ratio, n_trials, n_observations);
+        let probabilistic_sharpe_ratio = Self::probabilistic_sharpe_ratio(
+            result.sharpe_ratio,
+            skewness,
+            kurtosis,
+            n_observations,
+            0.0, // Benchmark SR = 0
+        );
 
         // Trade analysis
         let closed_trades: Vec<_> = result.trades.iter().filter(|t| t.is_closed()).collect();
@@ -553,6 +572,8 @@ impl PerformanceMetrics {
             skewness,
             kurtosis,
             tail_ratio,
+            deflated_sharpe_ratio,
+            probabilistic_sharpe_ratio,
             total_trades: result.total_trades,
             winning_trades: result.winning_trades,
             losing_trades: result.losing_trades,
@@ -810,6 +831,102 @@ impl PerformanceMetrics {
         }
     }
 
+    /// Calculate Deflated Sharpe Ratio (DSR) - adjusts for multiple testing bias.
+    /// Based on Bailey & Lopez de Prado (2014) "The Deflated Sharpe Ratio".
+    ///
+    /// DSR = (SR - E[SR_max]) / sqrt(Var[SR_max])
+    ///
+    /// Where E[SR_max] is the expected maximum Sharpe ratio under the null hypothesis
+    /// (all strategies are random) given the number of trials.
+    ///
+    /// # Arguments
+    /// * `sharpe` - The observed Sharpe ratio
+    /// * `n_trials` - Number of independent strategies/parameter combinations tested
+    /// * `n_observations` - Number of return observations (e.g., trading days)
+    ///
+    /// # Returns
+    /// Deflated Sharpe Ratio. Values < 0 suggest the observed SR is likely due to luck.
+    fn deflated_sharpe_ratio(sharpe: f64, n_trials: usize, n_observations: usize) -> f64 {
+        if n_trials <= 1 {
+            // No multiple testing - return original Sharpe
+            return sharpe;
+        }
+
+        if n_observations < 2 {
+            return 0.0;
+        }
+
+        // Expected maximum Sharpe ratio under null hypothesis (random strategies)
+        // Approximation: E[SR_max] ≈ sqrt(2 * ln(N)) for large N
+        let n = n_trials as f64;
+        let expected_max_sr = (2.0 * n.ln()).sqrt();
+
+        // Variance of maximum SR under null: Var[SR_max] ≈ 1 for large samples
+        // More accurate: Var[SR_max] = 1 + (1 - Euler-Mascheroni) / N
+        let euler_mascheroni = 0.5772156649;
+        let var_max_sr = 1.0 + (1.0 - euler_mascheroni) / n;
+
+        // Deflated Sharpe Ratio
+        let dsr = (sharpe - expected_max_sr) / var_max_sr.sqrt();
+
+        dsr
+    }
+
+    /// Calculate Probabilistic Sharpe Ratio (PSR) - probability that SR > benchmark SR.
+    /// Based on Bailey & Lopez de Prado (2012) "The Sharpe Ratio Efficient Frontier".
+    ///
+    /// PSR = Φ(Z) where Z = (SR - SR*) × sqrt(T-1) / sqrt(1 - γ₃×SR + (γ₄-1)/4 × SR²)
+    ///
+    /// PSR = P[True SR > Benchmark SR | observed data]
+    ///
+    /// # Arguments
+    /// * `sharpe` - The observed annualized Sharpe ratio
+    /// * `skewness` - Skewness of returns (γ₃)
+    /// * `kurtosis` - Excess kurtosis of returns (γ₄)
+    /// * `n_observations` - Number of return observations (T)
+    /// * `benchmark_sr` - Reference Sharpe ratio (typically 0)
+    ///
+    /// # Returns
+    /// Probability between 0 and 1. PSR > 0.95 suggests high confidence the strategy
+    /// has skill (true SR > benchmark). PSR < 0.5 suggests the observed SR is likely luck.
+    fn probabilistic_sharpe_ratio(
+        sharpe: f64,
+        skewness: f64,
+        kurtosis: f64,
+        n_observations: usize,
+        benchmark_sr: f64,
+    ) -> f64 {
+        if n_observations < 2 {
+            return 0.5; // No information
+        }
+
+        let t = n_observations as f64;
+
+        // Calculate the denominator: adjusted variance of SR estimate
+        // Var[SR] = (1 - γ₃×SR + (γ₄-1)/4 × SR²) / (T-1)
+        let variance_adjustment =
+            1.0 - skewness * sharpe + (kurtosis - 1.0) / 4.0 * sharpe.powi(2);
+
+        // Protect against negative variance (can happen with extreme skew/kurtosis)
+        let variance_adjustment = variance_adjustment.max(0.01);
+
+        // Standard error of SR estimate
+        let std_error = (variance_adjustment / (t - 1.0)).sqrt();
+
+        // Test statistic: Z = (SR - SR_benchmark) / SE[SR]
+        let z_score = if std_error > 0.0 {
+            (sharpe - benchmark_sr) / std_error
+        } else {
+            0.0
+        };
+
+        // PSR = Φ(Z) - cumulative distribution function of standard normal
+        // Using error function: Φ(z) = 0.5 × (1 + erf(z / sqrt(2)))
+        let psr = 0.5 * (1.0 + erf(z_score / std::f64::consts::SQRT_2));
+
+        psr.clamp(0.0, 1.0)
+    }
+
     fn monthly_returns(result: &BacktestResult) -> Vec<f64> {
         // Simplified monthly returns estimation
         let months = (result.end_time - result.start_time).num_days() / 30;
@@ -820,6 +937,28 @@ impl PerformanceMetrics {
         let monthly_return = result.total_return_pct / months as f64;
         vec![monthly_return; months as usize]
     }
+}
+
+/// Error function (erf) approximation for normal CDF calculation.
+/// Uses Abramowitz and Stegun approximation (max error: 1.5e-7).
+fn erf(x: f64) -> f64 {
+    // Constants for approximation
+    let a1 = 0.254829592;
+    let a2 = -0.284496736;
+    let a3 = 1.421413741;
+    let a4 = -1.453152027;
+    let a5 = 1.061405429;
+    let p = 0.3275911;
+
+    // Save the sign of x
+    let sign = if x < 0.0 { -1.0 } else { 1.0 };
+    let x = x.abs();
+
+    // A&S formula 7.1.26
+    let t = 1.0 / (1.0 + p * x);
+    let y = 1.0 - (((((a5 * t + a4) * t) + a3) * t + a2) * t + a1) * t * (-x * x).exp();
+
+    sign * y
 }
 
 /// Format results for terminal display.
@@ -877,6 +1016,19 @@ impl ResultFormatter {
         println!("  Tail Ratio:      {:>12.2}", metrics.tail_ratio);
         println!();
 
+        // Overfitting Detection
+        println!("{}", "Overfitting Detection".bold().underline());
+        println!(
+            "  Deflated Sharpe: {:>12.2}",
+            metrics.deflated_sharpe_ratio
+        );
+        println!(
+            "  Prob. Sharpe:    {:>12.2}  ({})",
+            metrics.probabilistic_sharpe_ratio,
+            Self::format_psr_confidence(metrics.probabilistic_sharpe_ratio)
+        );
+        println!();
+
         // Trade Statistics
         println!("{}", "Trade Statistics".bold().underline());
         println!("  Total Trades:    {:>12}", result.total_trades);
@@ -909,6 +1061,26 @@ impl ResultFormatter {
             format!("(+{:.2}%)", pct).green().to_string()
         } else {
             format!("({:.2}%)", pct).red().to_string()
+        }
+    }
+
+    /// Format PSR confidence level with interpretation.
+    fn format_psr_confidence(psr: f64) -> String {
+        let pct = psr * 100.0;
+        if psr >= 0.95 {
+            format!("{:.1}% - High confidence", pct)
+                .green()
+                .to_string()
+        } else if psr >= 0.75 {
+            format!("{:.1}% - Moderate confidence", pct)
+                .yellow()
+                .to_string()
+        } else if psr >= 0.50 {
+            format!("{:.1}% - Low confidence", pct)
+                .yellow()
+                .to_string()
+        } else {
+            format!("{:.1}% - Likely luck", pct).red().to_string()
         }
     }
 
@@ -2263,6 +2435,209 @@ mod tests {
         assert!(
             metrics.tail_ratio > 0.0,
             "Tail ratio should be positive"
+        );
+    }
+
+    #[test]
+    fn test_deflated_sharpe_ratio_no_trials() {
+        // With n_trials = 1 (no multiple testing), DSR should equal SR
+        let sharpe = 1.5;
+        let n_trials = 1;
+        let n_observations = 252;
+
+        let dsr = PerformanceMetrics::deflated_sharpe_ratio(sharpe, n_trials, n_observations);
+
+        assert_eq!(dsr, sharpe, "DSR should equal SR when n_trials = 1");
+    }
+
+    #[test]
+    fn test_deflated_sharpe_ratio_multiple_trials() {
+        // With multiple trials, DSR should be lower than SR
+        let sharpe = 2.0;
+        let n_trials = 100; // Tested 100 parameter combinations
+        let n_observations = 252;
+
+        let dsr = PerformanceMetrics::deflated_sharpe_ratio(sharpe, n_trials, n_observations);
+
+        assert!(dsr < sharpe, "DSR should be less than SR with multiple trials");
+        assert!(dsr.is_finite(), "DSR should be finite");
+
+        // For 100 trials, expected max SR ≈ sqrt(2*ln(100)) ≈ 3.03
+        // So a SR of 2.0 should deflate to a negative value
+        assert!(dsr < 0.0, "DSR should be negative for SR=2.0 with 100 trials");
+    }
+
+    #[test]
+    fn test_deflated_sharpe_ratio_high_sharpe() {
+        // Very high Sharpe ratio should survive deflation
+        let sharpe = 5.0;
+        let n_trials = 10;
+        let n_observations = 500;
+
+        let dsr = PerformanceMetrics::deflated_sharpe_ratio(sharpe, n_trials, n_observations);
+
+        assert!(dsr.is_finite(), "DSR should be finite");
+        // With only 10 trials, a SR of 5.0 is still impressive
+        assert!(dsr > 2.0, "High SR should remain positive after deflation");
+    }
+
+    #[test]
+    fn test_probabilistic_sharpe_ratio_zero_sharpe() {
+        // SR = 0 should give PSR ≈ 0.5 (50% confidence)
+        let sharpe = 0.0;
+        let skewness = 0.0;
+        let kurtosis = 0.0;
+        let n_observations = 252;
+        let benchmark_sr = 0.0;
+
+        let psr = PerformanceMetrics::probabilistic_sharpe_ratio(
+            sharpe,
+            skewness,
+            kurtosis,
+            n_observations,
+            benchmark_sr,
+        );
+
+        assert!(psr >= 0.0 && psr <= 1.0, "PSR should be between 0 and 1");
+        assert!(
+            (psr - 0.5).abs() < 0.05,
+            "PSR should be close to 0.5 for SR=0: {}",
+            psr
+        );
+    }
+
+    #[test]
+    fn test_probabilistic_sharpe_ratio_positive_sharpe() {
+        // High positive SR should give high PSR (>95%)
+        let sharpe = 3.0;
+        let skewness = 0.0;
+        let kurtosis = 0.0;
+        let n_observations = 252;
+        let benchmark_sr = 0.0;
+
+        let psr = PerformanceMetrics::probabilistic_sharpe_ratio(
+            sharpe,
+            skewness,
+            kurtosis,
+            n_observations,
+            benchmark_sr,
+        );
+
+        assert!(psr >= 0.0 && psr <= 1.0, "PSR should be between 0 and 1");
+        assert!(psr > 0.95, "PSR should be > 0.95 for high SR: {}", psr);
+    }
+
+    #[test]
+    fn test_probabilistic_sharpe_ratio_negative_sharpe() {
+        // Negative SR should give low PSR (<5%)
+        let sharpe = -2.0;
+        let skewness = 0.0;
+        let kurtosis = 0.0;
+        let n_observations = 252;
+        let benchmark_sr = 0.0;
+
+        let psr = PerformanceMetrics::probabilistic_sharpe_ratio(
+            sharpe,
+            skewness,
+            kurtosis,
+            n_observations,
+            benchmark_sr,
+        );
+
+        assert!(psr >= 0.0 && psr <= 1.0, "PSR should be between 0 and 1");
+        assert!(psr < 0.05, "PSR should be < 0.05 for negative SR: {}", psr);
+    }
+
+    #[test]
+    fn test_probabilistic_sharpe_ratio_with_skewness() {
+        // Negative skewness should reduce PSR (use fewer observations to see effect)
+        let sharpe = 0.8;  // Lower Sharpe to avoid saturation
+        let n_observations = 30;  // Fewer observations to see skewness effect
+        let benchmark_sr = 0.0;
+
+        // PSR with zero skewness
+        let psr_zero_skew =
+            PerformanceMetrics::probabilistic_sharpe_ratio(sharpe, 0.0, 0.0, n_observations, benchmark_sr);
+
+        // PSR with negative skewness (bad tail behavior)
+        let psr_neg_skew =
+            PerformanceMetrics::probabilistic_sharpe_ratio(sharpe, -1.5, 0.0, n_observations, benchmark_sr);
+
+        assert!(psr_zero_skew > psr_neg_skew,
+            "Negative skewness should reduce PSR: {} vs {}",
+            psr_zero_skew, psr_neg_skew);
+    }
+
+    #[test]
+    fn test_probabilistic_sharpe_ratio_with_kurtosis() {
+        // High kurtosis (fat tails) should reduce PSR (use fewer observations to see effect)
+        let sharpe = 0.8;  // Lower Sharpe to avoid saturation
+        let n_observations = 30;  // Fewer observations to see kurtosis effect
+        let benchmark_sr = 0.0;
+
+        // PSR with normal kurtosis
+        let psr_normal_kurt =
+            PerformanceMetrics::probabilistic_sharpe_ratio(sharpe, 0.0, 0.0, n_observations, benchmark_sr);
+
+        // PSR with high excess kurtosis (fat tails - more extreme events)
+        let psr_high_kurt =
+            PerformanceMetrics::probabilistic_sharpe_ratio(sharpe, 0.0, 8.0, n_observations, benchmark_sr);
+
+        assert!(psr_normal_kurt > psr_high_kurt,
+            "High kurtosis should reduce PSR: {} vs {}",
+            psr_normal_kurt, psr_high_kurt);
+    }
+
+    #[test]
+    fn test_probabilistic_sharpe_ratio_benchmark_comparison() {
+        // PSR should measure probability of exceeding benchmark
+        let sharpe = 0.8;  // Use moderate SR to avoid saturation
+        let skewness = 0.0;
+        let kurtosis = 0.0;
+        let n_observations = 50;  // Fewer observations to see benchmark effect
+
+        // PSR vs zero benchmark
+        let psr_vs_zero =
+            PerformanceMetrics::probabilistic_sharpe_ratio(sharpe, skewness, kurtosis, n_observations, 0.0);
+
+        // PSR vs higher benchmark (harder to beat)
+        let psr_vs_high =
+            PerformanceMetrics::probabilistic_sharpe_ratio(sharpe, skewness, kurtosis, n_observations, 0.5);
+
+        assert!(psr_vs_zero > psr_vs_high,
+            "PSR should be lower vs higher benchmark: {} vs {}",
+            psr_vs_zero, psr_vs_high);
+    }
+
+    #[test]
+    fn test_overfitting_metrics_in_backtest_result() {
+        // Ensure DSR and PSR are calculated in actual backtest results
+        let result = create_test_result();
+        let metrics = PerformanceMetrics::from_result(&result);
+
+        assert!(
+            metrics.deflated_sharpe_ratio.is_finite(),
+            "Deflated Sharpe Ratio should be calculated"
+        );
+        assert!(
+            metrics.probabilistic_sharpe_ratio >= 0.0
+                && metrics.probabilistic_sharpe_ratio <= 1.0,
+            "PSR should be between 0 and 1: {}",
+            metrics.probabilistic_sharpe_ratio
+        );
+
+        // With a decent SR of 1.5 and no multiple testing (n_trials=1),
+        // DSR should equal SR
+        assert_eq!(
+            metrics.deflated_sharpe_ratio, result.sharpe_ratio,
+            "DSR should equal SR when n_trials=1"
+        );
+
+        // With SR=1.5, PSR should be quite high
+        assert!(
+            metrics.probabilistic_sharpe_ratio > 0.80,
+            "PSR should be > 0.80 for SR=1.5: {}",
+            metrics.probabilistic_sharpe_ratio
         );
     }
 }
