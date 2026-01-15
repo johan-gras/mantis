@@ -473,6 +473,7 @@ mod tests {
         config.cost_model.slippage_pct = 0.0005; // 0.05%
         config.initial_capital = 100_000.0;
         config.show_progress = false; // Disable progress bar in tests
+        config.margin.enabled = false;
         config
     }
 

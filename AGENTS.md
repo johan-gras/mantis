@@ -29,4 +29,5 @@ Run these after implementing to get immediate feedback:
   like `--multiplier`, `--tick-size`, `--margin-requirement`, etc., to configure symbol metadata.
 - `mantis run`/`mantis walk-forward` also accept `--lot-selection fifo|lifo|highest-cost|lowest-cost` to control default tax-lot consumption (per-order overrides via `Order::with_lot_selection`).
 - Execution realism can be tuned via `--execution-price`, `--fill-probability`, and `--limit-order-ttl` flags on `mantis run`.
+- Leverage control is available via `--max-leverage`, `--regt-long`, `--regt-short`, `--maintenance-long`, `--maintenance-short`, `--margin-interest`, and `--use-portfolio-margin`/`--disable-margin` on both `mantis run` and `mantis walk-forward`.
 - Walk-forward optimization is available via `mantis walk-forward -d data.csv --folds 5 --strategy sma-crossover` with optional `--anchored` windows and `--metric profit-factor`.

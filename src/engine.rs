@@ -3,7 +3,7 @@
 use crate::data::DataManager;
 use crate::error::{BacktestError, Result};
 use crate::metadata::{compute_config_hash, generate_experiment_id, GitInfo};
-use crate::portfolio::{CostModel, Portfolio};
+use crate::portfolio::{CostModel, MarginConfig, Portfolio};
 use crate::risk::{RiskConfig, StopLoss, TrailingStop};
 use crate::strategy::{Strategy, StrategyContext};
 use crate::timeframe::TimeframeManager;
@@ -26,6 +26,9 @@ pub struct BacktestConfig {
     pub initial_capital: f64,
     /// Trading costs configuration.
     pub cost_model: CostModel,
+    /// Margin configuration for leverage and borrowing rules.
+    #[serde(default)]
+    pub margin: MarginConfig,
     /// Position sizing as fraction of equity (0.0 to 1.0).
     pub position_size: f64,
     /// Allow short selling.
@@ -53,6 +56,9 @@ pub struct BacktestConfig {
     /// Default tax-lot selection policy when closing positions.
     #[serde(default)]
     pub lot_selection: LotSelectionMethod,
+    /// Random seed for reproducible execution (None = deterministic from timestamps).
+    #[serde(default)]
+    pub seed: Option<u64>,
 }
 
 impl Default for BacktestConfig {
@@ -60,6 +66,7 @@ impl Default for BacktestConfig {
         Self {
             initial_capital: 100_000.0,
             cost_model: CostModel::default(),
+            margin: MarginConfig::default(),
             position_size: 1.0,
             allow_short: true,
             fractional_shares: true,
@@ -71,6 +78,7 @@ impl Default for BacktestConfig {
             fill_probability: default_fill_probability(),
             limit_order_ttl_bars: Some(5),
             lot_selection: LotSelectionMethod::default(),
+            seed: None,
         }
     }
 }
@@ -140,6 +148,9 @@ pub struct BacktestResult {
     /// Data file checksums (symbol -> SHA256 hash).
     #[serde(default)]
     pub data_checksums: HashMap<String, String>,
+    /// Random seed used for execution (None = deterministic from timestamps).
+    #[serde(default)]
+    pub seed: Option<u64>,
 }
 
 #[derive(Debug, Clone)]
@@ -263,7 +274,9 @@ impl Engine {
         portfolio.fractional_shares = self.config.fractional_shares;
         portfolio.set_execution_price(self.config.execution_price);
         portfolio.set_lot_selection_method(self.config.lot_selection.clone());
+        portfolio.set_margin_config(self.config.margin.clone());
         portfolio.set_asset_configs(self.data.asset_configs());
+        portfolio.set_rng_seed(self.config.seed);
         if let Some(profile) = volume_profile {
             portfolio.set_volume_profile(symbol.to_string(), profile);
         }
@@ -296,7 +309,7 @@ impl Engine {
             // Record equity
             let mut prices = HashMap::new();
             prices.insert(symbol.to_string(), bar.close);
-            portfolio.record_equity(bar.timestamp, &prices);
+            portfolio.record_equity(bar.timestamp, &prices)?;
 
             // Skip warmup period
             if i < warmup {
@@ -773,6 +786,7 @@ impl Engine {
             git_info,
             config_hash,
             data_checksums,
+            seed: self.config.seed,
         }
     }
 

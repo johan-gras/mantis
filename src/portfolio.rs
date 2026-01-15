@@ -69,6 +69,56 @@ impl Default for ForexCost {
     }
 }
 
+/// Configuration describing Reg T and portfolio margin rules.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MarginConfig {
+    /// Enable equity/spot margin calculations.
+    pub enabled: bool,
+    /// Reg T initial requirement for long positions (e.g., 0.50).
+    pub reg_t_long_initial: f64,
+    /// Reg T initial requirement for short positions (e.g., 1.50).
+    pub reg_t_short_initial: f64,
+    /// Maintenance margin percentage for long positions.
+    pub maintenance_long_pct: f64,
+    /// Maintenance margin percentage for short positions.
+    pub maintenance_short_pct: f64,
+    /// Maximum allowable leverage (gross exposure / equity).
+    pub max_leverage: f64,
+    /// Enable portfolio margin checks.
+    pub use_portfolio_margin: bool,
+    /// Portfolio margin requirement as percent of gross exposure.
+    pub portfolio_margin_pct: f64,
+    /// Annualized interest rate charged on borrowed capital.
+    pub interest_rate: f64,
+}
+
+impl Default for MarginConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            reg_t_long_initial: 0.5,
+            reg_t_short_initial: 1.5,
+            maintenance_long_pct: 0.25,
+            maintenance_short_pct: 0.30,
+            max_leverage: 2.0,
+            use_portfolio_margin: false,
+            portfolio_margin_pct: 0.15,
+            interest_rate: 0.03,
+        }
+    }
+}
+
+/// Snapshot of portfolio margin exposure.
+#[derive(Debug, Clone, Default)]
+pub struct MarginState {
+    pub equity: f64,
+    pub gross_exposure: f64,
+    pub reg_t_requirement: f64,
+    pub maintenance_requirement: f64,
+    pub portfolio_requirement: f64,
+    pub leverage: f64,
+}
+
 /// Available market impact models for execution pricing.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum MarketImpactModel {
@@ -260,6 +310,8 @@ pub struct Portfolio {
     equity_curve: Vec<EquityPoint>,
     /// Cost model for trade execution.
     cost_model: CostModel,
+    /// Margin configuration for spot assets.
+    margin_config: MarginConfig,
     /// Peak equity for drawdown calculation.
     peak_equity: f64,
     /// Allow short selling.
@@ -270,14 +322,22 @@ pub struct Portfolio {
     asset_configs: HashMap<String, AssetConfig>,
     /// Rolling volume statistics for each symbol.
     volume_profiles: HashMap<String, VolumeProfile>,
+    /// Last observed prices for each symbol (used for margin checks).
+    last_prices: HashMap<String, f64>,
     /// Margin set aside for futures positions.
     margin_reserve: HashMap<String, f64>,
+    /// Last computed margin snapshot.
+    last_margin_state: Option<MarginState>,
     /// Execution price model for market orders.
     execution_price: ExecutionPrice,
     /// Last execution price (used for fill reporting).
     last_fill_price: Option<f64>,
     /// Default tax-lot selection method when closing positions.
     lot_selection: LotSelectionMethod,
+    /// Last timestamp used for equity recording (for accruals).
+    last_equity_timestamp: Option<DateTime<Utc>>,
+    /// Base seed for RNG (None = use timestamp-based deterministic seed).
+    rng_base_seed: Option<u64>,
 }
 
 /// Result information for an executed (potentially partial) order.
@@ -301,15 +361,20 @@ impl Portfolio {
             trades: Vec::new(),
             equity_curve: Vec::new(),
             cost_model: CostModel::default(),
+            margin_config: MarginConfig::default(),
             peak_equity: initial_capital,
             allow_short: true,
             fractional_shares: true,
             asset_configs: HashMap::new(),
             volume_profiles: HashMap::new(),
+            last_prices: HashMap::new(),
             margin_reserve: HashMap::new(),
+            last_margin_state: None,
             execution_price: ExecutionPrice::Open,
             last_fill_price: None,
             lot_selection: LotSelectionMethod::default(),
+            last_equity_timestamp: None,
+            rng_base_seed: None,
         }
     }
 
@@ -323,15 +388,20 @@ impl Portfolio {
             trades: Vec::new(),
             equity_curve: Vec::new(),
             cost_model,
+            margin_config: MarginConfig::default(),
             peak_equity: initial_capital,
             allow_short: true,
             fractional_shares: true,
             asset_configs: HashMap::new(),
             volume_profiles: HashMap::new(),
+            last_prices: HashMap::new(),
             margin_reserve: HashMap::new(),
+            last_margin_state: None,
             execution_price: ExecutionPrice::Open,
             last_fill_price: None,
             lot_selection: LotSelectionMethod::default(),
+            last_equity_timestamp: None,
+            rng_base_seed: None,
         }
     }
 
@@ -350,9 +420,25 @@ impl Portfolio {
         &self.lot_selection
     }
 
+    /// Set the base RNG seed for reproducible random execution.
+    /// If None, uses timestamp-based deterministic seeding.
+    pub fn set_rng_seed(&mut self, seed: Option<u64>) {
+        self.rng_base_seed = seed;
+    }
+
+    /// Get the current RNG base seed.
+    pub fn rng_seed(&self) -> Option<u64> {
+        self.rng_base_seed
+    }
+
     /// Set the cost model.
     pub fn set_cost_model(&mut self, cost_model: CostModel) {
         self.cost_model = cost_model;
+    }
+
+    /// Override margin configuration.
+    pub fn set_margin_config(&mut self, config: MarginConfig) {
+        self.margin_config = config;
     }
 
     /// Register or override the asset configuration for a symbol.
@@ -382,6 +468,16 @@ impl Portfolio {
     /// Get the volume profile for a symbol if configured.
     pub fn volume_profile(&self, symbol: &str) -> Option<&VolumeProfile> {
         self.volume_profiles.get(symbol)
+    }
+
+    fn update_price_cache(&mut self, prices: &HashMap<String, f64>) {
+        for (symbol, price) in prices {
+            self.last_prices.insert(symbol.clone(), *price);
+        }
+    }
+
+    fn cached_price_or_entry(&self, symbol: &str, entry: f64) -> f64 {
+        self.last_prices.get(symbol).copied().unwrap_or(entry)
     }
 
     fn order_lot_method(&self, order: &Order) -> LotSelectionMethod {
@@ -560,7 +656,7 @@ impl Portfolio {
                 if (max_price - min_price).abs() < f64::EPSILON {
                     min_price
                 } else {
-                    let seed = Self::rng_seed(bar.timestamp, None, self.trades.len() as u64);
+                    let seed = self.compute_rng_seed(bar.timestamp, None, self.trades.len() as u64);
                     let mut rng = StdRng::seed_from_u64(seed);
                     rng.gen_range(min_price..=max_price)
                 }
@@ -569,12 +665,24 @@ impl Portfolio {
         }
     }
 
-    fn rng_seed(bar_time: DateTime<Utc>, order_time: Option<DateTime<Utc>>, extra: u64) -> u64 {
+    fn compute_rng_seed(
+        &self,
+        bar_time: DateTime<Utc>,
+        order_time: Option<DateTime<Utc>>,
+        extra: u64,
+    ) -> u64 {
         let bar_part = bar_time.timestamp_nanos_opt().unwrap_or(0) as u64;
         let order_part = order_time
             .and_then(|ts| ts.timestamp_nanos_opt())
             .unwrap_or(0) as u64;
-        bar_part ^ order_part ^ extra
+        let base = bar_part ^ order_part ^ extra;
+
+        // If a base seed is set, XOR it with the deterministic components
+        if let Some(seed) = self.rng_base_seed {
+            seed ^ base
+        } else {
+            base
+        }
     }
 
     fn asset_config_for(&self, symbol: &str) -> AssetConfig {
@@ -621,6 +729,151 @@ impl Portfolio {
         self.cash + positions_value
     }
 
+    fn accrue_margin_interest(&mut self, timestamp: DateTime<Utc>) {
+        if !self.margin_config.enabled || self.margin_config.interest_rate <= 0.0 {
+            self.last_equity_timestamp = Some(timestamp);
+            return;
+        }
+
+        if let Some(prev) = self.last_equity_timestamp {
+            let seconds = (timestamp - prev).num_seconds().max(0) as f64;
+            if seconds > 0.0 && self.cash < 0.0 {
+                let days = seconds / 86_400.0;
+                let interest = -self.cash * self.margin_config.interest_rate * (days / 365.0);
+                if interest > 0.0 {
+                    self.cash -= interest;
+                }
+            }
+        }
+        self.last_equity_timestamp = Some(timestamp);
+    }
+
+    fn compute_margin_state(&self, override_price: Option<(&str, f64)>) -> MarginState {
+        let mut prices: HashMap<String, f64> = HashMap::new();
+        let mut gross_exposure = 0.0;
+        let mut reg_t_requirement = 0.0;
+        let mut maintenance_requirement = 0.0;
+
+        for (symbol, pos) in &self.positions {
+            let mut price = self.cached_price_or_entry(symbol, pos.avg_entry_price);
+            if let Some((sym, override_val)) = override_price {
+                if sym == symbol {
+                    price = override_val;
+                }
+            }
+            prices.insert(symbol.clone(), price);
+
+            let asset = self.asset_config_for(symbol);
+            let notional = price * pos.quantity * asset.notional_multiplier();
+            let exposure = notional.abs();
+            gross_exposure += exposure;
+
+            match asset.asset_class {
+                AssetClass::Future {
+                    margin_requirement, ..
+                } => {
+                    let requirement = exposure * margin_requirement.max(0.0);
+                    reg_t_requirement += requirement;
+                    maintenance_requirement += requirement;
+                }
+                _ => {
+                    if pos.is_long() {
+                        reg_t_requirement +=
+                            exposure * self.margin_config.reg_t_long_initial.max(0.0);
+                        maintenance_requirement +=
+                            exposure * self.margin_config.maintenance_long_pct.max(0.0);
+                    } else {
+                        reg_t_requirement +=
+                            exposure * self.margin_config.reg_t_short_initial.max(0.0);
+                        maintenance_requirement +=
+                            exposure * self.margin_config.maintenance_short_pct.max(0.0);
+                    }
+                }
+            }
+        }
+
+        let portfolio_requirement = if self.margin_config.use_portfolio_margin {
+            gross_exposure * self.margin_config.portfolio_margin_pct.max(0.0)
+        } else {
+            0.0
+        };
+
+        let equity = self.equity(&prices);
+        let leverage = if equity.abs() > f64::EPSILON {
+            gross_exposure / equity.abs()
+        } else {
+            f64::INFINITY
+        };
+
+        MarginState {
+            equity,
+            gross_exposure,
+            reg_t_requirement,
+            maintenance_requirement,
+            portfolio_requirement,
+            leverage,
+        }
+    }
+
+    fn enforce_margin_limits(&mut self, override_price: Option<(&str, f64)>) -> Result<()> {
+        if !self.margin_config.enabled {
+            return Ok(());
+        }
+
+        let state = self.compute_margin_state(override_price);
+        let mut requirement = state.reg_t_requirement;
+        if self.margin_config.use_portfolio_margin {
+            requirement = requirement.max(state.portfolio_requirement);
+        }
+
+        if self.margin_config.max_leverage > 0.0
+            && state.leverage.is_finite()
+            && state.leverage > self.margin_config.max_leverage + f64::EPSILON
+        {
+            self.last_margin_state = Some(state.clone());
+            return Err(BacktestError::ConstraintViolation(format!(
+                "Leverage {:.2}x exceeds max {:.2}x",
+                state.leverage, self.margin_config.max_leverage
+            )));
+        }
+
+        if state.equity < state.maintenance_requirement - f64::EPSILON {
+            self.last_margin_state = Some(state.clone());
+            return Err(BacktestError::MarginCall {
+                equity: state.equity,
+                requirement: state.maintenance_requirement,
+                reason: "Maintenance requirement".to_string(),
+            });
+        }
+
+        if state.equity < requirement - f64::EPSILON {
+            self.last_margin_state = Some(state.clone());
+            return Err(BacktestError::MarginCall {
+                equity: state.equity,
+                requirement,
+                reason: "Initial requirement".to_string(),
+            });
+        }
+
+        self.last_margin_state = Some(state);
+        Ok(())
+    }
+
+    fn finalize_execution(&mut self, symbol: &str, price: f64) -> Result<()> {
+        self.last_prices.insert(symbol.to_string(), price);
+        self.enforce_margin_limits(Some((symbol, price)))
+    }
+
+    fn complete_spot_execution(
+        &mut self,
+        symbol: &str,
+        exec_price: f64,
+        trade: Option<Trade>,
+    ) -> Result<Option<Trade>> {
+        self.finalize_execution(symbol, exec_price)?;
+        Ok(trade)
+    }
+
     /// Get position for a symbol.
     pub fn position(&self, symbol: &str) -> Option<&Position> {
         self.positions.get(symbol)
@@ -665,6 +918,11 @@ impl Portfolio {
     /// Get the equity curve.
     pub fn equity_curve(&self) -> &[EquityPoint] {
         &self.equity_curve
+    }
+
+    /// Latest computed margin snapshot, if available.
+    pub fn margin_state(&self) -> Option<&MarginState> {
+        self.last_margin_state.as_ref()
     }
 
     /// Execute an order.
@@ -746,7 +1004,7 @@ impl Portfolio {
         let fraction = if probability >= 1.0 {
             1.0
         } else {
-            let seed = Self::rng_seed(
+            let seed = self.compute_rng_seed(
                 bar.timestamp,
                 Some(order.timestamp),
                 self.trades.len() as u64,
@@ -827,7 +1085,7 @@ impl Portfolio {
         asset: &AssetConfig,
     ) -> Result<Option<Trade>> {
         let total_cost = notional + commission;
-        if total_cost > self.cash {
+        if !self.margin_config.enabled && total_cost > self.cash {
             return Err(BacktestError::InsufficientFunds {
                 required: total_cost,
                 available: self.cash,
@@ -877,13 +1135,13 @@ impl Portfolio {
                         let pos = Position::new(&order.symbol, Side::Buy, opening_qty, exec_price);
                         self.positions.insert(order.symbol.clone(), pos);
                     } else {
-                        return Ok(None);
+                        return self.complete_spot_execution(&order.symbol, exec_price, None);
                     }
                 } else {
                     self.close_tax_lots(&order.symbol, Side::Sell, quantity, lot_method)?;
                     pos.quantity -= quantity;
                     self.positions.insert(order.symbol.clone(), pos);
-                    return Ok(None);
+                    return self.complete_spot_execution(&order.symbol, exec_price, None);
                 }
             } else {
                 let new_qty = pos.quantity + quantity;
@@ -920,9 +1178,9 @@ impl Portfolio {
                 "Executed BUY {} {} @ {:.4}",
                 opening_qty, order.symbol, exec_price
             );
-            Ok(Some(trade))
+            self.complete_spot_execution(&order.symbol, exec_price, Some(trade))
         } else {
-            Ok(None)
+            self.complete_spot_execution(&order.symbol, exec_price, None)
         }
     }
 
@@ -988,13 +1246,13 @@ impl Portfolio {
                         let pos = Position::new(&order.symbol, Side::Sell, opening_qty, exec_price);
                         self.positions.insert(order.symbol.clone(), pos);
                     } else {
-                        return Ok(None);
+                        return self.complete_spot_execution(&order.symbol, exec_price, None);
                     }
                 } else {
                     self.close_tax_lots(&order.symbol, Side::Buy, quantity, lot_method)?;
                     pos.quantity -= quantity;
                     self.positions.insert(order.symbol.clone(), pos);
-                    return Ok(None);
+                    return self.complete_spot_execution(&order.symbol, exec_price, None);
                 }
             } else {
                 let new_qty = pos.quantity + quantity;
@@ -1031,9 +1289,9 @@ impl Portfolio {
                 "Executed SELL {} {} @ {:.4}",
                 opening_qty, order.symbol, exec_price
             );
-            Ok(Some(trade))
+            self.complete_spot_execution(&order.symbol, exec_price, Some(trade))
         } else {
-            Ok(None)
+            self.complete_spot_execution(&order.symbol, exec_price, None)
         }
     }
 
@@ -1200,6 +1458,7 @@ impl Portfolio {
             created_trade = Some(trade);
         }
 
+        self.finalize_execution(&order.symbol, exec_price)?;
         Ok(created_trade)
     }
 
@@ -1350,8 +1609,14 @@ impl Portfolio {
             }
         }
     }
-    /// Record an equity point.
-    pub fn record_equity(&mut self, timestamp: DateTime<Utc>, prices: &HashMap<String, f64>) {
+    /// Record an equity point and update margin state.
+    pub fn record_equity(
+        &mut self,
+        timestamp: DateTime<Utc>,
+        prices: &HashMap<String, f64>,
+    ) -> Result<()> {
+        self.accrue_margin_interest(timestamp);
+        self.update_price_cache(prices);
         let positions_value: f64 = self
             .positions
             .iter()
@@ -1381,6 +1646,8 @@ impl Portfolio {
         };
 
         self.equity_curve.push(point);
+        self.enforce_margin_limits(None)?;
+        Ok(())
     }
 
     /// Calculate position size based on risk.
@@ -1784,6 +2051,10 @@ mod tests {
     #[test]
     fn test_insufficient_funds() {
         let mut portfolio = Portfolio::with_cost_model(1000.0, CostModel::zero());
+        portfolio.set_margin_config(MarginConfig {
+            enabled: false,
+            ..MarginConfig::default()
+        });
         let bar = sample_bar();
         let order = Order::market("AAPL", Side::Buy, 100.0, bar.timestamp); // Need 10000
 
@@ -1801,7 +2072,7 @@ mod tests {
         prices.insert("AAPL".to_string(), 150.0);
 
         let timestamp = Utc.with_ymd_and_hms(2024, 1, 15, 9, 30, 0).unwrap();
-        portfolio.record_equity(timestamp, &prices);
+        portfolio.record_equity(timestamp, &prices).unwrap();
 
         assert_eq!(portfolio.equity_curve.len(), 1);
         assert_eq!(portfolio.equity_curve[0].equity, 100000.0);
@@ -1815,6 +2086,56 @@ mod tests {
         let size = portfolio.calculate_position_size(100.0, 0.01, 0.05);
         // Risk amount = 1000, risk per share = 5, size = 200
         assert!((size - 200.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_margin_supports_leverage() {
+        let mut portfolio = Portfolio::with_cost_model(100_000.0, CostModel::zero());
+        let bar = sample_bar();
+        // Buy 1,500 shares at ~$100 => $150k notional with only $100k cash.
+        let order = Order::market("AAPL", Side::Buy, 1500.0, bar.timestamp);
+        portfolio.execute_order(&order, &bar).unwrap();
+
+        assert!(portfolio.cash < 0.0, "Margin trade should create borrowing");
+        let state = portfolio.margin_state().expect("margin state missing");
+        assert!(state.gross_exposure > portfolio.initial_capital);
+        assert!(state.reg_t_requirement < state.equity + 1.0);
+    }
+
+    #[test]
+    fn test_margin_call_error() {
+        let mut portfolio = Portfolio::with_cost_model(100_000.0, CostModel::zero());
+        portfolio.set_margin_config(MarginConfig {
+            max_leverage: 10.0,
+            ..MarginConfig::default()
+        });
+        let bar = sample_bar();
+        // Buy 1,500 shares (~$150k notional) and allow leverage headroom so margin call fires on price drop.
+        let order = Order::market("AAPL", Side::Buy, 1500.0, bar.timestamp);
+        portfolio.execute_order(&order, &bar).unwrap();
+
+        // A sharp price drop should trigger a maintenance margin call when equity erodes.
+        let mut prices = HashMap::new();
+        prices.insert("AAPL".to_string(), 40.0);
+        let timestamp = bar.timestamp + chrono::Duration::days(1);
+        let result = portfolio.record_equity(timestamp, &prices);
+        assert!(matches!(result, Err(BacktestError::MarginCall { .. })));
+    }
+
+    #[test]
+    fn test_leverage_limit_enforced() {
+        let mut portfolio = Portfolio::with_cost_model(100_000.0, CostModel::zero());
+        portfolio.set_margin_config(MarginConfig {
+            max_leverage: 1.0,
+            ..MarginConfig::default()
+        });
+        let bar = sample_bar();
+        let order = Order::market("AAPL", Side::Buy, 1500.0, bar.timestamp);
+        let result = portfolio.execute_order(&order, &bar);
+        assert!(matches!(
+            result,
+            Err(BacktestError::ConstraintViolation(msg)) if msg.contains("Leverage")
+        ));
     }
 
     #[test]

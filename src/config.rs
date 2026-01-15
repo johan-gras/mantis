@@ -4,7 +4,9 @@
 
 use crate::engine::BacktestConfig;
 use crate::error::{BacktestError, Result};
-use crate::portfolio::{CostModel, CryptoCost, ForexCost, FuturesCost, MarketImpactModel};
+use crate::portfolio::{
+    CostModel, CryptoCost, ForexCost, FuturesCost, MarginConfig, MarketImpactModel,
+};
 use crate::risk::{RiskConfig, StopLoss, TakeProfit};
 use crate::types::{ExecutionPrice, LotSelectionMethod};
 use chrono::{NaiveDate, TimeZone, Utc};
@@ -66,6 +68,12 @@ pub struct BacktestSettings {
     /// End date (YYYY-MM-DD format).
     #[serde(default)]
     pub end_date: Option<String>,
+    /// Margin configuration overrides.
+    #[serde(default)]
+    pub margin: MarginSettings,
+    /// Random seed for reproducible execution (None = deterministic from timestamps).
+    #[serde(default)]
+    pub seed: Option<u64>,
 }
 
 fn default_capital() -> f64 {
@@ -91,6 +99,72 @@ impl Default for BacktestSettings {
             lot_selection: LotSelectionMethod::default(),
             start_date: None,
             end_date: None,
+            margin: MarginSettings::default(),
+            seed: None,
+        }
+    }
+}
+
+/// Margin configuration in the file format.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MarginSettings {
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    #[serde(default = "default_regt_long")]
+    pub reg_t_long_initial: f64,
+    #[serde(default = "default_regt_short")]
+    pub reg_t_short_initial: f64,
+    #[serde(default = "default_maint_long")]
+    pub maintenance_long_pct: f64,
+    #[serde(default = "default_maint_short")]
+    pub maintenance_short_pct: f64,
+    #[serde(default = "default_max_leverage")]
+    pub max_leverage: f64,
+    #[serde(default = "default_false")]
+    pub use_portfolio_margin: bool,
+    #[serde(default = "default_portfolio_margin_pct")]
+    pub portfolio_margin_pct: f64,
+    #[serde(default = "default_margin_interest")]
+    pub interest_rate: f64,
+}
+
+fn default_regt_long() -> f64 {
+    0.5
+}
+fn default_regt_short() -> f64 {
+    1.5
+}
+fn default_maint_long() -> f64 {
+    0.25
+}
+fn default_maint_short() -> f64 {
+    0.30
+}
+fn default_max_leverage() -> f64 {
+    2.0
+}
+fn default_false() -> bool {
+    false
+}
+fn default_portfolio_margin_pct() -> f64 {
+    0.15
+}
+fn default_margin_interest() -> f64 {
+    0.03
+}
+
+impl Default for MarginSettings {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            reg_t_long_initial: default_regt_long(),
+            reg_t_short_initial: default_regt_short(),
+            maintenance_long_pct: default_maint_long(),
+            maintenance_short_pct: default_maint_short(),
+            max_leverage: default_max_leverage(),
+            use_portfolio_margin: default_false(),
+            portfolio_margin_pct: default_portfolio_margin_pct(),
+            interest_rate: default_margin_interest(),
         }
     }
 }
@@ -339,9 +413,22 @@ impl BacktestFileConfig {
                 .ok()
         });
 
+        let margin = MarginConfig {
+            enabled: self.backtest.margin.enabled,
+            reg_t_long_initial: self.backtest.margin.reg_t_long_initial,
+            reg_t_short_initial: self.backtest.margin.reg_t_short_initial,
+            maintenance_long_pct: self.backtest.margin.maintenance_long_pct,
+            maintenance_short_pct: self.backtest.margin.maintenance_short_pct,
+            max_leverage: self.backtest.margin.max_leverage,
+            use_portfolio_margin: self.backtest.margin.use_portfolio_margin,
+            portfolio_margin_pct: self.backtest.margin.portfolio_margin_pct,
+            interest_rate: self.backtest.margin.interest_rate,
+        };
+
         Ok(BacktestConfig {
             initial_capital: self.backtest.initial_capital,
             cost_model,
+            margin,
             position_size: self.backtest.position_size,
             allow_short: self.backtest.allow_short,
             fractional_shares: self.backtest.fractional_shares,
@@ -353,6 +440,7 @@ impl BacktestFileConfig {
             fill_probability: self.backtest.fill_probability,
             limit_order_ttl_bars: self.backtest.limit_order_ttl_bars,
             lot_selection: self.backtest.lot_selection.clone(),
+            seed: self.backtest.seed,
         })
     }
 

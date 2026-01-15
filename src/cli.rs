@@ -11,7 +11,7 @@ use mantis::experiments::{
     default_store_path, ensure_store_directory, ExperimentFilter, ExperimentRecord, ExperimentStore,
 };
 use mantis::features::{FeatureConfig, FeatureExtractor, TimeSeriesSplitter};
-use mantis::portfolio::CostModel;
+use mantis::portfolio::{CostModel, MarginConfig};
 use mantis::strategies::{
     BreakoutStrategy, MacdStrategy, MeanReversion, MomentumStrategy, RsiStrategy, SmaCrossover,
 };
@@ -101,6 +101,42 @@ pub enum Commands {
         #[arg(long)]
         allow_short: bool,
 
+        /// Maximum leverage (gross exposure / equity)
+        #[arg(long = "max-leverage", default_value = "2.0")]
+        max_leverage: f64,
+
+        /// Reg T initial margin for long positions (decimal fraction)
+        #[arg(long = "regt-long", default_value = "0.5")]
+        reg_t_long: f64,
+
+        /// Reg T initial margin for short positions (decimal fraction)
+        #[arg(long = "regt-short", default_value = "1.5")]
+        reg_t_short: f64,
+
+        /// Maintenance margin for long positions
+        #[arg(long = "maintenance-long", default_value = "0.25")]
+        maintenance_long: f64,
+
+        /// Maintenance margin for short positions
+        #[arg(long = "maintenance-short", default_value = "0.30")]
+        maintenance_short: f64,
+
+        /// Annualized interest rate charged on margin borrowing
+        #[arg(long = "margin-interest", default_value = "0.03")]
+        margin_interest: f64,
+
+        /// Use portfolio margin instead of Reg T
+        #[arg(long = "use-portfolio-margin")]
+        use_portfolio_margin: bool,
+
+        /// Portfolio margin percentage applied to gross exposure
+        #[arg(long = "portfolio-margin-pct", default_value = "0.15")]
+        portfolio_margin_pct: f64,
+
+        /// Disable margin (require full cash for purchases)
+        #[arg(long = "disable-margin")]
+        disable_margin: bool,
+
         /// Fast MA period (for SMA strategy)
         #[arg(long, default_value = "10")]
         fast_period: usize,
@@ -156,6 +192,10 @@ pub enum Commands {
         /// Underlying symbol for options (defaults to same as symbol)
         #[arg(long)]
         underlying: Option<String>,
+
+        /// Random seed for reproducible execution (None = deterministic from timestamps)
+        #[arg(long)]
+        seed: Option<u64>,
     },
 
     /// Run walk-forward optimization with rolling windows
@@ -207,6 +247,42 @@ pub enum Commands {
         /// Allow short selling
         #[arg(long)]
         allow_short: bool,
+
+        /// Maximum leverage (gross exposure / equity)
+        #[arg(long = "max-leverage", default_value = "2.0")]
+        max_leverage: f64,
+
+        /// Reg T initial margin for long positions
+        #[arg(long = "regt-long", default_value = "0.5")]
+        reg_t_long: f64,
+
+        /// Reg T initial margin for short positions
+        #[arg(long = "regt-short", default_value = "1.5")]
+        reg_t_short: f64,
+
+        /// Maintenance margin requirement for longs
+        #[arg(long = "maintenance-long", default_value = "0.25")]
+        maintenance_long: f64,
+
+        /// Maintenance margin requirement for shorts
+        #[arg(long = "maintenance-short", default_value = "0.30")]
+        maintenance_short: f64,
+
+        /// Annualized interest rate on borrowed capital
+        #[arg(long = "margin-interest", default_value = "0.03")]
+        margin_interest: f64,
+
+        /// Use portfolio margin instead of Reg T
+        #[arg(long = "use-portfolio-margin")]
+        use_portfolio_margin: bool,
+
+        /// Portfolio margin percentage applied to exposure
+        #[arg(long = "portfolio-margin-pct", default_value = "0.15")]
+        portfolio_margin_pct: f64,
+
+        /// Disable margin usage entirely
+        #[arg(long = "disable-margin")]
+        disable_margin: bool,
 
         /// Number of walk-forward windows/folds
         #[arg(long = "folds", default_value = "5")]
@@ -684,6 +760,15 @@ pub fn run() -> Result<()> {
             limit_order_ttl,
             lot_selection,
             allow_short,
+            max_leverage,
+            reg_t_long,
+            reg_t_short,
+            maintenance_long,
+            maintenance_short,
+            margin_interest,
+            use_portfolio_margin,
+            portfolio_margin_pct,
+            disable_margin,
             fast_period,
             slow_period,
             rsi_period,
@@ -698,6 +783,7 @@ pub fn run() -> Result<()> {
             pip_size,
             lot_size,
             underlying,
+            seed,
         } => run_backtest(
             data,
             symbol,
@@ -711,6 +797,15 @@ pub fn run() -> Result<()> {
             *limit_order_ttl,
             *lot_selection,
             *allow_short,
+            *max_leverage,
+            *reg_t_long,
+            *reg_t_short,
+            *maintenance_long,
+            *maintenance_short,
+            *margin_interest,
+            *use_portfolio_margin,
+            *portfolio_margin_pct,
+            *disable_margin,
             *fast_period,
             *slow_period,
             *rsi_period,
@@ -725,6 +820,7 @@ pub fn run() -> Result<()> {
             *pip_size,
             *lot_size,
             underlying.clone(),
+            *seed,
             cli.output,
         ),
 
@@ -741,6 +837,15 @@ pub fn run() -> Result<()> {
             limit_order_ttl,
             lot_selection,
             allow_short,
+            max_leverage,
+            reg_t_long,
+            reg_t_short,
+            maintenance_long,
+            maintenance_short,
+            margin_interest,
+            use_portfolio_margin,
+            portfolio_margin_pct,
+            disable_margin,
             folds,
             in_sample_ratio,
             anchored,
@@ -760,6 +865,15 @@ pub fn run() -> Result<()> {
             *limit_order_ttl,
             *lot_selection,
             *allow_short,
+            *max_leverage,
+            *reg_t_long,
+            *reg_t_short,
+            *maintenance_long,
+            *maintenance_short,
+            *margin_interest,
+            *use_portfolio_margin,
+            *portfolio_margin_pct,
+            *disable_margin,
             *folds,
             *in_sample_ratio,
             *anchored,
@@ -854,6 +968,15 @@ fn run_backtest(
     limit_order_ttl: usize,
     lot_selection: LotSelectionArg,
     allow_short: bool,
+    max_leverage: f64,
+    reg_t_long: f64,
+    reg_t_short: f64,
+    maintenance_long: f64,
+    maintenance_short: f64,
+    margin_interest: f64,
+    use_portfolio_margin: bool,
+    portfolio_margin_pct: f64,
+    disable_margin: bool,
     fast_period: usize,
     slow_period: usize,
     rsi_period: usize,
@@ -868,6 +991,7 @@ fn run_backtest(
     pip_size: f64,
     lot_size: f64,
     underlying: Option<String>,
+    seed: Option<u64>,
     output: OutputFormat,
 ) -> Result<()> {
     info!("Loading data from: {}", data_path.display());
@@ -886,9 +1010,22 @@ fn run_backtest(
         ..Default::default()
     };
 
+    let margin = MarginConfig {
+        enabled: !disable_margin,
+        reg_t_long_initial: reg_t_long,
+        reg_t_short_initial: reg_t_short,
+        maintenance_long_pct: maintenance_long,
+        maintenance_short_pct: maintenance_short,
+        max_leverage,
+        use_portfolio_margin,
+        portfolio_margin_pct,
+        interest_rate: margin_interest,
+    };
+
     let config = BacktestConfig {
         initial_capital: capital,
         cost_model,
+        margin,
         position_size,
         allow_short,
         show_progress: true,
@@ -896,6 +1033,7 @@ fn run_backtest(
         fill_probability,
         limit_order_ttl_bars,
         lot_selection: lot_selection.into(),
+        seed,
         ..Default::default()
     };
 
@@ -964,6 +1102,15 @@ fn run_walk_forward(
     limit_order_ttl: usize,
     lot_selection: LotSelectionArg,
     allow_short: bool,
+    max_leverage: f64,
+    reg_t_long: f64,
+    reg_t_short: f64,
+    maintenance_long: f64,
+    maintenance_short: f64,
+    margin_interest: f64,
+    use_portfolio_margin: bool,
+    portfolio_margin_pct: f64,
+    disable_margin: bool,
     folds: usize,
     in_sample_ratio: f64,
     anchored: bool,
@@ -1000,6 +1147,18 @@ fn run_walk_forward(
         ..Default::default()
     };
 
+    let margin = MarginConfig {
+        enabled: !disable_margin,
+        reg_t_long_initial: reg_t_long,
+        reg_t_short_initial: reg_t_short,
+        maintenance_long_pct: maintenance_long,
+        maintenance_short_pct: maintenance_short,
+        max_leverage,
+        use_portfolio_margin,
+        portfolio_margin_pct,
+        interest_rate: margin_interest,
+    };
+
     let walk_forward_config = WalkForwardConfig {
         num_windows: folds,
         in_sample_ratio,
@@ -1010,6 +1169,7 @@ fn run_walk_forward(
     let backtest_config = BacktestConfig {
         initial_capital: capital,
         cost_model,
+        margin,
         position_size,
         allow_short,
         show_progress: false,

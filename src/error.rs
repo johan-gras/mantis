@@ -47,6 +47,13 @@ pub enum BacktestError {
     #[error("Portfolio constraint violation: {0}")]
     ConstraintViolation(String),
 
+    #[error("Margin call ({reason}): equity {equity:.2} < required {requirement:.2}")]
+    MarginCall {
+        equity: f64,
+        requirement: f64,
+        reason: String,
+    },
+
     #[error("Database error: {0}")]
     DatabaseError(String),
 }
