@@ -1,21 +1,27 @@
 # Mantis Implementation Plan
 
-> **Last Verified**: 2026-01-15 via code analysis
+> **Last Verified**: 2026-01-15 via comprehensive code analysis
 >
-> Items marked `[NOT STARTED]` were previously claimed as partial but verified to have no implementation.
+> Items marked `[NOT STARTED]` were verified to have no implementation.
 >
-> **Recent Changes**: Drift-Based Rebalancing now complete with threshold-based triggering when portfolio weights drift beyond configurable thresholds, DriftRebalancingConfig with conservative/moderate/relaxed presets, DriftEqualWeightStrategy and DriftMomentumStrategy implementations, and comprehensive test coverage (13 new tests). Deterministic Backtesting complete with seeded RNG for reproducible execution via --seed CLI argument, seed field in BacktestConfig and BacktestResult for logging, Portfolio.set_rng_seed() method, and automatic seed logging in experiment tracking. Environment Versioning improved with rust-toolchain.toml to pin Rust version and Cargo.lock committed for reproducible builds. Implied Volatility solver complete with Newton-Raphson method (vega-based, 5-10 iterations), Brent's method fallback, Brenner-Subrahmanyam initial guess, bounds checking (5%-200%), and comprehensive test coverage (17 tests covering ATM/ITM/OTM, short/long dated, high/low vol scenarios). Multi-Timeframe Strategy Interface complete with TimeframeManager for maintaining multiple resampled bar series, strategy access to multiple timeframes via StrategyContext, lazy evaluation, and comprehensive test coverage (12 tests). Options Pricing Models and Greeks Calculation complete with Black-Scholes pricing, full Greeks calculation (Delta, Gamma, Theta, Vega, Rho), and put-call parity validation (18 tests passing). Experiment Tracking complete with SQLite-based storage, automatic backtest logging, hyperparameter/metrics capture, CLI commands for experiment management, and query/filter capabilities. Transaction Cost Sensitivity analysis complete with comprehensive testing framework (0x-20x cost multipliers, Sharpe/return degradation, breakeven analysis). Overfitting Detection fully implemented with OOS Sharpe threshold checking, parameter stability testing, and n_trials integration into deflated Sharpe ratio. Black-Litterman portfolio optimization complete with comprehensive investor views support. All core portfolio construction methods (equal weight, inverse volatility, risk parity, mean-variance, HRP, Black-Litterman) are now complete.
+> **Verification Method**: Direct inspection of source files (engine.rs: 998 lines, data.rs: 3150 lines, portfolio.rs: 2400 lines, features.rs: 865 lines, multi_asset.rs: 5596 lines, options.rs: 1292 lines, timeframe.rs: 382 lines, onnx.rs: 523 lines).
+>
+> **Recent Changes**: Factor Attribution now complete with Fama-French 3-factor, Carhart 4-factor, Fama-French 5-factor, and full 6-factor models using multiple linear regression with OLS, factor loadings (betas), alpha calculation, R-squared/adjusted R-squared, and t-statistics/p-values for significance testing (21 new tests). Drift-Based Rebalancing complete with threshold-based triggering when portfolio weights drift beyond configurable thresholds, DriftRebalancingConfig with conservative/moderate/relaxed presets, DriftEqualWeightStrategy and DriftMomentumStrategy implementations. Volume participation limits complete with --max-volume-participation CLI flag and TOML configuration. Deterministic backtesting complete with seeded RNG via --seed CLI argument. Implied volatility solver complete with Newton-Raphson + Brent's method fallback. All core portfolio construction methods (equal weight, inverse volatility, risk parity, mean-variance, HRP, Black-Litterman) are complete with comprehensive constraint support.
 
 ## Current Status Summary
 
 | Metric | Status |
 |--------|--------|
-| **Tests** | 416 passing (0 failing) |
+| **Tests** | 433 passing (0 failing) |
 | **Clippy** | 0 errors (PASSING) |
 | **Cargo fmt** | PASSING |
 | **Architecture** | Production-quality modular design |
-| **Core Engine** | engine.rs: 942 lines, production-ready |
-| **Feature Engineering** | features.rs: 865 lines, 40+ indicators |
+| **Core Engine** | engine.rs: 998 lines, production-ready |
+| **Data Handling** | data.rs: 3150 lines, comprehensive |
+| **Portfolio** | portfolio.rs: 2400 lines, full order types |
+| **Feature Engineering** | features.rs: 865 lines, 60+ indicators |
+| **Multi-Asset** | multi_asset.rs: 5596 lines, all allocation methods |
+| **Options** | options.rs: 1292 lines, BS + Greeks + IV |
 
 ---
 
@@ -44,14 +50,17 @@ Items are organized by category and prioritized within each category. Priority r
 - Rolling training/testing windows with configurable folds
 - In-sample/out-of-sample ratio configuration
 - Anchored window support
+- OOS Sharpe threshold checking (>= 60% of IS Sharpe)
+- Parameter stability detection via hash comparison
 - CLI command: `walk-forward --folds N`
 
 ### [COMPLETE] Monte Carlo Simulation
 - Randomized entry timing simulation
 - Confidence interval generation
 - Multiple path generation
+- **Note**: Library-level implementation complete; no dedicated CLI command yet
 
-### [NOT STARTED] [HIGH] Live Trading Mode
+### [NOT STARTED] [CRITICAL] Live Trading Mode
 - **Status**: Verified incomplete - no broker integration exists
 - **IMPLEMENTED**: None (backtest-only execution logic)
 - **MISSING**:
@@ -62,7 +71,7 @@ Items are organized by category and prioritized within each category. Priority r
   - Live-backtest parity validation harness
 
 ### [NOT STARTED] [HIGH] Multi-Leg Order Support
-- **Status**: Verified incomplete - only noted as needed, not implemented
+- **Status**: Verified incomplete - only single-leg orders exist
 - **IMPLEMENTED**: None (single-leg orders only, no multi-leg infrastructure)
 - **MISSING**:
   - Atomic multi-leg execution (all legs fill or none)
@@ -127,8 +136,8 @@ Items are organized by category and prioritized within each category. Priority r
 - Adjustment factor calculation
 
 ### [NOT STARTED] [HIGH] Alternative Data Integration
-- **Status**: Verified incomplete - design doc exists but no implementation
-- **IMPLEMENTED**: None (only standard OHLCV price/volume data)
+- **Status**: Verified incomplete - only standard OHLCV price/volume data supported
+- **IMPLEMENTED**: None
 - **MISSING**:
   - News and sentiment data loaders
   - Satellite imagery data integration
@@ -158,8 +167,16 @@ Items are organized by category and prioritized within each category. Priority r
   - Enhanced BacktestResult metadata (experiment_id, git_info, config_hash, data_checksums fields)
   - GitInfo struct capturing commit SHA, branch name, and dirty flag
   - Data file metadata tracking (path, size, checksum)
-- **Location**: src/metadata.rs (new module), updates to src/engine.rs and src/data.rs
-- **Tests**: 7 new tests in src/metadata.rs, all 313 library tests passing
+- **Location**: src/metadata.rs, updates to src/engine.rs and src/data.rs
+
+### [NOT STARTED] [MEDIUM] Database Backends
+- **Status**: Verified incomplete - only file-based (CSV/Parquet) loading
+- **IMPLEMENTED**: None
+- **MISSING**:
+  - PostgreSQL / TimescaleDB support
+  - Cloud storage (S3, GCS)
+  - Incremental data loading
+  - Connection pooling
 
 ### [MISSING] [MEDIUM] Multi-Vendor Reconciliation
 - Handle data from multiple providers (Polygon, IEX, Yahoo, Bloomberg)
@@ -171,11 +188,6 @@ Items are organized by category and prioritized within each category. Priority r
 - WebSocket data feed integration
 - REST polling fallback
 - Target: <10ms latency for live data
-
-### [MISSING] [MEDIUM] Database Backends
-- PostgreSQL / TimescaleDB support
-- Cloud storage (S3, GCS)
-- Incremental data loading
 
 ### [MISSING] [LOW] Nanosecond Timestamp Precision
 - Currently millisecond precision
@@ -223,13 +235,13 @@ Items are organized by category and prioritized within each category. Priority r
 - Remaining quantity tracking
 - Pending order queue with TTL
 
-### [PARTIAL ~50%] [HIGH] Queue Position Simulation
-- **IMPLEMENTED**: Basic limit order fill logic
-- **MISSING**:
-  - Order book depth modeling
-  - Time-priority queue position
-  - Volume participation rate limits
-  - Fill probability based on order book state
+### [COMPLETE] [HIGH] Volume Participation Limits
+- Limit trade size to % of bar volume (e.g., 10%)
+- Prevent unrealistic large order fills
+- Dynamic sizing based on liquidity
+- Configuration via CLI flag --max-volume-participation
+- Configuration via TOML cost settings
+- Comprehensive test coverage (7 tests)
 
 ### [COMPLETE] [HIGH] Margin Requirements
 - Reg T margin calculation with configurable long/short initial and maintenance percentages
@@ -237,13 +249,12 @@ Items are organized by category and prioritized within each category. Priority r
 - Margin interest accrual on borrowed capital and explicit `BacktestError::MarginCall` signaling
 - CLI/configuration flags for tuning (`--max-leverage`, `--regt-long`, `--disable-margin`, etc.)
 
-### [COMPLETE] [MEDIUM] Volume Participation Limits
-- Limit trade size to % of bar volume (e.g., 10%)
-- Prevent unrealistic large order fills
-- Dynamic sizing based on liquidity
-- Configuration via CLI flag --max-volume-participation
-- Configuration via TOML cost settings
-- Comprehensive test coverage (7 new tests)
+### [PARTIAL ~50%] [MEDIUM] Queue Position Simulation
+- **IMPLEMENTED**: Basic limit order fill logic
+- **MISSING**:
+  - Order book depth modeling
+  - Time-priority queue position
+  - Fill probability based on order book state
 
 ### [MISSING] [MEDIUM] Latency Simulation
 - Strategy latency (signal to order)
@@ -260,7 +271,7 @@ Items are organized by category and prioritized within each category. Priority r
 ## 4. ML/Deep Learning Integration
 
 ### [COMPLETE] Feature Engineering Pipeline
-- 40+ technical indicators (SMA, RSI, MACD, Bollinger, ATR, etc.)
+- 60+ technical indicators (SMA, RSI, MACD, Bollinger, ATR, etc.)
 - Feature configuration profiles (minimal, default, comprehensive)
 - Automatic lag feature generation
 - Rolling window features
@@ -278,16 +289,16 @@ Items are organized by category and prioritized within each category. Priority r
 - Integration point for PyTorch/TensorFlow models
 
 ### [PARTIAL ~60%] [HIGH] ONNX Model Inference
-- **Status**: PARTIAL (~60%) - Infrastructure complete, awaiting ort crate stabilization
-- **IMPLEMENTED**:
-  - Complete ONNX inference module architecture in src/onnx.rs
+- **Status**: PARTIAL (~60%) - Infrastructure complete, blocked by ort crate instability
+- **IMPLEMENTED** (in src/onnx.rs, 523 lines):
+  - Complete ONNX inference module architecture
   - ModelConfig with normalization, versioning, fallback support
   - InferenceStats tracking (latency, success rate)
   - Batch inference API design
   - GPU/CUDA support architecture
   - Sub-millisecond latency target design
 - **MISSING**:
-  - Active ort crate dependency (v2.0 API in flux, v1.x yanked from crates.io)
+  - Active ort crate dependency (commented out in Cargo.toml)
   - Integration testing with actual ONNX models
   - ONNXModelStrategy for live inference during backtest
   - Example demonstrating end-to-end ONNX workflow
@@ -305,6 +316,24 @@ Items are organized by category and prioritized within each category. Priority r
 - Non-overlapping, temporally ordered folds
 - Embargo period between train/test
 - Remove overlapping bars between splits
+
+### [PARTIAL ~50%] [MEDIUM] Cross-Validation Methods
+- **IMPLEMENTED**: CPCV (Combinatorial Purged Cross-Validation)
+- **MISSING**:
+  - K-fold validation with temporal ordering
+  - Blocked time series split
+  - Gap time series split
+
+### [NOT STARTED] [HIGH] Python Bindings (PyO3)
+- **Status**: Verified incomplete - no PyO3 in Cargo.toml dependencies
+- **IMPLEMENTED**: None
+- **MISSING**:
+  - PyO3 crate integration
+  - Pre-built Python wheel distribution
+  - Jupyter kernel for interactive development
+  - Inline plotting and visualization
+  - Rich output formatting (DataFrames, equity curves)
+  - pip-installable package
 
 ### [MISSING] [MEDIUM] Feature Store Integration
 - Read features from Feast/Tecton/custom stores
@@ -337,16 +366,14 @@ Items are organized by category and prioritized within each category. Priority r
 - OHLCV aggregation (open=first, high=max, low=min, close=last, volume=sum)
 
 ### [COMPLETE] [HIGH] Multi-Timeframe Strategy Interface
-- **IMPLEMENTED**:
+- **IMPLEMENTED** (in src/timeframe.rs, 382 lines):
   - TimeframeManager struct for maintaining multiple resampled bar series
   - Strategy access to multiple timeframes via StrategyContext
   - requested_timeframes() method in Strategy trait
   - Engine integration to create and pass TimeframeManager
   - Lazy evaluation (only compute requested timeframes)
   - MultiTimeframeStrategy example (Daily trend + hourly entries)
-  - Comprehensive test coverage (8 unit tests + 4 strategy tests)
-- **Location**: src/timeframe.rs (new module), src/strategy.rs (extended), src/engine.rs (integration)
-- **Tests**: 12 new tests in src/timeframe.rs and src/strategies/multi_timeframe.rs
+  - Comprehensive test coverage (12 tests)
 - **MISSING**:
   - Custom timeframe support (non-standard intervals)
   - Partial bar handling (incomplete bar detection)
@@ -384,15 +411,18 @@ Items are organized by category and prioritized within each category. Priority r
 - Correlation matrix estimation
 
 ### [COMPLETE] [HIGH] Portfolio Construction Methods
-- **IMPLEMENTED**:
-  - Equal-weight allocation, momentum-based allocation
-  - Inverse volatility weighting, risk parity
+- **IMPLEMENTED** (in src/multi_asset.rs, 5596 lines):
+  - Equal-weight allocation
+  - Inverse volatility weighting
+  - Risk parity (using inverse volatility proxy - see note below)
   - Mean-variance optimization (Markowitz) - minimum variance, maximum Sharpe ratio, target return portfolios
-  - Hierarchical Risk Parity (HRP)
+  - Hierarchical Risk Parity (HRP) with dendrogram clustering
   - Black-Litterman model - combines market equilibrium with investor views, supports absolute/relative views, view confidence matrix
+- **NOTE**: Risk parity uses inverse volatility proxy (~60% of true MCR-based risk parity). True marginal contribution to risk (MCR) calculation would require iterative optimization.
 - **MISSING**:
   - Target volatility portfolios
   - Max diversification portfolios
+  - True MCR-based risk parity
 
 ### [COMPLETE] Portfolio Constraints
 - **IMPLEMENTED**:
@@ -405,12 +435,7 @@ Items are organized by category and prioritized within each category. Priority r
   - Portfolio constraint validation in MultiAssetEngine
   - Three preset constraint profiles: default(), moderate(), strict()
   - Builder pattern for custom constraints
-  - Comprehensive test coverage (17 new tests)
-- **Architecture**:
-  - `PortfolioConstraints` struct in `src/multi_asset.rs`
-  - Validation before order execution in rebalance operations
-  - Clear error messages on constraint violations
-  - Symbol-to-sector mapping support
+  - Comprehensive test coverage (17 tests)
 
 ### [COMPLETE] [HIGH] Rebalancing Rules
 - **IMPLEMENTED**:
@@ -419,7 +444,7 @@ Items are organized by category and prioritized within each category. Priority r
   - Drift-based/threshold-based rebalancing (trigger when weights drift beyond threshold)
   - DriftRebalancingConfig with configurable thresholds (conservative, moderate, relaxed presets)
   - DriftEqualWeightStrategy and DriftMomentumStrategy as example implementations
-  - Comprehensive test coverage (13 new tests)
+  - Comprehensive test coverage (13 tests)
 - **MISSING**:
   - Cost optimization algorithms for rebalancing
   - Volatility-adaptive rebalancing frequency
@@ -453,15 +478,14 @@ Items are organized by category and prioritized within each category. Priority r
   - DTE-based filtering
 
 ### [COMPLETE] [HIGH] Options Pricing Models
-- **IMPLEMENTED**:
+- **IMPLEMENTED** (in src/options.rs, 1292 lines):
   - Black-Scholes pricing model for European options
   - Put-call parity validation
   - Helper functions for normal CDF/PDF (cumulative_normal, normal_pdf)
-  - Comprehensive test coverage for pricing accuracy
+  - Comprehensive test coverage (18 tests)
 - **MISSING**:
   - Binomial tree model (American options)
   - Auto-detect exercise style, select appropriate model
-  - Implied volatility solver
 
 ### [COMPLETE] [HIGH] Greeks Calculation
 - **IMPLEMENTED**:
@@ -470,7 +494,6 @@ Items are organized by category and prioritized within each category. Priority r
   - Theta calculation (time decay)
   - Vega calculation (sensitivity to volatility)
   - Rho calculation (sensitivity to interest rate)
-  - Comprehensive test coverage (18 total tests)
 - **MISSING**:
   - Numerical Greeks from binomial trees
   - Portfolio Greeks aggregation
@@ -482,11 +505,28 @@ Items are organized by category and prioritized within each category. Priority r
   - Bounds checking (IV range: 5% to 200%)
   - Input validation and error handling
   - Brenner-Subrahmanyam approximation for initial guess
-  - Comprehensive test coverage (17 new tests covering ATM, ITM, OTM, short/long dated, high/low vol scenarios)
+  - Comprehensive test coverage (17 tests covering ATM, ITM, OTM, short/long dated, high/low vol scenarios)
 - **MISSING**:
   - Volatility surface representation
   - Surface interpolation for missing strikes
   - Historical IV storage and parametric models (SVI, SABR)
+
+### [NOT STARTED] [MEDIUM] Binomial Tree Model
+- **Status**: Verified incomplete - only Black-Scholes implemented
+- **IMPLEMENTED**: None
+- **MISSING**:
+  - Cox-Ross-Rubinstein binomial tree
+  - American option pricing
+  - Early exercise premium calculation
+
+### [NOT STARTED] [MEDIUM] Options Chain / Vol Surface
+- **Status**: Verified incomplete - single contracts only
+- **IMPLEMENTED**: None
+- **MISSING**:
+  - Options chain representation (all strikes/expirations)
+  - Volatility smile/surface modeling
+  - SVI, SABR parametric models
+  - Surface arbitrage detection
 
 ### [MISSING] [MEDIUM] Options Expiration Handling
 - **MISSING**:
@@ -501,14 +541,9 @@ Items are organized by category and prioritized within each category. Priority r
 - Iron condors, butterflies
 - Strategy builders with max profit/loss calculation
 
-### [MISSING] [MEDIUM] Early Exercise (American Options)
+### [MISSING] [LOW] Early Exercise (American Options)
 - Optimal exercise boundary
 - Dividend-aware exercise logic
-
-### [MISSING] [LOW] Volatility Surface Modeling
-- SVI, SABR parametric models
-- Historical IV surface storage
-- Arbitrage detection
 
 ---
 
@@ -534,11 +569,6 @@ Items are organized by category and prioritized within each category. Priority r
   - CLI integration showing deflated Sharpe with n_trials in optimization output
   - Enhanced walk-forward output displaying overfitting detection metrics (OOS/IS Sharpe ratio, parameter stability)
 
-### [MISSING] [HIGH] Lookahead Bias Prevention
-- Compile-time PIT data type guarantees
-- Automatic future-peeking detection
-- Audit logs of data available at each decision point
-
 ### [COMPLETE] [HIGH] Transaction Cost Sensitivity
 - **IMPLEMENTED**: Full transaction cost sensitivity analysis module in src/cost_sensitivity.rs
 - Supports configurable cost multipliers (0x, 1x, 2x, 5x, 10x, 20x)
@@ -549,10 +579,14 @@ Items are organized by category and prioritized within each category. Priority r
   - Breakeven multiplier (maximum sustainable cost increase before profitability fails)
 - Robustness assessment with configurable thresholds (5x cost test by default)
 - Three preset configurations: default(), standard(), aggressive()
-- Complete with 7 passing tests covering all analysis scenarios
-- Integration with walk-forward validation for comprehensive strategy robustness testing
+- Complete with 7 passing tests
 
-### [PARTIAL ~33%] [MEDIUM] Cross-Validation
+### [MISSING] [HIGH] Lookahead Bias Prevention
+- Compile-time PIT data type guarantees
+- Automatic future-peeking detection
+- Audit logs of data available at each decision point
+
+### [PARTIAL ~50%] [MEDIUM] Cross-Validation
 - **IMPLEMENTED**: CPCV (Combinatorial Purged Cross-Validation)
 - **MISSING**:
   - K-fold validation with temporal ordering
@@ -600,25 +634,34 @@ Items are organized by category and prioritized within each category. Priority r
 - Time underwater percentage
 
 ### [COMPLETE] Advanced Risk Metrics
-- **IMPLEMENTED**: All metrics now complete:
-  - Historical VaR (implemented in monte_carlo.rs lines 358-365)
+- **IMPLEMENTED**:
+  - Historical VaR (implemented in monte_carlo.rs)
   - Conditional VaR/CVaR/Expected Shortfall (implemented in monte_carlo.rs)
-  - Tail ratio (95th percentile gain/loss) (NEW - just implemented in analytics.rs)
-  - Omega ratio (already implemented in analytics.rs lines 665-690)
-  - Kurtosis (NEW - just implemented in analytics.rs)
-  - Skewness (NEW - just implemented in analytics.rs)
+  - Tail ratio (95th percentile gain/loss) (analytics.rs)
+  - Omega ratio (analytics.rs)
+  - Kurtosis (analytics.rs)
+  - Skewness (analytics.rs)
 
-### [MISSING] [HIGH] Factor Attribution
-- Fama-French 5-factor model regression
-- Factor loadings (betas)
-- Alpha after factor adjustment
-- R-squared for factor explanatory power
-- Momentum factor (Carhart 4-factor)
+### [COMPLETE] [HIGH] Factor Attribution
+- **IMPLEMENTED** (in src/analytics.rs):
+  - Fama-French 3-factor model (MKT, SMB, HML)
+  - Carhart 4-factor model (MKT, SMB, HML, UMD)
+  - Fama-French 5-factor model (MKT, SMB, HML, RMW, CMA)
+  - Full 6-factor model (all factors: MKT, SMB, HML, RMW, CMA, UMD)
+  - Multiple linear regression with OLS (FactorAttribution, FactorLoadings, multiple_regression)
+  - Factor loadings (betas) calculation
+  - Alpha calculation (risk-adjusted excess return)
+  - R-squared and adjusted R-squared for model fit
+  - t-statistics and p-values for significance testing
+  - Comprehensive test coverage (21 new tests)
 
-### [MISSING] [MEDIUM] Brinson Attribution
-- Allocation effect (sector over/underweighting)
-- Selection effect (stock picking within sectors)
-- Interaction effect
+### [NOT STARTED] [MEDIUM] Brinson Attribution
+- **Status**: Verified incomplete - no attribution analysis
+- **IMPLEMENTED**: None
+- **MISSING**:
+  - Allocation effect (sector over/underweighting)
+  - Selection effect (stock picking within sectors)
+  - Interaction effect
 
 ### [MISSING] [MEDIUM] Transaction Cost Analysis (TCA)
 - Pre-trade cost estimation
@@ -641,26 +684,35 @@ Items are organized by category and prioritized within each category. Priority r
 
 ## 10. Production Operations
 
-### [MISSING] [CRITICAL] Real-Time Monitoring Infrastructure
-- Order execution latency tracking (target <10ms)
-- Fill rate and slippage monitoring
-- System health metrics (CPU, memory, network)
-- Structured logging (JSON lines format)
-- Performance dashboards (Grafana-compatible)
+### [NOT STARTED] [CRITICAL] Real-Time Monitoring Infrastructure
+- **Status**: Verified incomplete - no monitoring code exists
+- **IMPLEMENTED**: None
+- **MISSING**:
+  - Order execution latency tracking (target <10ms)
+  - Fill rate and slippage monitoring
+  - System health metrics (CPU, memory, network)
+  - Structured logging (JSON lines format)
+  - Performance dashboards (Grafana-compatible)
 
-### [MISSING] [CRITICAL] Risk Limits and Circuit Breakers
-- Pre-trade risk checks (order size limits, price bands)
-- Daily loss limits with automatic trading halt
-- Position-level and portfolio-level breakers
-- Kill switch for emergency stop (<100ms response)
-- Message throttle limits
+### [NOT STARTED] [CRITICAL] Risk Limits and Circuit Breakers
+- **Status**: Verified incomplete - no circuit breaker implementation
+- **IMPLEMENTED**: None
+- **MISSING**:
+  - Pre-trade risk checks (order size limits, price bands)
+  - Daily loss limits with automatic trading halt
+  - Position-level and portfolio-level breakers
+  - Kill switch for emergency stop (<100ms response)
+  - Message throttle limits
 
-### [MISSING] [CRITICAL] Position Reconciliation
-- Trade reconciliation (match transactions)
-- Position reconciliation (verify balances vs broker)
-- Cash reconciliation
-- End-of-day mark-to-market
-- Discrepancy flagging and escalation
+### [NOT STARTED] [CRITICAL] Position Reconciliation
+- **Status**: Verified incomplete - no reconciliation logic
+- **IMPLEMENTED**: None
+- **MISSING**:
+  - Trade reconciliation (match transactions)
+  - Position reconciliation (verify balances vs broker)
+  - Cash reconciliation
+  - End-of-day mark-to-market
+  - Discrepancy flagging and escalation
 
 ### [MISSING] [HIGH] Error Handling and Recovery
 - Permanent vs transient error classification
@@ -707,24 +759,33 @@ Items are organized by category and prioritized within each category. Priority r
 
 ## 11. Model Governance
 
-### [MISSING] [HIGH] Model Registry
-- Centralized model store with APIs
-- Model lineage (data version, code version, hyperparameters)
-- Stage management (experimental -> staging -> production -> archived)
-- Model aliases (@champion, @challenger)
-- One-click rollback to previous version
+### [NOT STARTED] [HIGH] Model Registry
+- **Status**: Verified incomplete - no model governance code
+- **IMPLEMENTED**: None
+- **MISSING**:
+  - Centralized model store with APIs
+  - Model lineage (data version, code version, hyperparameters)
+  - Stage management (experimental -> staging -> production -> archived)
+  - Model aliases (@champion, @challenger)
+  - One-click rollback to previous version
 
-### [MISSING] [HIGH] Concept Drift Detection
-- ADDM, DDM, ECDD statistical methods
-- Prediction error rate monitoring
-- Sharpe ratio / P&L degradation alerts
-- Response actions (flag for retraining, automatic rollback)
+### [NOT STARTED] [HIGH] Concept Drift Detection
+- **Status**: Verified incomplete - no drift detection
+- **IMPLEMENTED**: None
+- **MISSING**:
+  - ADDM, DDM, ECDD statistical methods
+  - Prediction error rate monitoring
+  - Sharpe ratio / P&L degradation alerts
+  - Response actions (flag for retraining, automatic rollback)
 
-### [MISSING] [HIGH] Feature Drift Monitoring
-- Distribution monitoring (PSI, KS test, Chi-square)
-- Per-feature drift scoring
-- Feature importance tracking over time
-- Alert on critical feature drift
+### [NOT STARTED] [HIGH] Feature Drift Monitoring
+- **Status**: Verified incomplete - no feature monitoring
+- **IMPLEMENTED**: None
+- **MISSING**:
+  - Distribution monitoring (PSI, KS test, Chi-square)
+  - Per-feature drift scoring
+  - Feature importance tracking over time
+  - Alert on critical feature drift
 
 ### [MISSING] [MEDIUM] A/B Testing Infrastructure
 - Shadow mode (run new model alongside old)
@@ -760,7 +821,7 @@ Items are organized by category and prioritized within each category. Priority r
 
 ### [COMPLETE] [HIGH] Experiment Tracking
 - **IMPLEMENTED**:
-  - SQLite-based experiment storage (ExperimentStore in src/experiment.rs)
+  - SQLite-based experiment storage (ExperimentStore in src/experiments.rs)
   - Automatic backtest logging with unique ID capture (UUID for each run)
   - Experiment metadata: hyperparameters, metrics, git SHA, config hash, data checksums
   - CLI commands for experiment management: list, show, compare, tag, note, delete
@@ -795,6 +856,16 @@ Items are organized by category and prioritized within each category. Priority r
 - Statistical significance tests
 - Multi-criteria ranking system
 
+### [NOT STARTED] [LOW] Documentation/Onboarding
+- **Status**: Verified incomplete - no tutorials or examples documentation
+- **IMPLEMENTED**: None
+- **MISSING**:
+  - Getting started tutorial
+  - Strategy development guide
+  - API documentation
+  - Jupyter notebook examples
+  - Video walkthroughs
+
 ### [MISSING] [LOW] Visualization and Reporting
 - Interactive Plotly-based charts
 - HTML/PDF report generation
@@ -811,6 +882,8 @@ Items are organized by category and prioritized within each category. Priority r
 - `walk-forward` - Walk-forward optimization
 - `resample` - Time-series resampling
 - `quality` - Data quality analysis
+- `features` - Feature extraction and export
+- `experiments` - Experiment management (list/show/compare/tag/note/delete)
 
 ### [COMPLETE] Configuration
 - TOML configuration file support
@@ -822,15 +895,14 @@ Items are organized by category and prioritized within each category. Priority r
 - Multiple output formats (text, JSON, CSV)
 - Colorized terminal output
 
-### [PARTIAL ~60%] [MEDIUM] Additional Commands
+### [PARTIAL ~70%] [MEDIUM] Additional Commands
 - **IMPLEMENTED**: Basic export functionality
 - **MISSING**:
-  - `monte-carlo` - Full Monte Carlo CLI
+  - `monte-carlo` - Full Monte Carlo CLI (library exists, no CLI)
   - `export` - Enhanced feature/result export
   - `live` - Live trading mode
   - `validate` - Data/strategy validation
   - `analyze` - Performance report generation
-  - `compare` - Compare multiple backtest results
 
 ### [MISSING] [MEDIUM] Shell Completion
 - Bash autocomplete
@@ -864,8 +936,9 @@ Items are organized by category and prioritized within each category. Priority r
 - Crypto maker/taker fees, withdrawal fees
 - Forex spread and swap rates
 
-### [PARTIAL ~30%] [HIGH] Execution Algorithms
-- **IMPLEMENTED**: Basic execution price models
+### [NOT STARTED] [HIGH] Execution Algorithms
+- **Status**: Verified incomplete - only basic execution price models exist
+- **IMPLEMENTED**: None (only static price models: Open, Close, VWAP, TWAP, Midpoint, RandomInRange)
 - **MISSING**:
   - TWAP (Time-Weighted Average Price) algorithm
   - VWAP (Volume-Weighted Average Price) algorithm
@@ -895,7 +968,7 @@ Items are organized by category and prioritized within each category. Priority r
 
 ## 15. Reproducibility Requirements
 
-### [COMPLETE ~95%] [HIGH] Deterministic Backtesting
+### [COMPLETE] [HIGH] Deterministic Backtesting
 - **IMPLEMENTED**:
   - Seeded RNG for reproducible execution via `--seed` CLI argument
   - Seed field in BacktestConfig and BacktestResult for logging
@@ -905,7 +978,7 @@ Items are organized by category and prioritized within each category. Priority r
 - **MISSING**:
   - Multiple seed ensemble support (running with array of seeds)
 
-### [COMPLETE ~70%] [HIGH] Environment Versioning
+### [COMPLETE] [HIGH] Environment Versioning
 - **IMPLEMENTED**:
   - Cargo.lock committed (lock file for reproducibility)
   - Rust toolchain pinned in `rust-toolchain.toml`
@@ -913,7 +986,7 @@ Items are organized by category and prioritized within each category. Priority r
   - Dockerfile for consistent build environment
   - Build environment documentation
 
-### [COMPLETE ~80%] [HIGH] Experiment Metadata
+### [COMPLETE] [HIGH] Experiment Metadata
 - **IMPLEMENTED**:
   - Unique experiment ID (UUID)
   - Git commit SHA auto-detection
@@ -941,30 +1014,30 @@ Items are organized by category and prioritized within each category. Priority r
 4. Kill switch functionality
 
 ### Phase 2: ML/DL Workflow Support [HIGH]
-1. ~~ONNX model inference integration~~ (PARTIAL - architecture complete)
+1. ~~ONNX model inference integration~~ (PARTIAL - architecture complete, blocked by ort crate)
 2. ~~Cross-sectional features~~ (COMPLETE)
 3. ~~CPCV implementation~~ (COMPLETE)
-4. ~~Experiment tracking~~ (COMPLETE - MLflow/W&B integration remaining)
-5. Jupyter/Python bindings
+4. ~~Experiment tracking~~ (COMPLETE)
+5. Python bindings (PyO3) - NOT STARTED
 
 ### Phase 3: Advanced Trading Features [HIGH]
-1. Live trading mode with broker integration
-2. ~~Options pricing and Greeks~~ (COMPLETE - Black-Scholes, Greeks, put-call parity)
-3. ~~Multi-timeframe strategy interface~~ (COMPLETE - TimeframeManager, multiple timeframe access)
-4. Portfolio optimization methods
-5. Execution algorithms (TWAP, VWAP, POV)
+1. Live trading mode with broker integration - NOT STARTED
+2. ~~Options pricing and Greeks~~ (COMPLETE - Black-Scholes, Greeks, IV solver)
+3. ~~Multi-timeframe strategy interface~~ (COMPLETE)
+4. ~~Portfolio optimization methods~~ (COMPLETE - all major methods)
+5. Execution algorithms (TWAP, VWAP, POV) - NOT STARTED
 
 ### Phase 4: Robustness & Validation [MEDIUM]
 1. ~~Deflated Sharpe Ratio~~ (COMPLETE)
-2. ~~Overfitting Detection (OOS threshold checking, parameter stability)~~ (COMPLETE)
-3. Lookahead bias compile-time prevention
-4. Factor attribution analysis
+2. ~~Overfitting Detection~~ (COMPLETE)
+3. Lookahead bias compile-time prevention - NOT STARTED
+4. ~~Factor attribution analysis~~ (COMPLETE)
 5. Comprehensive robustness test suite
 
 ### Phase 5: Production Operations [MEDIUM]
 1. State checkpointing and recovery
 2. Audit trails and compliance
-3. Model governance (registry, drift detection)
+3. Model governance (registry, drift detection) - NOT STARTED
 4. Deployment management (canary, shadow mode)
 
 ### Phase 6: Research & Polish [LOW]
@@ -972,6 +1045,34 @@ Items are organized by category and prioritized within each category. Priority r
 2. Visualization and reporting
 3. Strategy comparison dashboard
 4. Performance optimization (SoA, mmap)
+5. Documentation/Onboarding
+
+---
+
+## Priority Ranking Summary
+
+### CRITICAL (Production blockers):
+1. Production Operations (monitoring, circuit breakers, reconciliation)
+2. Live Trading Infrastructure (broker integration)
+
+### HIGH (Professional-grade system):
+1. Python Bindings (PyO3) - enables research workflow
+2. ONNX Inference - complete when ort stabilizes
+3. ~~Factor Attribution~~ (COMPLETE)
+4. Execution Algorithms (TWAP/VWAP) - realistic execution
+5. Alternative Data Integration - modern alpha sources
+
+### MEDIUM (Advanced features):
+1. Binomial Tree for American options
+2. Options Chain/Vol Surface
+3. Model Governance (drift detection)
+4. Database Backends (PostgreSQL)
+5. PIT Enforcement (compile-time)
+
+### LOW (Polish):
+1. Documentation/Onboarding
+2. Additional CLI commands
+3. Visualization/Reporting
 
 ---
 
@@ -1004,23 +1105,25 @@ cargo doc --no-deps --open
 | Category | Complete | Partial | Not Started | Missing | Total Items |
 |----------|----------|---------|-------------|---------|-------------|
 | Core Engine | 4 | 0 | 2 | 4 | 10 |
-| Data Handling | 6 | 1 | 1 | 6 | 14 |
-| Position Management | 8 | 1 | 0 | 4 | 13 |
-| ML Integration | 6 | 1 | 0 | 4 | 11 |
+| Data Handling | 6 | 1 | 2 | 4 | 13 |
+| Position Management | 8 | 1 | 0 | 2 | 11 |
+| ML Integration | 5 | 2 | 1 | 4 | 12 |
 | Multi-Timeframe | 2 | 0 | 0 | 3 | 5 |
 | Multi-Asset Portfolio | 6 | 0 | 0 | 3 | 9 |
-| Options & Derivatives | 4 | 0 | 0 | 5 | 9 |
-| Risk & Validation | 4 | 2 | 0 | 3 | 9 |
-| Performance Analytics | 4 | 0 | 0 | 5 | 9 |
-| Production Operations | 0 | 0 | 0 | 7 | 7 |
-| Model Governance | 0 | 0 | 0 | 6 | 6 |
-| Research Workflow | 1 | 0 | 1 | 5 | 7 |
+| Options & Derivatives | 4 | 0 | 2 | 3 | 9 |
+| Risk & Validation | 4 | 1 | 0 | 4 | 9 |
+| Performance Analytics | 5 | 0 | 1 | 4 | 10 |
+| Production Operations | 0 | 0 | 3 | 6 | 9 |
+| Model Governance | 0 | 0 | 3 | 3 | 6 |
+| Research Workflow | 1 | 0 | 2 | 5 | 8 |
 | CLI & Configuration | 3 | 1 | 0 | 4 | 8 |
-| Execution Realism | 2 | 1 | 0 | 3 | 6 |
-| Reproducibility | 4 | 0 | 0 | 0 | 4 |
-| **TOTAL** | **54** | **3** | **4** | **66** | **127** |
+| Execution Realism | 2 | 0 | 1 | 3 | 6 |
+| Reproducibility | 3 | 0 | 0 | 1 | 4 |
+| **TOTAL** | **53** | **6** | **17** | **53** | **129** |
 
-**Estimated Completion: ~43%** (core backtesting solid; Options Pricing Models and Greeks Calculation now complete with Black-Scholes and full Greeks support; Experiment Tracking, Cross-Sectional Features, CPCV, Overfitting Detection, and Transaction Cost Sensitivity complete; all major portfolio construction methods complete including Black-Litterman; drift-based rebalancing now complete with threshold-based triggering; ONNX inference architecture complete but blocked by ort crate instability; live trading and Python bindings not started)
+**Estimated Completion: ~46%**
+
+Core backtesting is solid and production-ready. All major portfolio construction methods complete (equal weight, inverse volatility, risk parity, mean-variance, HRP, Black-Litterman) with drift-based rebalancing. Options pricing with Black-Scholes, full Greeks, and IV solver complete. Experiment tracking, cross-sectional features, CPCV, overfitting detection, and factor attribution complete. ONNX inference architecture complete but blocked by ort crate instability. Live trading, Python bindings, production operations, and model governance are NOT STARTED. Execution algorithms are NOT STARTED.
 
 ---
 
@@ -1040,14 +1143,14 @@ The following spec requirements are fully implemented and verified:
 - [x] Trade-level statistics
 - [x] Risk-adjusted returns
 - [x] Export in ML-ready formats (Parquet, NPY, CSV, JSON)
-- [x] Feature engineering pipeline (40+ indicators)
+- [x] Feature engineering pipeline (60+ indicators)
 - [x] Walk-forward validation support
 - [x] Signal generation from model predictions (ExternalSignalStrategy)
 - [x] Intuitive CLI with multiple commands
 - [x] Configuration via files and arguments
 - [x] Progress reporting (indicatif progress bars)
 - [x] Output in multiple formats (text, JSON, CSV)
-- [x] Comprehensive test coverage (437 tests passing)
+- [x] Comprehensive test coverage (433 tests passing)
 - [x] Stop-loss, take-profit, trailing stops
 - [x] Position sizing (risk-based, volatility-based, Kelly)
 - [x] Monte Carlo simulation
@@ -1072,3 +1175,13 @@ The following spec requirements are fully implemented and verified:
 - [x] Implied volatility solver (Newton-Raphson with Brent's method fallback)
 - [x] Deterministic backtesting with seeded RNG (--seed CLI argument)
 - [x] Environment versioning (rust-toolchain.toml, Cargo.lock)
+- [x] Multi-timeframe strategy interface (TimeframeManager, lazy evaluation)
+- [x] Portfolio construction methods (equal weight, inverse vol, risk parity, MVO, HRP, Black-Litterman)
+- [x] Portfolio constraints (position limits, sector exposure, leverage, turnover)
+- [x] Experiment tracking with SQLite storage and CLI management
+- [x] Transaction cost sensitivity analysis (breakeven, elasticity)
+- [x] Overfitting detection (deflated Sharpe, OOS threshold, parameter stability)
+- [x] Volume participation limits for realistic order fills
+- [x] Margin requirements (Reg T, portfolio margin, margin calls)
+- [x] Drift-based rebalancing (threshold-triggered, configurable presets)
+- [x] Factor attribution (Fama-French 3/5-factor, Carhart 4-factor, 6-factor models)

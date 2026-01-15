@@ -171,6 +171,7 @@ fn test_backtest_with_costs() {
         crypto: CryptoCost::default(),
         forex: ForexCost::default(),
         market_impact: MarketImpactModel::None,
+        max_volume_participation: None,
     };
 
     let config = BacktestConfig {

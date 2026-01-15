@@ -2246,7 +2246,7 @@ mod tests {
         let mut cost_model = CostModel::zero();
         cost_model.max_volume_participation = None;
         let mut portfolio = Portfolio::with_cost_model(1000000.0, cost_model); // $1M capital
-        // Disable margin to avoid leverage violations
+                                                                               // Disable margin to avoid leverage violations
         portfolio.set_margin_config(MarginConfig {
             enabled: false,
             ..MarginConfig::default()
@@ -2348,7 +2348,7 @@ mod tests {
         let mut cost_model = CostModel::zero();
         cost_model.max_volume_participation = Some(0.20); // 20% limit from the start
         let mut portfolio = Portfolio::with_cost_model(1000000.0, cost_model); // $1M capital
-        // Disable margin to avoid leverage violations
+                                                                               // Disable margin to avoid leverage violations
         portfolio.set_margin_config(MarginConfig {
             enabled: false,
             ..MarginConfig::default()

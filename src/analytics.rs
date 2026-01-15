@@ -1298,6 +1298,930 @@ impl TradeReport {
     }
 }
 
+// ============================================================================
+// Factor Attribution Module
+// ============================================================================
+
+/// Factor returns for a single time period.
+/// Used to provide factor data for attribution analysis.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FactorReturns {
+    /// Market excess return (Rm - Rf)
+    pub mkt_rf: f64,
+    /// Size factor (Small Minus Big)
+    pub smb: f64,
+    /// Value factor (High Minus Low book-to-market)
+    pub hml: f64,
+    /// Profitability factor (Robust Minus Weak) - Fama-French 5-factor
+    pub rmw: f64,
+    /// Investment factor (Conservative Minus Aggressive) - Fama-French 5-factor
+    pub cma: f64,
+    /// Momentum factor (Up Minus Down) - Carhart 4-factor
+    pub umd: f64,
+    /// Risk-free rate for the period
+    pub rf: f64,
+}
+
+impl FactorReturns {
+    /// Create factor returns with all factors.
+    pub fn new(mkt_rf: f64, smb: f64, hml: f64, rmw: f64, cma: f64, umd: f64, rf: f64) -> Self {
+        Self {
+            mkt_rf,
+            smb,
+            hml,
+            rmw,
+            cma,
+            umd,
+            rf,
+        }
+    }
+
+    /// Create factor returns for Fama-French 3-factor model.
+    pub fn three_factor(mkt_rf: f64, smb: f64, hml: f64, rf: f64) -> Self {
+        Self {
+            mkt_rf,
+            smb,
+            hml,
+            rmw: 0.0,
+            cma: 0.0,
+            umd: 0.0,
+            rf,
+        }
+    }
+
+    /// Create factor returns for Carhart 4-factor model.
+    pub fn four_factor(mkt_rf: f64, smb: f64, hml: f64, umd: f64, rf: f64) -> Self {
+        Self {
+            mkt_rf,
+            smb,
+            hml,
+            rmw: 0.0,
+            cma: 0.0,
+            umd,
+            rf,
+        }
+    }
+}
+
+/// Result of multiple linear regression.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RegressionResult {
+    /// Regression coefficients (betas), excluding intercept
+    pub coefficients: Vec<f64>,
+    /// Intercept (alpha)
+    pub intercept: f64,
+    /// R-squared (coefficient of determination)
+    pub r_squared: f64,
+    /// Adjusted R-squared
+    pub r_squared_adj: f64,
+    /// Standard errors of coefficients
+    pub std_errors: Vec<f64>,
+    /// t-statistics for coefficients
+    pub t_statistics: Vec<f64>,
+    /// p-values for coefficients
+    pub p_values: Vec<f64>,
+    /// Residuals (y - y_hat)
+    pub residuals: Vec<f64>,
+    /// Number of observations
+    pub n_observations: usize,
+    /// Residual standard error
+    pub residual_std_error: f64,
+    /// F-statistic for overall model significance
+    pub f_statistic: f64,
+}
+
+impl RegressionResult {
+    /// Check if a coefficient is statistically significant at the given alpha level.
+    pub fn is_significant(&self, coef_index: usize, alpha: f64) -> bool {
+        if coef_index >= self.p_values.len() {
+            return false;
+        }
+        self.p_values[coef_index] < alpha
+    }
+}
+
+/// Factor loadings from regression analysis.
+/// These represent the exposure of a portfolio to various risk factors.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FactorLoadings {
+    /// Alpha (annualized): excess return not explained by factors
+    pub alpha: f64,
+    /// Alpha t-statistic
+    pub alpha_t_stat: f64,
+    /// Alpha p-value
+    pub alpha_p_value: f64,
+    /// Market beta (exposure to market factor)
+    pub market_beta: f64,
+    /// Market beta t-statistic
+    pub market_t_stat: f64,
+    /// SMB beta (exposure to size factor)
+    pub smb_beta: f64,
+    /// SMB t-statistic
+    pub smb_t_stat: f64,
+    /// HML beta (exposure to value factor)
+    pub hml_beta: f64,
+    /// HML t-statistic
+    pub hml_t_stat: f64,
+    /// RMW beta (exposure to profitability factor) - Fama-French 5-factor only
+    pub rmw_beta: f64,
+    /// RMW t-statistic
+    pub rmw_t_stat: f64,
+    /// CMA beta (exposure to investment factor) - Fama-French 5-factor only
+    pub cma_beta: f64,
+    /// CMA t-statistic
+    pub cma_t_stat: f64,
+    /// UMD beta (exposure to momentum factor) - Carhart 4-factor only
+    pub umd_beta: f64,
+    /// UMD t-statistic
+    pub umd_t_stat: f64,
+    /// R-squared: proportion of return variance explained by factors
+    pub r_squared: f64,
+    /// Adjusted R-squared
+    pub r_squared_adj: f64,
+    /// Number of observations used
+    pub n_observations: usize,
+    /// Model type used for attribution
+    pub model_type: FactorModelType,
+}
+
+/// Type of factor model used for attribution.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum FactorModelType {
+    /// Fama-French 3-factor model (MKT, SMB, HML)
+    FamaFrench3,
+    /// Carhart 4-factor model (MKT, SMB, HML, UMD)
+    Carhart4,
+    /// Fama-French 5-factor model (MKT, SMB, HML, RMW, CMA)
+    FamaFrench5,
+    /// Fama-French 5-factor + Momentum (all 6 factors)
+    FamaFrench5Momentum,
+}
+
+impl std::fmt::Display for FactorModelType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            FactorModelType::FamaFrench3 => write!(f, "Fama-French 3-Factor"),
+            FactorModelType::Carhart4 => write!(f, "Carhart 4-Factor"),
+            FactorModelType::FamaFrench5 => write!(f, "Fama-French 5-Factor"),
+            FactorModelType::FamaFrench5Momentum => write!(f, "Fama-French 5-Factor + Momentum"),
+        }
+    }
+}
+
+/// Performs Ordinary Least Squares (OLS) multiple linear regression.
+///
+/// Solves: Y = Xβ + ε using the normal equations: β = (X'X)^(-1) X'Y
+///
+/// # Arguments
+/// * `y` - Dependent variable (portfolio excess returns)
+/// * `x` - Independent variables (factor returns), each inner Vec is one factor's time series
+///
+/// # Returns
+/// `RegressionResult` containing coefficients, R², t-statistics, etc.
+pub fn multiple_regression(y: &[f64], x: &[Vec<f64>]) -> Option<RegressionResult> {
+    let n = y.len();
+    let k = x.len(); // number of independent variables (factors)
+
+    if n < k + 2 || k == 0 {
+        return None;
+    }
+
+    // Verify all x vectors have the same length as y
+    for factor in x {
+        if factor.len() != n {
+            return None;
+        }
+    }
+
+    // Build design matrix X with intercept column
+    // X is n x (k+1) matrix: [1, x1, x2, ..., xk]
+    let cols = k + 1;
+
+    // Calculate X'X (cols x cols matrix)
+    let mut xtx = vec![vec![0.0; cols]; cols];
+
+    // First column is all 1s (intercept)
+    xtx[0][0] = n as f64;
+    for j in 1..cols {
+        let sum: f64 = x[j - 1].iter().sum();
+        xtx[0][j] = sum;
+        xtx[j][0] = sum;
+    }
+
+    // Fill the rest of X'X
+    for i in 1..cols {
+        for j in i..cols {
+            let sum: f64 = x[i - 1]
+                .iter()
+                .zip(x[j - 1].iter())
+                .map(|(a, b)| a * b)
+                .sum();
+            xtx[i][j] = sum;
+            xtx[j][i] = sum;
+        }
+    }
+
+    // Calculate X'Y (cols x 1 vector)
+    let mut xty = vec![0.0; cols];
+    xty[0] = y.iter().sum();
+    for j in 1..cols {
+        xty[j] = x[j - 1].iter().zip(y.iter()).map(|(a, b)| a * b).sum();
+    }
+
+    // Solve (X'X)β = X'Y using Gaussian elimination with partial pivoting
+    let coefficients = solve_linear_system(&xtx, &xty)?;
+
+    // Extract intercept and betas
+    let intercept = coefficients[0];
+    let betas: Vec<f64> = coefficients[1..].to_vec();
+
+    // Calculate fitted values and residuals
+    let mut y_hat = vec![0.0; n];
+    let mut residuals = vec![0.0; n];
+    for i in 0..n {
+        y_hat[i] = intercept;
+        for j in 0..k {
+            y_hat[i] += betas[j] * x[j][i];
+        }
+        residuals[i] = y[i] - y_hat[i];
+    }
+
+    // Calculate R-squared
+    let y_mean: f64 = y.iter().sum::<f64>() / n as f64;
+    let ss_tot: f64 = y.iter().map(|yi| (yi - y_mean).powi(2)).sum();
+    let ss_res: f64 = residuals.iter().map(|e| e.powi(2)).sum();
+    let r_squared = if ss_tot > 0.0 {
+        1.0 - ss_res / ss_tot
+    } else {
+        0.0
+    };
+
+    // Adjusted R-squared
+    let df_total = n as f64 - 1.0;
+    let df_resid = n as f64 - cols as f64;
+    let r_squared_adj = if df_resid > 0.0 && df_total > 0.0 {
+        1.0 - (1.0 - r_squared) * (df_total / df_resid)
+    } else {
+        r_squared
+    };
+
+    // Residual standard error
+    let residual_std_error = if df_resid > 0.0 {
+        (ss_res / df_resid).sqrt()
+    } else {
+        0.0
+    };
+
+    // Calculate standard errors of coefficients
+    // SE(β) = sqrt(σ² * diag((X'X)^(-1)))
+    let xtx_inv = invert_matrix(&xtx)?;
+    let mut std_errors = Vec::with_capacity(cols);
+    let sigma_sq = if df_resid > 0.0 {
+        ss_res / df_resid
+    } else {
+        0.0
+    };
+
+    for (i, row) in xtx_inv.iter().enumerate().take(cols) {
+        let se = (sigma_sq * row[i]).sqrt();
+        std_errors.push(se);
+    }
+
+    // Calculate t-statistics and p-values
+    let mut t_statistics = Vec::with_capacity(cols);
+    let mut p_values = Vec::with_capacity(cols);
+
+    for i in 0..cols {
+        let t_stat = if std_errors[i] > 1e-10 {
+            coefficients[i] / std_errors[i]
+        } else {
+            0.0
+        };
+        t_statistics.push(t_stat);
+
+        // Two-tailed p-value using t-distribution approximation
+        let p_val = t_distribution_p_value(t_stat.abs(), df_resid as usize);
+        p_values.push(p_val);
+    }
+
+    // Calculate F-statistic
+    let ss_reg = ss_tot - ss_res;
+    let df_reg = k as f64;
+    let f_statistic = if df_resid > 0.0 && ss_res > 0.0 && df_reg > 0.0 {
+        (ss_reg / df_reg) / (ss_res / df_resid)
+    } else {
+        0.0
+    };
+
+    Some(RegressionResult {
+        coefficients: betas,
+        intercept,
+        r_squared,
+        r_squared_adj,
+        std_errors: std_errors[1..].to_vec(), // Exclude intercept SE for betas
+        t_statistics: t_statistics[1..].to_vec(),
+        p_values: p_values[1..].to_vec(),
+        residuals,
+        n_observations: n,
+        residual_std_error,
+        f_statistic,
+    })
+}
+
+/// Solve a linear system Ax = b using Gaussian elimination with partial pivoting.
+fn solve_linear_system(a: &[Vec<f64>], b: &[f64]) -> Option<Vec<f64>> {
+    let n = a.len();
+    if n == 0 || b.len() != n {
+        return None;
+    }
+
+    // Create augmented matrix
+    let mut aug: Vec<Vec<f64>> = a
+        .iter()
+        .zip(b.iter())
+        .map(|(row, bi)| {
+            let mut new_row = row.clone();
+            new_row.push(*bi);
+            new_row
+        })
+        .collect();
+
+    // Forward elimination with partial pivoting
+    for i in 0..n {
+        // Find pivot
+        let mut max_row = i;
+        for k in (i + 1)..n {
+            if aug[k][i].abs() > aug[max_row][i].abs() {
+                max_row = k;
+            }
+        }
+
+        // Swap rows
+        aug.swap(i, max_row);
+
+        // Check for singular matrix
+        if aug[i][i].abs() < 1e-12 {
+            return None;
+        }
+
+        // Eliminate column
+        for k in (i + 1)..n {
+            let factor = aug[k][i] / aug[i][i];
+            let aug_i_vals: Vec<f64> = aug[i][i..=n].to_vec();
+            for (j_offset, aug_i_val) in aug_i_vals.iter().enumerate() {
+                aug[k][i + j_offset] -= factor * aug_i_val;
+            }
+        }
+    }
+
+    // Back substitution
+    let mut x = vec![0.0; n];
+    for i in (0..n).rev() {
+        x[i] = aug[i][n];
+        for j in (i + 1)..n {
+            x[i] -= aug[i][j] * x[j];
+        }
+        x[i] /= aug[i][i];
+    }
+
+    Some(x)
+}
+
+/// Invert a matrix using Gauss-Jordan elimination.
+fn invert_matrix(a: &[Vec<f64>]) -> Option<Vec<Vec<f64>>> {
+    let n = a.len();
+    if n == 0 {
+        return None;
+    }
+
+    // Create augmented matrix [A | I]
+    let mut aug: Vec<Vec<f64>> = a
+        .iter()
+        .enumerate()
+        .map(|(i, row)| {
+            let mut new_row = row.clone();
+            for j in 0..n {
+                new_row.push(if i == j { 1.0 } else { 0.0 });
+            }
+            new_row
+        })
+        .collect();
+
+    // Forward elimination with partial pivoting
+    for i in 0..n {
+        // Find pivot
+        let mut max_row = i;
+        for k in (i + 1)..n {
+            if aug[k][i].abs() > aug[max_row][i].abs() {
+                max_row = k;
+            }
+        }
+
+        aug.swap(i, max_row);
+
+        if aug[i][i].abs() < 1e-12 {
+            return None; // Singular matrix
+        }
+
+        // Scale pivot row
+        let pivot = aug[i][i];
+        for elem in aug[i].iter_mut().take(2 * n) {
+            *elem /= pivot;
+        }
+
+        // Eliminate column
+        for k in 0..n {
+            if k != i {
+                let factor = aug[k][i];
+                let aug_i_vals: Vec<f64> = aug[i].iter().take(2 * n).copied().collect();
+                for (j, aug_i_val) in aug_i_vals.iter().enumerate() {
+                    aug[k][j] -= factor * aug_i_val;
+                }
+            }
+        }
+    }
+
+    // Extract inverse matrix
+    let inverse: Vec<Vec<f64>> = aug.iter().map(|row| row[n..].to_vec()).collect();
+
+    Some(inverse)
+}
+
+/// Approximate p-value from t-distribution using normal approximation for large df.
+fn t_distribution_p_value(t: f64, df: usize) -> f64 {
+    if df == 0 {
+        return 1.0;
+    }
+
+    // For df > 30, use normal approximation
+    if df > 30 {
+        // Two-tailed p-value from normal distribution
+        let p = 2.0 * (1.0 - normal_cdf(t));
+        return p.clamp(0.0, 1.0);
+    }
+
+    // For smaller df, use a more accurate approximation
+    // Using the regularized incomplete beta function approximation
+    let x = df as f64 / (df as f64 + t * t);
+    let p = incomplete_beta(df as f64 / 2.0, 0.5, x);
+    p.clamp(0.0, 1.0)
+}
+
+/// Standard normal CDF using error function.
+fn normal_cdf(x: f64) -> f64 {
+    0.5 * (1.0 + erf(x / std::f64::consts::SQRT_2))
+}
+
+/// Approximation of the regularized incomplete beta function.
+/// Uses continued fraction approximation for numerical stability.
+fn incomplete_beta(a: f64, b: f64, x: f64) -> f64 {
+    if x <= 0.0 {
+        return 0.0;
+    }
+    if x >= 1.0 {
+        return 1.0;
+    }
+
+    // Use the symmetry relation when appropriate
+    if x > (a + 1.0) / (a + b + 2.0) {
+        return 1.0 - incomplete_beta(b, a, 1.0 - x);
+    }
+
+    // Compute using continued fraction (Lentz's algorithm)
+    let lnbeta = ln_gamma(a) + ln_gamma(b) - ln_gamma(a + b);
+    let front = (x.ln() * a + (1.0 - x).ln() * b - lnbeta).exp() / a;
+
+    // Continued fraction
+    let mut f = 1.0;
+    let mut c = 1.0;
+    let mut d = 0.0;
+
+    for m in 1..200 {
+        let m = m as f64;
+
+        // Even step
+        let numerator = m * (b - m) * x / ((a + 2.0 * m - 1.0) * (a + 2.0 * m));
+        d = 1.0 + numerator * d;
+        if d.abs() < 1e-30 {
+            d = 1e-30;
+        }
+        d = 1.0 / d;
+        c = 1.0 + numerator / c;
+        if c.abs() < 1e-30 {
+            c = 1e-30;
+        }
+        f *= d * c;
+
+        // Odd step
+        let numerator = -(a + m) * (a + b + m) * x / ((a + 2.0 * m) * (a + 2.0 * m + 1.0));
+        d = 1.0 + numerator * d;
+        if d.abs() < 1e-30 {
+            d = 1e-30;
+        }
+        d = 1.0 / d;
+        c = 1.0 + numerator / c;
+        if c.abs() < 1e-30 {
+            c = 1e-30;
+        }
+        let delta = d * c;
+        f *= delta;
+
+        if (delta - 1.0).abs() < 1e-10 {
+            break;
+        }
+    }
+
+    front * f
+}
+
+/// Log gamma function approximation using Lanczos coefficients.
+/// These are standard mathematical constants that require high precision.
+#[allow(clippy::excessive_precision)]
+fn ln_gamma(x: f64) -> f64 {
+    if x <= 0.0 {
+        return f64::INFINITY;
+    }
+
+    // Lanczos approximation coefficients (require high precision)
+    let g = 7;
+    let coef = [
+        0.99999999999980993,
+        676.5203681218851,
+        -1259.1392167224028,
+        771.32342877765313,
+        -176.61502916214059,
+        12.507343278686905,
+        -0.13857109526572012,
+        9.9843695780195716e-6,
+        1.5056327351493116e-7,
+    ];
+
+    if x < 0.5 {
+        // Reflection formula
+        return std::f64::consts::PI.ln()
+            - (std::f64::consts::PI * x).sin().ln()
+            - ln_gamma(1.0 - x);
+    }
+
+    let x = x - 1.0;
+    let mut y = coef[0];
+    for (i, &c) in coef.iter().enumerate().skip(1).take(g + 1) {
+        y += c / (x + i as f64);
+    }
+
+    let t = x + g as f64 + 0.5;
+    0.5 * (2.0 * std::f64::consts::PI).ln() + (t.ln() * (x + 0.5)) - t + y.ln()
+}
+
+/// Factor Attribution analyzer for portfolio returns.
+pub struct FactorAttribution;
+
+impl FactorAttribution {
+    /// Run Fama-French 3-factor model attribution.
+    ///
+    /// Model: R_p - R_f = α + β_mkt*(R_m - R_f) + β_smb*SMB + β_hml*HML + ε
+    ///
+    /// # Arguments
+    /// * `portfolio_returns` - Portfolio daily returns (not excess returns)
+    /// * `factor_data` - Vector of daily factor returns
+    ///
+    /// # Returns
+    /// Factor loadings with alpha, betas, and R²
+    pub fn fama_french_3factor(
+        portfolio_returns: &[f64],
+        factor_data: &[FactorReturns],
+    ) -> Option<FactorLoadings> {
+        if portfolio_returns.len() != factor_data.len() || portfolio_returns.len() < 20 {
+            return None;
+        }
+
+        // Calculate excess portfolio returns (R_p - R_f)
+        let excess_returns: Vec<f64> = portfolio_returns
+            .iter()
+            .zip(factor_data.iter())
+            .map(|(r, f)| r - f.rf)
+            .collect();
+
+        // Prepare factor columns
+        let mkt: Vec<f64> = factor_data.iter().map(|f| f.mkt_rf).collect();
+        let smb: Vec<f64> = factor_data.iter().map(|f| f.smb).collect();
+        let hml: Vec<f64> = factor_data.iter().map(|f| f.hml).collect();
+
+        let factors = vec![mkt, smb, hml];
+        let regression = multiple_regression(&excess_returns, &factors)?;
+
+        Some(Self::build_loadings(
+            &regression,
+            FactorModelType::FamaFrench3,
+        ))
+    }
+
+    /// Run Carhart 4-factor model attribution.
+    ///
+    /// Model: R_p - R_f = α + β_mkt*(R_m - R_f) + β_smb*SMB + β_hml*HML + β_umd*UMD + ε
+    pub fn carhart_4factor(
+        portfolio_returns: &[f64],
+        factor_data: &[FactorReturns],
+    ) -> Option<FactorLoadings> {
+        if portfolio_returns.len() != factor_data.len() || portfolio_returns.len() < 20 {
+            return None;
+        }
+
+        let excess_returns: Vec<f64> = portfolio_returns
+            .iter()
+            .zip(factor_data.iter())
+            .map(|(r, f)| r - f.rf)
+            .collect();
+
+        let mkt: Vec<f64> = factor_data.iter().map(|f| f.mkt_rf).collect();
+        let smb: Vec<f64> = factor_data.iter().map(|f| f.smb).collect();
+        let hml: Vec<f64> = factor_data.iter().map(|f| f.hml).collect();
+        let umd: Vec<f64> = factor_data.iter().map(|f| f.umd).collect();
+
+        let factors = vec![mkt, smb, hml, umd];
+        let regression = multiple_regression(&excess_returns, &factors)?;
+
+        Some(Self::build_loadings(&regression, FactorModelType::Carhart4))
+    }
+
+    /// Run Fama-French 5-factor model attribution.
+    ///
+    /// Model: R_p - R_f = α + β_mkt*(R_m - R_f) + β_smb*SMB + β_hml*HML + β_rmw*RMW + β_cma*CMA + ε
+    pub fn fama_french_5factor(
+        portfolio_returns: &[f64],
+        factor_data: &[FactorReturns],
+    ) -> Option<FactorLoadings> {
+        if portfolio_returns.len() != factor_data.len() || portfolio_returns.len() < 30 {
+            return None;
+        }
+
+        let excess_returns: Vec<f64> = portfolio_returns
+            .iter()
+            .zip(factor_data.iter())
+            .map(|(r, f)| r - f.rf)
+            .collect();
+
+        let mkt: Vec<f64> = factor_data.iter().map(|f| f.mkt_rf).collect();
+        let smb: Vec<f64> = factor_data.iter().map(|f| f.smb).collect();
+        let hml: Vec<f64> = factor_data.iter().map(|f| f.hml).collect();
+        let rmw: Vec<f64> = factor_data.iter().map(|f| f.rmw).collect();
+        let cma: Vec<f64> = factor_data.iter().map(|f| f.cma).collect();
+
+        let factors = vec![mkt, smb, hml, rmw, cma];
+        let regression = multiple_regression(&excess_returns, &factors)?;
+
+        Some(Self::build_loadings(
+            &regression,
+            FactorModelType::FamaFrench5,
+        ))
+    }
+
+    /// Run full 6-factor model (Fama-French 5-factor + Momentum).
+    pub fn six_factor(
+        portfolio_returns: &[f64],
+        factor_data: &[FactorReturns],
+    ) -> Option<FactorLoadings> {
+        if portfolio_returns.len() != factor_data.len() || portfolio_returns.len() < 30 {
+            return None;
+        }
+
+        let excess_returns: Vec<f64> = portfolio_returns
+            .iter()
+            .zip(factor_data.iter())
+            .map(|(r, f)| r - f.rf)
+            .collect();
+
+        let mkt: Vec<f64> = factor_data.iter().map(|f| f.mkt_rf).collect();
+        let smb: Vec<f64> = factor_data.iter().map(|f| f.smb).collect();
+        let hml: Vec<f64> = factor_data.iter().map(|f| f.hml).collect();
+        let rmw: Vec<f64> = factor_data.iter().map(|f| f.rmw).collect();
+        let cma: Vec<f64> = factor_data.iter().map(|f| f.cma).collect();
+        let umd: Vec<f64> = factor_data.iter().map(|f| f.umd).collect();
+
+        let factors = vec![mkt, smb, hml, rmw, cma, umd];
+        let regression = multiple_regression(&excess_returns, &factors)?;
+
+        Some(Self::build_loadings(
+            &regression,
+            FactorModelType::FamaFrench5Momentum,
+        ))
+    }
+
+    /// Build FactorLoadings struct from regression results.
+    fn build_loadings(
+        regression: &RegressionResult,
+        model_type: FactorModelType,
+    ) -> FactorLoadings {
+        let n_factors = regression.coefficients.len();
+
+        // Annualize alpha (daily to annual): α_annual = α_daily * 252
+        let alpha = regression.intercept * 252.0 * 100.0; // Convert to percentage
+
+        // Calculate t-stat for alpha using intercept standard error
+        // We need to recalculate this since we stored only coefficient SEs
+        let alpha_t_stat = if regression.residual_std_error > 0.0 {
+            regression.intercept
+                / (regression.residual_std_error / (regression.n_observations as f64).sqrt())
+        } else {
+            0.0
+        };
+        let alpha_p_value = t_distribution_p_value(
+            alpha_t_stat.abs(),
+            regression.n_observations.saturating_sub(n_factors + 1),
+        );
+
+        // Extract betas and t-stats by factor
+        let get_beta = |i: usize| regression.coefficients.get(i).copied().unwrap_or(0.0);
+        let get_t = |i: usize| regression.t_statistics.get(i).copied().unwrap_or(0.0);
+
+        FactorLoadings {
+            alpha,
+            alpha_t_stat,
+            alpha_p_value,
+            market_beta: get_beta(0),
+            market_t_stat: get_t(0),
+            smb_beta: get_beta(1),
+            smb_t_stat: get_t(1),
+            hml_beta: get_beta(2),
+            hml_t_stat: get_t(2),
+            rmw_beta: if matches!(
+                model_type,
+                FactorModelType::FamaFrench5 | FactorModelType::FamaFrench5Momentum
+            ) {
+                get_beta(3)
+            } else {
+                0.0
+            },
+            rmw_t_stat: if matches!(
+                model_type,
+                FactorModelType::FamaFrench5 | FactorModelType::FamaFrench5Momentum
+            ) {
+                get_t(3)
+            } else {
+                0.0
+            },
+            cma_beta: if matches!(
+                model_type,
+                FactorModelType::FamaFrench5 | FactorModelType::FamaFrench5Momentum
+            ) {
+                get_beta(4)
+            } else {
+                0.0
+            },
+            cma_t_stat: if matches!(
+                model_type,
+                FactorModelType::FamaFrench5 | FactorModelType::FamaFrench5Momentum
+            ) {
+                get_t(4)
+            } else {
+                0.0
+            },
+            umd_beta: match model_type {
+                FactorModelType::Carhart4 => get_beta(3),
+                FactorModelType::FamaFrench5Momentum => get_beta(5),
+                _ => 0.0,
+            },
+            umd_t_stat: match model_type {
+                FactorModelType::Carhart4 => get_t(3),
+                FactorModelType::FamaFrench5Momentum => get_t(5),
+                _ => 0.0,
+            },
+            r_squared: regression.r_squared,
+            r_squared_adj: regression.r_squared_adj,
+            n_observations: regression.n_observations,
+            model_type,
+        }
+    }
+
+    /// Check if factor loadings indicate significant factor exposure.
+    pub fn has_significant_exposure(loadings: &FactorLoadings, alpha_level: f64) -> Vec<String> {
+        let mut significant = Vec::new();
+
+        if loadings.alpha_p_value < alpha_level {
+            significant.push("Alpha".to_string());
+        }
+
+        // Check market beta (t-stat > ~2 for 95% confidence)
+        let t_critical = 1.96; // Approximate for large samples
+        if loadings.market_t_stat.abs() > t_critical {
+            significant.push("Market".to_string());
+        }
+        if loadings.smb_t_stat.abs() > t_critical {
+            significant.push("SMB (Size)".to_string());
+        }
+        if loadings.hml_t_stat.abs() > t_critical {
+            significant.push("HML (Value)".to_string());
+        }
+        if matches!(
+            loadings.model_type,
+            FactorModelType::FamaFrench5 | FactorModelType::FamaFrench5Momentum
+        ) && loadings.rmw_t_stat.abs() > t_critical
+        {
+            significant.push("RMW (Profitability)".to_string());
+        }
+        if matches!(
+            loadings.model_type,
+            FactorModelType::FamaFrench5 | FactorModelType::FamaFrench5Momentum
+        ) && loadings.cma_t_stat.abs() > t_critical
+        {
+            significant.push("CMA (Investment)".to_string());
+        }
+        if matches!(
+            loadings.model_type,
+            FactorModelType::Carhart4 | FactorModelType::FamaFrench5Momentum
+        ) && loadings.umd_t_stat.abs() > t_critical
+        {
+            significant.push("UMD (Momentum)".to_string());
+        }
+
+        significant
+    }
+}
+
+impl ResultFormatter {
+    /// Print factor attribution results.
+    pub fn print_factor_attribution(loadings: &FactorLoadings) {
+        println!();
+        println!("{}", "═".repeat(60).blue());
+        println!(
+            "{}",
+            format!(" FACTOR ATTRIBUTION ({}) ", loadings.model_type)
+                .bold()
+                .blue()
+        );
+        println!("{}", "═".repeat(60).blue());
+        println!();
+
+        // Model fit
+        println!("{}", "Model Fit".bold().underline());
+        println!(
+            "  R-squared:       {:>10.4}  ({:.1}% of variance explained)",
+            loadings.r_squared,
+            loadings.r_squared * 100.0
+        );
+        println!("  Adj. R-squared:  {:>10.4}", loadings.r_squared_adj);
+        println!("  Observations:    {:>10}", loadings.n_observations);
+        println!();
+
+        // Alpha
+        println!("{}", "Alpha (Annualized)".bold().underline());
+        let alpha_sig = if loadings.alpha_p_value < 0.05 {
+            "**".green()
+        } else if loadings.alpha_p_value < 0.10 {
+            "*".yellow()
+        } else {
+            "".normal()
+        };
+        println!(
+            "  Alpha:           {:>10.2}%  (t={:.2}, p={:.4}) {}",
+            loadings.alpha, loadings.alpha_t_stat, loadings.alpha_p_value, alpha_sig
+        );
+        println!();
+
+        // Factor Loadings
+        println!("{}", "Factor Loadings".bold().underline());
+        Self::print_factor_row("Market (β)", loadings.market_beta, loadings.market_t_stat);
+        Self::print_factor_row("SMB (Size)", loadings.smb_beta, loadings.smb_t_stat);
+        Self::print_factor_row("HML (Value)", loadings.hml_beta, loadings.hml_t_stat);
+
+        if matches!(
+            loadings.model_type,
+            FactorModelType::FamaFrench5 | FactorModelType::FamaFrench5Momentum
+        ) {
+            Self::print_factor_row("RMW (Profit.)", loadings.rmw_beta, loadings.rmw_t_stat);
+            Self::print_factor_row("CMA (Invest.)", loadings.cma_beta, loadings.cma_t_stat);
+        }
+
+        if matches!(
+            loadings.model_type,
+            FactorModelType::Carhart4 | FactorModelType::FamaFrench5Momentum
+        ) {
+            Self::print_factor_row("UMD (Momentum)", loadings.umd_beta, loadings.umd_t_stat);
+        }
+
+        println!();
+        println!(
+            "  {} = significant at 5%, {} = significant at 10%",
+            "**".green(),
+            "*".yellow()
+        );
+        println!("{}", "═".repeat(60).blue());
+    }
+
+    fn print_factor_row(name: &str, beta: f64, t_stat: f64) {
+        let sig = if t_stat.abs() > 2.576 {
+            "***".green()
+        } else if t_stat.abs() > 1.96 {
+            "**".green()
+        } else if t_stat.abs() > 1.645 {
+            "*".yellow()
+        } else {
+            "".normal()
+        };
+        println!("  {:14} {:>10.4}  (t={:>6.2}) {}", name, beta, t_stat, sig);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2688,5 +3612,506 @@ mod tests {
             "PSR should be > 0.80 for SR=1.5: {}",
             metrics.probabilistic_sharpe_ratio
         );
+    }
+
+    // =========================================================================
+    // Factor Attribution Tests
+    // =========================================================================
+
+    #[test]
+    fn test_multiple_regression_simple() {
+        // y = 2 + 3*x1 + noise
+        let x1: Vec<f64> = (0..100).map(|i| i as f64 / 10.0).collect();
+        let y: Vec<f64> = x1.iter().map(|&x| 2.0 + 3.0 * x).collect();
+
+        let result = multiple_regression(&y, &[x1]).unwrap();
+
+        // Check intercept is close to 2
+        assert!(
+            (result.intercept - 2.0).abs() < 0.01,
+            "Intercept should be ~2.0: {}",
+            result.intercept
+        );
+
+        // Check coefficient is close to 3
+        assert!(
+            (result.coefficients[0] - 3.0).abs() < 0.01,
+            "Coefficient should be ~3.0: {}",
+            result.coefficients[0]
+        );
+
+        // R-squared should be 1.0 (perfect fit)
+        assert!(
+            result.r_squared > 0.99,
+            "R-squared should be ~1.0: {}",
+            result.r_squared
+        );
+    }
+
+    #[test]
+    fn test_multiple_regression_two_variables() {
+        // y = 1 + 2*x1 - 0.5*x2 + noise
+        let n = 100;
+        let x1: Vec<f64> = (0..n).map(|i| i as f64 / 10.0).collect();
+        let x2: Vec<f64> = (0..n).map(|i| (i as f64 / 5.0).sin()).collect();
+        let y: Vec<f64> = x1
+            .iter()
+            .zip(x2.iter())
+            .map(|(&a, &b)| 1.0 + 2.0 * a - 0.5 * b)
+            .collect();
+
+        let result = multiple_regression(&y, &[x1, x2]).unwrap();
+
+        // Check intercept
+        assert!(
+            (result.intercept - 1.0).abs() < 0.1,
+            "Intercept should be ~1.0: {}",
+            result.intercept
+        );
+
+        // Check first coefficient
+        assert!(
+            (result.coefficients[0] - 2.0).abs() < 0.1,
+            "First coefficient should be ~2.0: {}",
+            result.coefficients[0]
+        );
+
+        // Check second coefficient
+        assert!(
+            (result.coefficients[1] - (-0.5)).abs() < 0.1,
+            "Second coefficient should be ~-0.5: {}",
+            result.coefficients[1]
+        );
+
+        // Good R-squared
+        assert!(
+            result.r_squared > 0.95,
+            "R-squared should be high: {}",
+            result.r_squared
+        );
+    }
+
+    #[test]
+    fn test_multiple_regression_edge_cases() {
+        // Minimal valid case: need n > k + 1 for regression
+        // With 1 variable, need at least 3 observations
+        let x = vec![vec![1.0, 2.0, 3.0]];
+        let y = vec![1.0, 2.0, 3.0];
+        assert!(
+            multiple_regression(&y, &x).is_some(),
+            "Should work with 3 observations for 1 variable"
+        );
+
+        // Too few observations (need n >= k + 2)
+        let x_small = vec![vec![1.0, 2.0]];
+        let y_small = vec![1.0, 2.0];
+        assert!(
+            multiple_regression(&y_small, &x_small).is_none(),
+            "Should return None with insufficient observations"
+        );
+
+        // Empty data
+        let empty: Vec<f64> = vec![];
+        assert!(multiple_regression(&empty, &[vec![]]).is_none());
+
+        // Mismatched lengths
+        let y = vec![1.0, 2.0, 3.0];
+        let x = vec![vec![1.0, 2.0]]; // Different length
+        assert!(multiple_regression(&y, &x).is_none());
+
+        // Zero factors should return None
+        let y_only = vec![1.0, 2.0, 3.0];
+        assert!(multiple_regression(&y_only, &[]).is_none());
+    }
+
+    #[test]
+    fn test_factor_returns_constructors() {
+        // Three-factor
+        let ff3 = FactorReturns::three_factor(0.01, 0.002, -0.001, 0.0001);
+        assert_eq!(ff3.mkt_rf, 0.01);
+        assert_eq!(ff3.smb, 0.002);
+        assert_eq!(ff3.hml, -0.001);
+        assert_eq!(ff3.rmw, 0.0);
+        assert_eq!(ff3.cma, 0.0);
+        assert_eq!(ff3.umd, 0.0);
+        assert_eq!(ff3.rf, 0.0001);
+
+        // Four-factor (Carhart)
+        let c4 = FactorReturns::four_factor(0.01, 0.002, -0.001, 0.003, 0.0001);
+        assert_eq!(c4.umd, 0.003);
+        assert_eq!(c4.rmw, 0.0);
+        assert_eq!(c4.cma, 0.0);
+
+        // Full six-factor
+        let full = FactorReturns::new(0.01, 0.002, -0.001, 0.001, -0.002, 0.003, 0.0001);
+        assert_eq!(full.rmw, 0.001);
+        assert_eq!(full.cma, -0.002);
+        assert_eq!(full.umd, 0.003);
+    }
+
+    fn generate_synthetic_factor_data(n: usize) -> Vec<FactorReturns> {
+        // Generate synthetic factor data with realistic correlations
+        (0..n)
+            .map(|i| {
+                let t = i as f64 / n as f64;
+                let market_shock = (t * 20.0).sin() * 0.02;
+                FactorReturns {
+                    mkt_rf: 0.0005 + market_shock + (i as f64 * 0.1).cos() * 0.01,
+                    smb: 0.0001 + (i as f64 * 0.2).sin() * 0.005,
+                    hml: 0.0002 + (i as f64 * 0.3).cos() * 0.004,
+                    rmw: 0.0001 + (i as f64 * 0.15).sin() * 0.003,
+                    cma: 0.0001 + (i as f64 * 0.25).cos() * 0.002,
+                    umd: 0.0003 + (i as f64 * 0.12).sin() * 0.006,
+                    rf: 0.0001, // ~2.5% annual risk-free rate
+                }
+            })
+            .collect()
+    }
+
+    fn generate_portfolio_returns(
+        factor_data: &[FactorReturns],
+        alpha: f64,
+        betas: &[f64],
+    ) -> Vec<f64> {
+        // Generate portfolio returns: R_p = rf + alpha + beta * factors + noise
+        factor_data
+            .iter()
+            .enumerate()
+            .map(|(i, f)| {
+                let noise = (i as f64 * 0.7).sin() * 0.002; // Small noise
+                f.rf + alpha
+                    + betas.get(0).unwrap_or(&0.0) * f.mkt_rf
+                    + betas.get(1).unwrap_or(&0.0) * f.smb
+                    + betas.get(2).unwrap_or(&0.0) * f.hml
+                    + betas.get(3).unwrap_or(&0.0) * f.rmw
+                    + betas.get(4).unwrap_or(&0.0) * f.cma
+                    + betas.get(5).unwrap_or(&0.0) * f.umd
+                    + noise
+            })
+            .collect()
+    }
+
+    #[test]
+    fn test_fama_french_3factor_regression() {
+        let factor_data = generate_synthetic_factor_data(252); // 1 year of daily data
+
+        // Portfolio with known exposures: alpha=0.0002, mkt=1.2, smb=0.3, hml=-0.2
+        let true_alpha = 0.0002; // Daily alpha
+        let true_betas = vec![1.2, 0.3, -0.2];
+        let portfolio_returns = generate_portfolio_returns(&factor_data, true_alpha, &true_betas);
+
+        let loadings = FactorAttribution::fama_french_3factor(&portfolio_returns, &factor_data)
+            .expect("Should compute factor loadings");
+
+        // Check model type
+        assert_eq!(loadings.model_type, FactorModelType::FamaFrench3);
+
+        // Market beta should be close to 1.2
+        assert!(
+            (loadings.market_beta - 1.2).abs() < 0.15,
+            "Market beta should be ~1.2: {}",
+            loadings.market_beta
+        );
+
+        // SMB beta should be close to 0.3
+        assert!(
+            (loadings.smb_beta - 0.3).abs() < 0.15,
+            "SMB beta should be ~0.3: {}",
+            loadings.smb_beta
+        );
+
+        // HML beta should be close to -0.2
+        assert!(
+            (loadings.hml_beta - (-0.2)).abs() < 0.15,
+            "HML beta should be ~-0.2: {}",
+            loadings.hml_beta
+        );
+
+        // R-squared should be high (since returns are generated from factors)
+        assert!(
+            loadings.r_squared > 0.85,
+            "R-squared should be high: {}",
+            loadings.r_squared
+        );
+
+        // RMW, CMA, UMD should be zero for 3-factor model
+        assert_eq!(loadings.rmw_beta, 0.0);
+        assert_eq!(loadings.cma_beta, 0.0);
+        assert_eq!(loadings.umd_beta, 0.0);
+    }
+
+    #[test]
+    fn test_carhart_4factor_regression() {
+        let factor_data = generate_synthetic_factor_data(252);
+
+        // Portfolio with momentum exposure: alpha=0.0001, mkt=1.0, smb=0.2, hml=0.1, umd=0.5
+        let true_betas = vec![1.0, 0.2, 0.1, 0.0, 0.0, 0.5]; // Last is UMD
+        let portfolio_returns = generate_portfolio_returns(&factor_data, 0.0001, &true_betas);
+
+        let loadings = FactorAttribution::carhart_4factor(&portfolio_returns, &factor_data)
+            .expect("Should compute factor loadings");
+
+        // Check model type
+        assert_eq!(loadings.model_type, FactorModelType::Carhart4);
+
+        // Check momentum exposure
+        assert!(
+            (loadings.umd_beta - 0.5).abs() < 0.2,
+            "UMD beta should be ~0.5: {}",
+            loadings.umd_beta
+        );
+
+        // Market beta should be close to 1.0
+        assert!(
+            (loadings.market_beta - 1.0).abs() < 0.15,
+            "Market beta should be ~1.0: {}",
+            loadings.market_beta
+        );
+
+        // RMW and CMA should still be zero (not in 4-factor model)
+        assert_eq!(loadings.rmw_beta, 0.0);
+        assert_eq!(loadings.cma_beta, 0.0);
+    }
+
+    #[test]
+    fn test_fama_french_5factor_regression() {
+        let factor_data = generate_synthetic_factor_data(252);
+
+        // Portfolio with profitability and investment exposure
+        let true_betas = vec![1.1, 0.15, -0.1, 0.25, -0.15]; // mkt, smb, hml, rmw, cma
+        let portfolio_returns = generate_portfolio_returns(&factor_data, 0.00015, &true_betas);
+
+        let loadings = FactorAttribution::fama_french_5factor(&portfolio_returns, &factor_data)
+            .expect("Should compute factor loadings");
+
+        // Check model type
+        assert_eq!(loadings.model_type, FactorModelType::FamaFrench5);
+
+        // Check RMW exposure
+        assert!(
+            (loadings.rmw_beta - 0.25).abs() < 0.15,
+            "RMW beta should be ~0.25: {}",
+            loadings.rmw_beta
+        );
+
+        // Check CMA exposure
+        assert!(
+            (loadings.cma_beta - (-0.15)).abs() < 0.15,
+            "CMA beta should be ~-0.15: {}",
+            loadings.cma_beta
+        );
+
+        // UMD should be zero (not in 5-factor model)
+        assert_eq!(loadings.umd_beta, 0.0);
+    }
+
+    #[test]
+    fn test_six_factor_regression() {
+        let factor_data = generate_synthetic_factor_data(300);
+
+        // Portfolio with all factor exposures
+        let true_betas = vec![1.0, 0.2, 0.15, 0.1, -0.1, 0.3]; // all 6 factors
+        let portfolio_returns = generate_portfolio_returns(&factor_data, 0.0001, &true_betas);
+
+        let loadings = FactorAttribution::six_factor(&portfolio_returns, &factor_data)
+            .expect("Should compute factor loadings");
+
+        // Check model type
+        assert_eq!(loadings.model_type, FactorModelType::FamaFrench5Momentum);
+
+        // All factors should have non-zero loading estimates
+        assert!(
+            loadings.market_beta.abs() > 0.5,
+            "Market beta should be significant: {}",
+            loadings.market_beta
+        );
+
+        // R-squared should be high
+        assert!(
+            loadings.r_squared > 0.80,
+            "R-squared should be high for 6-factor model: {}",
+            loadings.r_squared
+        );
+    }
+
+    #[test]
+    fn test_factor_attribution_insufficient_data() {
+        // Too few observations
+        let factor_data: Vec<FactorReturns> = (0..10)
+            .map(|_| FactorReturns::three_factor(0.01, 0.002, -0.001, 0.0001))
+            .collect();
+        let portfolio_returns: Vec<f64> = (0..10).map(|i| 0.001 * i as f64).collect();
+
+        // 3-factor requires 20+ observations
+        let result = FactorAttribution::fama_french_3factor(&portfolio_returns, &factor_data);
+        assert!(
+            result.is_none(),
+            "Should return None with insufficient data"
+        );
+
+        // 5-factor requires 30+ observations
+        let factor_data_25: Vec<FactorReturns> = (0..25)
+            .map(|_| FactorReturns::three_factor(0.01, 0.002, -0.001, 0.0001))
+            .collect();
+        let portfolio_returns_25: Vec<f64> = (0..25).map(|i| 0.001 * i as f64).collect();
+        let result_5f =
+            FactorAttribution::fama_french_5factor(&portfolio_returns_25, &factor_data_25);
+        assert!(result_5f.is_none(), "5-factor should need 30+ observations");
+    }
+
+    #[test]
+    fn test_factor_attribution_mismatched_lengths() {
+        let factor_data = generate_synthetic_factor_data(100);
+        let portfolio_returns: Vec<f64> = (0..50).map(|i| 0.001 * i as f64).collect();
+
+        let result = FactorAttribution::fama_french_3factor(&portfolio_returns, &factor_data);
+        assert!(
+            result.is_none(),
+            "Should return None with mismatched lengths"
+        );
+    }
+
+    #[test]
+    fn test_has_significant_exposure() {
+        let factor_data = generate_synthetic_factor_data(252);
+
+        // Create portfolio with strong market exposure only
+        let true_betas = vec![1.5, 0.0, 0.0]; // Only market exposure
+        let portfolio_returns = generate_portfolio_returns(&factor_data, 0.0, &true_betas);
+
+        let loadings = FactorAttribution::fama_french_3factor(&portfolio_returns, &factor_data)
+            .expect("Should compute loadings");
+
+        let significant = FactorAttribution::has_significant_exposure(&loadings, 0.05);
+
+        // Market should definitely be significant with beta=1.5
+        assert!(
+            significant.contains(&"Market".to_string()),
+            "Market exposure should be significant: {:?}",
+            significant
+        );
+    }
+
+    #[test]
+    fn test_factor_loadings_serialization() {
+        let factor_data = generate_synthetic_factor_data(100);
+        let portfolio_returns: Vec<f64> = factor_data
+            .iter()
+            .map(|f| f.rf + f.mkt_rf * 1.1 + 0.001)
+            .collect();
+
+        let loadings = FactorAttribution::fama_french_3factor(&portfolio_returns, &factor_data)
+            .expect("Should compute loadings");
+
+        // Serialize to JSON
+        let json = serde_json::to_string(&loadings).unwrap();
+        assert!(json.contains("market_beta"));
+        assert!(json.contains("r_squared"));
+        assert!(json.contains("FamaFrench3"));
+
+        // Deserialize back
+        let deserialized: FactorLoadings = serde_json::from_str(&json).unwrap();
+        assert!((deserialized.market_beta - loadings.market_beta).abs() < 0.0001);
+        assert_eq!(deserialized.model_type, loadings.model_type);
+    }
+
+    #[test]
+    fn test_factor_model_type_display() {
+        assert_eq!(
+            format!("{}", FactorModelType::FamaFrench3),
+            "Fama-French 3-Factor"
+        );
+        assert_eq!(format!("{}", FactorModelType::Carhart4), "Carhart 4-Factor");
+        assert_eq!(
+            format!("{}", FactorModelType::FamaFrench5),
+            "Fama-French 5-Factor"
+        );
+        assert_eq!(
+            format!("{}", FactorModelType::FamaFrench5Momentum),
+            "Fama-French 5-Factor + Momentum"
+        );
+    }
+
+    #[test]
+    fn test_regression_result_is_significant() {
+        // Create a simple regression result
+        let result = RegressionResult {
+            coefficients: vec![1.5, 0.3],
+            intercept: 0.01,
+            r_squared: 0.85,
+            r_squared_adj: 0.84,
+            std_errors: vec![0.1, 0.2],
+            t_statistics: vec![15.0, 1.5], // First is significant, second is not
+            p_values: vec![0.001, 0.15],
+            residuals: vec![0.0; 10],
+            n_observations: 100,
+            residual_std_error: 0.02,
+            f_statistic: 120.0,
+        };
+
+        // First coefficient is significant at 5%
+        assert!(result.is_significant(0, 0.05));
+
+        // Second coefficient is NOT significant at 5%
+        assert!(!result.is_significant(1, 0.05));
+
+        // Out of bounds returns false
+        assert!(!result.is_significant(5, 0.05));
+    }
+
+    #[test]
+    fn test_alpha_annualization() {
+        let factor_data = generate_synthetic_factor_data(252);
+
+        // Create portfolio with known daily alpha of 0.0004 (about 10% annual)
+        let daily_alpha = 0.0004;
+        let portfolio_returns: Vec<f64> = factor_data
+            .iter()
+            .map(|f| f.rf + f.mkt_rf + daily_alpha)
+            .collect();
+
+        let loadings = FactorAttribution::fama_french_3factor(&portfolio_returns, &factor_data)
+            .expect("Should compute loadings");
+
+        // Annualized alpha should be approximately daily_alpha * 252 * 100 = ~10%
+        let expected_annual_alpha_pct = daily_alpha * 252.0 * 100.0;
+        assert!(
+            (loadings.alpha - expected_annual_alpha_pct).abs() < 5.0,
+            "Annualized alpha should be ~{}%: {}",
+            expected_annual_alpha_pct,
+            loadings.alpha
+        );
+    }
+
+    #[test]
+    fn test_ln_gamma_function() {
+        // Test log gamma function against known values
+        // ln(Γ(1)) = 0
+        assert!((ln_gamma(1.0) - 0.0).abs() < 1e-10);
+
+        // ln(Γ(2)) = ln(1!) = 0
+        assert!((ln_gamma(2.0) - 0.0).abs() < 1e-10);
+
+        // ln(Γ(3)) = ln(2!) = ln(2) ≈ 0.693
+        assert!((ln_gamma(3.0) - 2.0_f64.ln()).abs() < 1e-10);
+
+        // ln(Γ(0.5)) = ln(√π) ≈ 0.572
+        assert!((ln_gamma(0.5) - (std::f64::consts::PI.sqrt().ln())).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_normal_cdf() {
+        // Test standard normal CDF values
+        // Φ(0) = 0.5
+        assert!((normal_cdf(0.0) - 0.5).abs() < 1e-6);
+
+        // Φ(∞) → 1
+        assert!((normal_cdf(5.0) - 1.0).abs() < 1e-6);
+
+        // Φ(-∞) → 0
+        assert!(normal_cdf(-5.0) < 1e-6);
+
+        // Φ(1.96) ≈ 0.975 (97.5th percentile)
+        assert!((normal_cdf(1.96) - 0.975).abs() < 0.001);
     }
 }
