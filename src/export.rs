@@ -880,6 +880,10 @@ mod tests {
             equity_curve: vec![],
             start_time: Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap(),
             end_time: Utc.with_ymd_and_hms(2024, 12, 31, 0, 0, 0).unwrap(),
+            experiment_id: uuid::Uuid::new_v4(),
+            git_info: None,
+            config_hash: String::new(),
+            data_checksums: std::collections::HashMap::new(),
         }
     }
 

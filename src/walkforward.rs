@@ -497,6 +497,10 @@ mod tests {
             equity_curve: vec![],
             start_time: Utc::now(),
             end_time: Utc::now(),
+            experiment_id: uuid::Uuid::new_v4(),
+            git_info: None,
+            config_hash: String::new(),
+            data_checksums: std::collections::HashMap::new(),
         };
 
         assert!((WalkForwardMetric::Sharpe.extract(&result) - 1.5).abs() < 0.001);

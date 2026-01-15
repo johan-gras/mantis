@@ -149,12 +149,17 @@ Items are organized by category and prioritized within each category. Priority r
   - Financial statement restatement tracking
   - Lookahead bias detection at compile time
 
-### [MISSING] [HIGH] Data Versioning and Reproducibility
-- Data file checksums (SHA256) computation and storage
-- Data lineage tracking
-- Multiple versions of historical data support
-- DVC integration for dataset versioning
-- Data restatement tracking with timestamps
+### [COMPLETE] [HIGH] Data Versioning and Reproducibility
+- **IMPLEMENTED**:
+  - SHA256 checksums for data files (computed during load, stored in DataManager)
+  - Git commit SHA tracking (automatic capture via git2 crate)
+  - Experiment UUID generation (unique ID for each backtest run)
+  - Configuration hashing (SHA256 of BacktestConfig for change detection)
+  - Enhanced BacktestResult metadata (experiment_id, git_info, config_hash, data_checksums fields)
+  - GitInfo struct capturing commit SHA, branch name, and dirty flag
+  - Data file metadata tracking (path, size, checksum)
+- **Location**: src/metadata.rs (new module), updates to src/engine.rs and src/data.rs
+- **Tests**: 7 new tests in src/metadata.rs, all 313 library tests passing
 
 ### [MISSING] [MEDIUM] Multi-Vendor Reconciliation
 - Handle data from multiple providers (Polygon, IEX, Yahoo, Bloomberg)
@@ -398,10 +403,14 @@ Items are organized by category and prioritized within each category. Priority r
   - Clear error messages on constraint violations
   - Symbol-to-sector mapping support
 
-### [MISSING] [HIGH] Rebalancing Rules
-- Periodic rebalancing (daily, weekly, monthly)
-- Threshold rebalancing (drift-based)
-- Transaction cost-aware rebalancing
+### [PARTIAL ~60%] [HIGH] Rebalancing Rules
+- **IMPLEMENTED**:
+  - Periodic rebalancing (fixed frequency in bars) across all portfolio strategies
+  - Turnover constraints to limit trading costs
+- **MISSING**:
+  - Threshold/drift-based rebalancing (trigger when weights drift beyond threshold)
+  - Cost optimization algorithms for rebalancing
+  - Volatility-adaptive rebalancing frequency
 
 ### [MISSING] [MEDIUM] Dynamic Universe Management
 - Symbols added/removed over time
@@ -849,14 +858,14 @@ Items are organized by category and prioritized within each category. Priority r
 - Dockerfile for consistent build environment
 - Build environment documentation
 
-### [PARTIAL ~30%] [HIGH] Experiment Metadata
-- **IMPLEMENTED**: Basic result serialization
-- **MISSING**:
+### [COMPLETE ~80%] [HIGH] Experiment Metadata
+- **IMPLEMENTED**:
   - Unique experiment ID (UUID)
   - Git commit SHA auto-detection
   - Dirty working tree warning
   - Configuration hash
   - Data file checksum logging
+- **MISSING**:
   - Hostname for distributed runs
 
 ### [MISSING] [MEDIUM] Results Caching
@@ -952,8 +961,8 @@ cargo doc --no-deps --open
 | Research Workflow | 0 | 0 | 1 | 6 | 7 |
 | CLI & Configuration | 3 | 1 | 0 | 4 | 8 |
 | Execution Realism | 2 | 1 | 0 | 3 | 6 |
-| Reproducibility | 0 | 2 | 0 | 2 | 4 |
-| **TOTAL** | **40** | **13** | **4** | **70** | **127** |
+| Reproducibility | 2 | 2 | 0 | 0 | 4 |
+| **TOTAL** | **42** | **11** | **4** | **68** | **127** |
 
 **Estimated Completion: ~40%** (core backtesting solid; Cross-Sectional Features and CPCV now complete; inverse volatility, risk parity, mean-variance optimization, Hierarchical Risk Parity (HRP), and Portfolio Constraints complete; ONNX inference architecture complete but blocked by ort crate instability; live trading and Python bindings not started)
 

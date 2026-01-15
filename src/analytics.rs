@@ -1326,6 +1326,10 @@ mod tests {
             equity_curve: vec![],
             start_time: start,
             end_time: end,
+            experiment_id: uuid::Uuid::new_v4(),
+            git_info: None,
+            config_hash: String::new(),
+            data_checksums: std::collections::HashMap::new(),
         }
     }
 
@@ -1648,6 +1652,10 @@ mod tests {
             equity_curve,
             start_time: start,
             end_time: end,
+            experiment_id: uuid::Uuid::new_v4(),
+            git_info: None,
+            config_hash: String::new(),
+            data_checksums: std::collections::HashMap::new(),
         };
 
         // Test that daily returns are calculated from actual equity curve
@@ -1747,6 +1755,10 @@ mod tests {
             equity_curve,
             start_time: start,
             end_time: end,
+            experiment_id: uuid::Uuid::new_v4(),
+            git_info: None,
+            config_hash: String::new(),
+            data_checksums: std::collections::HashMap::new(),
         };
 
         let metrics = PerformanceMetrics::from_result(&result);
@@ -1874,6 +1886,10 @@ mod tests {
             equity_curve,
             start_time: start,
             end_time: end,
+            experiment_id: uuid::Uuid::new_v4(),
+            git_info: None,
+            config_hash: String::new(),
+            data_checksums: std::collections::HashMap::new(),
         };
 
         let returns = PerformanceMetrics::calculate_daily_returns(&result);
@@ -2392,6 +2408,10 @@ mod tests {
             equity_curve,
             start_time: start,
             end_time: end,
+            experiment_id: uuid::Uuid::new_v4(),
+            git_info: None,
+            config_hash: String::new(),
+            data_checksums: std::collections::HashMap::new(),
         };
 
         let metrics = PerformanceMetrics::from_result(&result);

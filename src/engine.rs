@@ -2,6 +2,7 @@
 
 use crate::data::DataManager;
 use crate::error::{BacktestError, Result};
+use crate::metadata::{compute_config_hash, generate_experiment_id, GitInfo};
 use crate::portfolio::{CostModel, Portfolio};
 use crate::risk::{RiskConfig, StopLoss, TrailingStop};
 use crate::strategy::{Strategy, StrategyContext};
@@ -15,6 +16,7 @@ use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use tracing::{debug, info, warn};
+use uuid::Uuid;
 
 /// Configuration for the backtest engine.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -125,6 +127,18 @@ pub struct BacktestResult {
     pub start_time: DateTime<Utc>,
     /// End timestamp.
     pub end_time: DateTime<Utc>,
+    /// Unique experiment identifier for reproducibility.
+    #[serde(default = "generate_experiment_id")]
+    pub experiment_id: Uuid,
+    /// Git repository state (commit SHA, branch, dirty flag).
+    #[serde(default)]
+    pub git_info: Option<GitInfo>,
+    /// SHA256 hash of the configuration for change detection.
+    #[serde(default)]
+    pub config_hash: String,
+    /// Data file checksums (symbol -> SHA256 hash).
+    #[serde(default)]
+    pub data_checksums: HashMap<String, String>,
 }
 
 #[derive(Debug, Clone)]
@@ -706,6 +720,12 @@ impl Engine {
             0.0
         };
 
+        // Capture metadata for reproducibility
+        let experiment_id = generate_experiment_id();
+        let git_info = GitInfo::capture();
+        let config_hash = compute_config_hash(&self.config);
+        let data_checksums = self.data.checksums().clone();
+
         BacktestResult {
             strategy_name: strategy_name.to_string(),
             symbols: vec![symbol.to_string()],
@@ -730,6 +750,10 @@ impl Engine {
             equity_curve: equity_curve.to_vec(),
             start_time,
             end_time,
+            experiment_id,
+            git_info,
+            config_hash,
+            data_checksums,
         }
     }
 

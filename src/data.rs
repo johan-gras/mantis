@@ -589,6 +589,8 @@ pub fn load_data(path: impl AsRef<Path>, config: &DataConfig) -> Result<Vec<Bar>
 pub struct DataManager {
     data: HashMap<String, Vec<Bar>>,
     asset_configs: HashMap<String, AssetConfig>,
+    /// SHA256 checksums of data files (symbol -> checksum).
+    checksums: HashMap<String, String>,
 }
 
 impl DataManager {
@@ -600,6 +602,13 @@ impl DataManager {
     /// Load data for a symbol from a file (auto-detects CSV or Parquet format).
     pub fn load(&mut self, symbol: impl Into<String>, path: impl AsRef<Path>) -> Result<()> {
         let symbol = symbol.into();
+        let path = path.as_ref();
+
+        // Compute checksum for reproducibility
+        if let Ok(checksum) = crate::metadata::compute_file_checksum(path) {
+            self.checksums.insert(symbol.clone(), checksum);
+        }
+
         let bars = load_data(path, &DataConfig::default())?;
         self.ensure_asset_config(&symbol);
         self.data.insert(symbol, bars);
@@ -614,6 +623,13 @@ impl DataManager {
         config: &DataConfig,
     ) -> Result<()> {
         let symbol = symbol.into();
+        let path = path.as_ref();
+
+        // Compute checksum for reproducibility
+        if let Ok(checksum) = crate::metadata::compute_file_checksum(path) {
+            self.checksums.insert(symbol.clone(), checksum);
+        }
+
         let bars = load_data(path, config)?;
         self.ensure_asset_config(&symbol);
         self.data.insert(symbol, bars);
@@ -623,6 +639,13 @@ impl DataManager {
     /// Load data for a symbol from a CSV file.
     pub fn load_csv(&mut self, symbol: impl Into<String>, path: impl AsRef<Path>) -> Result<()> {
         let symbol = symbol.into();
+        let path = path.as_ref();
+
+        // Compute checksum for reproducibility
+        if let Ok(checksum) = crate::metadata::compute_file_checksum(path) {
+            self.checksums.insert(symbol.clone(), checksum);
+        }
+
         let bars = load_csv(path, &DataConfig::default())?;
         self.ensure_asset_config(&symbol);
         self.data.insert(symbol, bars);
@@ -636,6 +659,13 @@ impl DataManager {
         path: impl AsRef<Path>,
     ) -> Result<()> {
         let symbol = symbol.into();
+        let path = path.as_ref();
+
+        // Compute checksum for reproducibility
+        if let Ok(checksum) = crate::metadata::compute_file_checksum(path) {
+            self.checksums.insert(symbol.clone(), checksum);
+        }
+
         let bars = load_parquet(path, &DataConfig::default())?;
         self.ensure_asset_config(&symbol);
         self.data.insert(symbol, bars);
@@ -650,6 +680,13 @@ impl DataManager {
         config: &DataConfig,
     ) -> Result<()> {
         let symbol = symbol.into();
+        let path = path.as_ref();
+
+        // Compute checksum for reproducibility
+        if let Ok(checksum) = crate::metadata::compute_file_checksum(path) {
+            self.checksums.insert(symbol.clone(), checksum);
+        }
+
         let bars = load_parquet(path, config)?;
         self.ensure_asset_config(&symbol);
         self.data.insert(symbol, bars);
@@ -735,6 +772,14 @@ impl DataManager {
         }
 
         min_date.zip(max_date)
+    }
+
+    /// Get SHA256 checksums of loaded data files.
+    ///
+    /// Returns a map of symbol -> checksum for all data loaded from files.
+    /// Pre-loaded data (via `add()`) will not have checksums.
+    pub fn checksums(&self) -> &HashMap<String, String> {
+        &self.checksums
     }
 }
 

@@ -104,6 +104,7 @@ pub mod engine;
 pub mod error;
 pub mod export;
 pub mod features;
+pub mod metadata;
 pub mod monte_carlo;
 pub mod multi_asset;
 // TODO: ONNX module awaiting ort crate stabilization (v2.0 API in flux, v1.x yanked)
