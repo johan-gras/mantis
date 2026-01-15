@@ -527,14 +527,14 @@ Items are organized by category and prioritized within each category. Priority r
 - Ulcer Index (proper calculation from equity curve)
 - Time underwater percentage
 
-### [PARTIAL ~40%] [HIGH] Advanced Risk Metrics
-- **IMPLEMENTED**: Basic VaR approximation
-- **MISSING**:
-  - Historical VaR at 95%, 99% confidence
-  - Conditional VaR (CVaR / Expected Shortfall)
-  - Tail ratio (95th percentile gain/loss)
-  - Omega ratio
-  - Kurtosis and skewness
+### [COMPLETE] Advanced Risk Metrics
+- **IMPLEMENTED**: All metrics now complete:
+  - Historical VaR (implemented in monte_carlo.rs lines 358-365)
+  - Conditional VaR/CVaR/Expected Shortfall (implemented in monte_carlo.rs)
+  - Tail ratio (95th percentile gain/loss) (NEW - just implemented in analytics.rs)
+  - Omega ratio (already implemented in analytics.rs lines 665-690)
+  - Kurtosis (NEW - just implemented in analytics.rs)
+  - Skewness (NEW - just implemented in analytics.rs)
 
 ### [MISSING] [HIGH] Factor Attribution
 - Fama-French 5-factor model regression
@@ -929,16 +929,16 @@ cargo doc --no-deps --open
 | Multi-Asset Portfolio | 3 | 1 | 0 | 5 | 9 |
 | Options & Derivatives | 0 | 1 | 0 | 8 | 9 |
 | Risk & Validation | 2 | 1 | 0 | 6 | 9 |
-| Performance Analytics | 3 | 1 | 0 | 5 | 9 |
+| Performance Analytics | 4 | 0 | 0 | 5 | 9 |
 | Production Operations | 0 | 0 | 0 | 7 | 7 |
 | Model Governance | 0 | 0 | 0 | 6 | 6 |
 | Research Workflow | 0 | 0 | 1 | 6 | 7 |
 | CLI & Configuration | 3 | 1 | 0 | 4 | 8 |
 | Execution Realism | 2 | 1 | 0 | 3 | 6 |
 | Reproducibility | 0 | 2 | 0 | 2 | 4 |
-| **TOTAL** | **36** | **12** | **4** | **75** | **127** |
+| **TOTAL** | **37** | **11** | **4** | **75** | **127** |
 
-**Estimated Completion: ~32%** (core backtesting solid; ONNX inference architecture complete but blocked by ort crate instability; live trading and Python bindings not started)
+**Estimated Completion: ~33%** (core backtesting solid; ONNX inference architecture complete but blocked by ort crate instability; live trading and Python bindings not started)
 
 ---
 

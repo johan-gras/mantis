@@ -402,6 +402,11 @@ pub struct PerformanceMetrics {
     pub calmar_ratio: f64,
     pub omega_ratio: f64,
 
+    // Distribution metrics
+    pub skewness: f64,
+    pub kurtosis: f64,
+    pub tail_ratio: f64,
+
     // Trade statistics
     pub total_trades: usize,
     pub winning_trades: usize,
@@ -447,6 +452,11 @@ impl PerformanceMetrics {
 
         // Omega ratio
         let omega_ratio = Self::omega_ratio(&daily_returns, 0.0);
+
+        // Distribution metrics
+        let skewness = Self::skewness(&daily_returns);
+        let kurtosis = Self::kurtosis(&daily_returns);
+        let tail_ratio = Self::tail_ratio(&daily_returns);
 
         // Trade analysis
         let closed_trades: Vec<_> = result.trades.iter().filter(|t| t.is_closed()).collect();
@@ -540,6 +550,9 @@ impl PerformanceMetrics {
             sortino_ratio: result.sortino_ratio,
             calmar_ratio: result.calmar_ratio,
             omega_ratio,
+            skewness,
+            kurtosis,
+            tail_ratio,
             total_trades: result.total_trades,
             winning_trades: result.winning_trades,
             losing_trades: result.losing_trades,
@@ -689,6 +702,114 @@ impl PerformanceMetrics {
         }
     }
 
+    /// Calculate skewness of returns distribution.
+    /// Skewness = E[(X - μ)³] / σ³
+    /// Positive skewness: right tail is longer (more extreme positive returns)
+    /// Negative skewness: left tail is longer (more extreme negative returns)
+    /// Zero skewness: symmetric distribution
+    fn skewness(returns: &[f64]) -> f64 {
+        if returns.len() < 3 {
+            return 0.0;
+        }
+
+        let n = returns.len() as f64;
+        let mean: f64 = returns.iter().sum::<f64>() / n;
+
+        // Calculate variance
+        let variance: f64 = returns
+            .iter()
+            .map(|r| (r - mean).powi(2))
+            .sum::<f64>()
+            / n;
+
+        if variance == 0.0 {
+            return 0.0;
+        }
+
+        let std_dev = variance.sqrt();
+
+        // Calculate third moment
+        let third_moment: f64 = returns
+            .iter()
+            .map(|r| (r - mean).powi(3))
+            .sum::<f64>()
+            / n;
+
+        third_moment / std_dev.powi(3)
+    }
+
+    /// Calculate excess kurtosis of returns distribution.
+    /// Kurtosis = E[(X - μ)⁴] / σ⁴ - 3
+    /// Positive kurtosis: heavy tails (more extreme events than normal distribution)
+    /// Negative kurtosis: light tails (fewer extreme events)
+    /// Zero kurtosis: same tail behavior as normal distribution
+    fn kurtosis(returns: &[f64]) -> f64 {
+        if returns.len() < 4 {
+            return 0.0;
+        }
+
+        let n = returns.len() as f64;
+        let mean: f64 = returns.iter().sum::<f64>() / n;
+
+        // Calculate variance
+        let variance: f64 = returns
+            .iter()
+            .map(|r| (r - mean).powi(2))
+            .sum::<f64>()
+            / n;
+
+        if variance == 0.0 {
+            return 0.0;
+        }
+
+        // Calculate fourth moment
+        let fourth_moment: f64 = returns
+            .iter()
+            .map(|r| (r - mean).powi(4))
+            .sum::<f64>()
+            / n;
+
+        // Subtract 3 to get excess kurtosis (relative to normal distribution)
+        (fourth_moment / variance.powi(2)) - 3.0
+    }
+
+    /// Calculate tail ratio: 95th percentile gain / 95th percentile loss.
+    /// Higher values indicate asymmetric upside potential.
+    /// Tail ratio > 1: larger gains than losses in the tails
+    /// Tail ratio < 1: larger losses than gains in the tails
+    fn tail_ratio(returns: &[f64]) -> f64 {
+        if returns.len() < 20 {
+            return 1.0;
+        }
+
+        let mut sorted = returns.to_vec();
+        sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
+
+        // 95th percentile (95% of returns are below this)
+        let p95_idx = ((sorted.len() as f64) * 0.95) as usize;
+        let p95_gain = sorted.get(p95_idx.min(sorted.len() - 1)).copied().unwrap_or(0.0);
+
+        // 5th percentile (5% of returns are below this - the losses)
+        let p05_idx = ((sorted.len() as f64) * 0.05) as usize;
+        let p05_loss = sorted.get(p05_idx).copied().unwrap_or(0.0);
+
+        // Tail ratio is the ratio of absolute values
+        // Handle edge cases:
+        if p05_loss.abs() < 1e-10 && p95_gain.abs() < 1e-10 {
+            // Both near zero
+            1.0
+        } else if p05_loss.abs() < 1e-10 {
+            // No downside tail, only upside
+            100.0
+        } else if p95_gain.abs() < 1e-10 {
+            // No upside tail, only downside
+            0.01
+        } else {
+            // Normal case: ratio of upside to downside tail
+            p95_gain.abs() / p05_loss.abs()
+        }
+    }
+
     fn monthly_returns(result: &BacktestResult) -> Vec<f64> {
         // Simplified monthly returns estimation
         let months = (result.end_time - result.start_time).num_days() / 30;
@@ -746,6 +867,14 @@ impl ResultFormatter {
         println!("  Sharpe Ratio:    {:>12.2}", result.sharpe_ratio);
         println!("  Sortino Ratio:   {:>12.2}", result.sortino_ratio);
         println!("  Calmar Ratio:    {:>12.2}", result.calmar_ratio);
+        println!("  Omega Ratio:     {:>12.2}", metrics.omega_ratio);
+        println!();
+
+        // Distribution Metrics
+        println!("{}", "Distribution Metrics".bold().underline());
+        println!("  Skewness:        {:>12.2}", metrics.skewness);
+        println!("  Kurtosis:        {:>12.2}", metrics.kurtosis);
+        println!("  Tail Ratio:      {:>12.2}", metrics.tail_ratio);
         println!();
 
         // Trade Statistics
@@ -857,6 +986,14 @@ impl ResultFormatter {
         println!("  Sharpe Ratio:    {:>12.2}", result.sharpe_ratio);
         println!("  Sortino Ratio:   {:>12.2}", result.sortino_ratio);
         println!("  Calmar Ratio:    {:>12.2}", result.calmar_ratio);
+        println!("  Omega Ratio:     {:>12.2}", metrics.omega_ratio);
+        println!();
+
+        // Distribution Metrics
+        println!("{}", "Distribution Metrics".bold().underline());
+        println!("  Skewness:        {:>12.2}", metrics.skewness);
+        println!("  Kurtosis:        {:>12.2}", metrics.kurtosis);
+        println!("  Tail Ratio:      {:>12.2}", metrics.tail_ratio);
         println!();
 
         // Benchmark Comparison (if available)
@@ -1898,5 +2035,234 @@ mod tests {
         // Test deserialization
         let deserialized: DrawdownAnalysis = serde_json::from_str(&json).unwrap();
         assert!((deserialized.max_drawdown_pct - analysis.max_drawdown_pct).abs() < 0.0001);
+    }
+
+    #[test]
+    fn test_skewness_symmetric() {
+        // Symmetric distribution should have near-zero skewness
+        let returns = vec![-0.02, -0.01, 0.0, 0.01, 0.02];
+        let skew = PerformanceMetrics::skewness(&returns);
+        assert!(
+            skew.abs() < 0.1,
+            "Symmetric distribution should have near-zero skewness: {}",
+            skew
+        );
+    }
+
+    #[test]
+    fn test_skewness_positive() {
+        // Right-skewed: more extreme positive values
+        let returns = vec![-0.01, -0.01, 0.0, 0.0, 0.05, 0.10];
+        let skew = PerformanceMetrics::skewness(&returns);
+        assert!(
+            skew > 0.0,
+            "Right-skewed distribution should have positive skewness: {}",
+            skew
+        );
+    }
+
+    #[test]
+    fn test_skewness_negative() {
+        // Left-skewed: more extreme negative values
+        let returns = vec![-0.10, -0.05, 0.0, 0.0, 0.01, 0.01];
+        let skew = PerformanceMetrics::skewness(&returns);
+        assert!(
+            skew < 0.0,
+            "Left-skewed distribution should have negative skewness: {}",
+            skew
+        );
+    }
+
+    #[test]
+    fn test_skewness_insufficient_data() {
+        // Too few data points
+        let returns = vec![0.01, 0.02];
+        let skew = PerformanceMetrics::skewness(&returns);
+        assert_eq!(skew, 0.0, "Should return 0.0 for insufficient data");
+    }
+
+    #[test]
+    fn test_kurtosis_normal() {
+        // Approximately normal distribution should have near-zero excess kurtosis
+        let returns = vec![-0.02, -0.01, 0.0, 0.0, 0.01, 0.02];
+        let kurt = PerformanceMetrics::kurtosis(&returns);
+        // For small samples, kurtosis can vary, so we just check it's calculated
+        assert!(
+            kurt.is_finite(),
+            "Kurtosis should be finite: {}",
+            kurt
+        );
+    }
+
+    #[test]
+    fn test_kurtosis_heavy_tails() {
+        // Heavy tails: extreme values should produce positive excess kurtosis
+        // Use more data points with clear heavy tails
+        let mut returns = vec![0.0; 100];
+        // Add extreme outliers in the tails
+        returns[0] = -1.0;
+        returns[1] = -0.8;
+        returns[98] = 0.8;
+        returns[99] = 1.0;
+        let kurt = PerformanceMetrics::kurtosis(&returns);
+        assert!(
+            kurt > 0.0,
+            "Heavy-tailed distribution should have positive excess kurtosis: {}",
+            kurt
+        );
+    }
+
+    #[test]
+    fn test_kurtosis_insufficient_data() {
+        // Too few data points
+        let returns = vec![0.01, 0.02, 0.03];
+        let kurt = PerformanceMetrics::kurtosis(&returns);
+        assert_eq!(kurt, 0.0, "Should return 0.0 for insufficient data");
+    }
+
+    #[test]
+    fn test_tail_ratio_symmetric() {
+        // Symmetric distribution should have tail ratio near 1.0
+        let returns = vec![
+            -0.05, -0.04, -0.03, -0.02, -0.01, 0.0, 0.0, 0.01, 0.02, 0.03, 0.04, 0.05,
+        ];
+        let tail = PerformanceMetrics::tail_ratio(&returns);
+        assert!(
+            (tail - 1.0).abs() < 0.5,
+            "Symmetric distribution should have tail ratio near 1.0: {}",
+            tail
+        );
+    }
+
+    #[test]
+    fn test_tail_ratio_positive_bias() {
+        // Larger positive tail
+        let mut returns = vec![0.0; 20];
+        returns[0] = -0.02; // 5th percentile
+        returns[19] = 0.10; // 95th percentile
+        let tail = PerformanceMetrics::tail_ratio(&returns);
+        assert!(
+            tail > 1.0,
+            "Positive bias should have tail ratio > 1.0: {}",
+            tail
+        );
+    }
+
+    #[test]
+    fn test_tail_ratio_negative_bias() {
+        // Larger negative tail
+        // Create distribution with larger losses than gains
+        let returns = vec![
+            -0.10, -0.08, -0.06, -0.04, -0.02, // Bottom 25% - losses
+            -0.01, -0.01, 0.0, 0.0, 0.0, // Middle 25%
+            0.0, 0.0, 0.0, 0.01, 0.01, // Middle 25%
+            0.01, 0.01, 0.02, 0.02, 0.02, // Top 25% - smaller gains
+        ];
+        // p05 (5th percentile) should be around -0.10 to -0.08
+        // p95 (95th percentile) should be around 0.02
+        // tail_ratio = 0.02 / 0.10 = 0.2 < 1.0
+        let tail = PerformanceMetrics::tail_ratio(&returns);
+        assert!(
+            tail < 1.0,
+            "Negative bias should have tail ratio < 1.0: {}",
+            tail
+        );
+    }
+
+    #[test]
+    fn test_tail_ratio_insufficient_data() {
+        // Too few data points
+        let returns = vec![0.01, 0.02, 0.03];
+        let tail = PerformanceMetrics::tail_ratio(&returns);
+        assert_eq!(tail, 1.0, "Should return 1.0 for insufficient data");
+    }
+
+    #[test]
+    fn test_distribution_metrics_integration() {
+        use crate::types::EquityPoint;
+
+        let start = Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap();
+        let end = Utc.with_ymd_and_hms(2024, 1, 10, 0, 0, 0).unwrap();
+
+        // Create equity curve with varying returns
+        let equity_curve = vec![
+            EquityPoint {
+                timestamp: Utc.with_ymd_and_hms(2024, 1, 1, 16, 0, 0).unwrap(),
+                equity: 100000.0,
+                cash: 100000.0,
+                positions_value: 0.0,
+                drawdown: 0.0,
+                drawdown_pct: 0.0,
+            },
+            EquityPoint {
+                timestamp: Utc.with_ymd_and_hms(2024, 1, 2, 16, 0, 0).unwrap(),
+                equity: 102000.0, // +2%
+                cash: 0.0,
+                positions_value: 102000.0,
+                drawdown: 0.0,
+                drawdown_pct: 0.0,
+            },
+            EquityPoint {
+                timestamp: Utc.with_ymd_and_hms(2024, 1, 3, 16, 0, 0).unwrap(),
+                equity: 98000.0, // -3.9%
+                cash: 0.0,
+                positions_value: 98000.0,
+                drawdown: 4000.0,
+                drawdown_pct: 3.9,
+            },
+            EquityPoint {
+                timestamp: Utc.with_ymd_and_hms(2024, 1, 4, 16, 0, 0).unwrap(),
+                equity: 105000.0, // +7.1%
+                cash: 0.0,
+                positions_value: 105000.0,
+                drawdown: 0.0,
+                drawdown_pct: 0.0,
+            },
+        ];
+
+        let mut trade = Trade::open("TEST", Side::Buy, 100.0, 100.0, start, 1.0, 0.0);
+        trade.close(105.0, end, 1.0);
+
+        let result = BacktestResult {
+            strategy_name: "TestStrategy".to_string(),
+            symbols: vec!["TEST".to_string()],
+            config: BacktestConfig::default(),
+            initial_capital: 100000.0,
+            final_equity: 105000.0,
+            total_return_pct: 5.0,
+            annual_return_pct: 5.0,
+            trading_days: 4,
+            total_trades: 1,
+            winning_trades: 1,
+            losing_trades: 0,
+            win_rate: 100.0,
+            avg_win: 500.0,
+            avg_loss: 0.0,
+            profit_factor: f64::INFINITY,
+            max_drawdown_pct: 3.9,
+            sharpe_ratio: 0.5,
+            sortino_ratio: 0.7,
+            calmar_ratio: 1.28,
+            trades: vec![trade],
+            equity_curve,
+            start_time: start,
+            end_time: end,
+        };
+
+        let metrics = PerformanceMetrics::from_result(&result);
+
+        // All distribution metrics should be calculated
+        assert!(
+            metrics.skewness.is_finite(),
+            "Skewness should be calculated"
+        );
+        assert!(
+            metrics.kurtosis.is_finite(),
+            "Kurtosis should be calculated"
+        );
+        assert!(
+            metrics.tail_ratio > 0.0,
+            "Tail ratio should be positive"
+        );
     }
 }
