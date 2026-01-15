@@ -500,6 +500,7 @@ mod tests {
                 swap_short: -0.0002,
             },
             market_impact: MarketImpactModel::Linear { coefficient: 0.01 },
+            max_volume_participation: None,
         };
 
         let scaled = scale_cost_model(&base, 5.0);

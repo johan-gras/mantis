@@ -81,6 +81,10 @@ pub enum Commands {
         #[arg(long, default_value = "0.05")]
         slippage: f64,
 
+        /// Maximum volume participation rate (0.0-1.0, e.g., 0.10 = 10% of bar volume)
+        #[arg(long)]
+        max_volume_participation: Option<f64>,
+
         /// Execution price model for market orders
         #[arg(long, value_enum, default_value = "open")]
         execution_price: ExecutionPriceArg,
@@ -227,6 +231,10 @@ pub enum Commands {
         /// Slippage percentage (e.g., 0.05 for 0.05%)
         #[arg(long, default_value = "0.05")]
         slippage: f64,
+
+        /// Maximum volume participation rate (0.0-1.0, e.g., 0.10 = 10% of bar volume)
+        #[arg(long)]
+        max_volume_participation: Option<f64>,
 
         /// Execution price model for market orders
         #[arg(long, value_enum, default_value = "open")]
@@ -792,6 +800,7 @@ pub fn run() -> Result<()> {
             *position_size,
             *commission,
             *slippage,
+            *max_volume_participation,
             *execution_price,
             *fill_probability,
             *limit_order_ttl,
@@ -832,6 +841,7 @@ pub fn run() -> Result<()> {
             position_size,
             commission,
             slippage,
+            max_volume_participation,
             execution_price,
             fill_probability,
             limit_order_ttl,
@@ -860,6 +870,7 @@ pub fn run() -> Result<()> {
             *position_size,
             *commission,
             *slippage,
+            *max_volume_participation,
             *execution_price,
             *fill_probability,
             *limit_order_ttl,
@@ -963,6 +974,7 @@ fn run_backtest(
     position_size: f64,
     commission: f64,
     slippage: f64,
+    max_volume_participation: Option<f64>,
     execution_price: ExecutionPriceArg,
     fill_probability: f64,
     limit_order_ttl: usize,
@@ -1007,6 +1019,7 @@ fn run_backtest(
     let cost_model = CostModel {
         commission_pct: commission / 100.0,
         slippage_pct: slippage / 100.0,
+        max_volume_participation,
         ..Default::default()
     };
 
@@ -1097,6 +1110,7 @@ fn run_walk_forward(
     position_size: f64,
     commission: f64,
     slippage: f64,
+    max_volume_participation: Option<f64>,
     execution_price: ExecutionPriceArg,
     fill_probability: f64,
     limit_order_ttl: usize,
@@ -1144,6 +1158,7 @@ fn run_walk_forward(
     let cost_model = CostModel {
         commission_pct: commission / 100.0,
         slippage_pct: slippage / 100.0,
+        max_volume_participation,
         ..Default::default()
     };
 

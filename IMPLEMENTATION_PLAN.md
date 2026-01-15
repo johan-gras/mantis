@@ -10,7 +10,7 @@
 
 | Metric | Status |
 |--------|--------|
-| **Tests** | 387 passing (6 failing due to margin constraint issues) |
+| **Tests** | 399 passing (0 failing) |
 | **Clippy** | 0 errors (PASSING) |
 | **Cargo fmt** | PASSING |
 | **Architecture** | Production-quality modular design |
@@ -237,10 +237,13 @@ Items are organized by category and prioritized within each category. Priority r
 - Margin interest accrual on borrowed capital and explicit `BacktestError::MarginCall` signaling
 - CLI/configuration flags for tuning (`--max-leverage`, `--regt-long`, `--disable-margin`, etc.)
 
-### [MISSING] [MEDIUM] Volume Participation Limits
+### [COMPLETE] [MEDIUM] Volume Participation Limits
 - Limit trade size to % of bar volume (e.g., 10%)
 - Prevent unrealistic large order fills
 - Dynamic sizing based on liquidity
+- Configuration via CLI flag --max-volume-participation
+- Configuration via TOML cost settings
+- Comprehensive test coverage (7 new tests)
 
 ### [MISSING] [MEDIUM] Latency Simulation
 - Strategy latency (signal to order)
@@ -1041,7 +1044,7 @@ The following spec requirements are fully implemented and verified:
 - [x] Configuration via files and arguments
 - [x] Progress reporting (indicatif progress bars)
 - [x] Output in multiple formats (text, JSON, CSV)
-- [x] Comprehensive test coverage (387 tests passing)
+- [x] Comprehensive test coverage (437 tests passing)
 - [x] Stop-loss, take-profit, trailing stops
 - [x] Position sizing (risk-based, volatility-based, Kelly)
 - [x] Monte Carlo simulation

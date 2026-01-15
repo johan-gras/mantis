@@ -174,6 +174,10 @@ pub struct CostModel {
     /// Market impact model configuration.
     #[serde(default)]
     pub market_impact: MarketImpactModel,
+    /// Maximum participation rate as fraction of bar volume (e.g., 0.10 = 10%).
+    /// None means no limit. Prevents unrealistic large order fills in illiquid markets.
+    #[serde(default)]
+    pub max_volume_participation: Option<f64>,
 }
 
 impl Default for CostModel {
@@ -187,6 +191,7 @@ impl Default for CostModel {
             crypto: CryptoCost::default(),
             forex: ForexCost::default(),
             market_impact: MarketImpactModel::default(),
+            max_volume_participation: None, // No limit by default
         }
     }
 }
@@ -203,6 +208,7 @@ impl CostModel {
             crypto: CryptoCost::default(),
             forex: ForexCost::default(),
             market_impact: MarketImpactModel::None,
+            max_volume_participation: None,
         }
     }
 
@@ -289,6 +295,23 @@ impl CostModel {
                 notional * rate * holding_days
             }
             _ => 0.0,
+        }
+    }
+
+    /// Calculate the maximum allowed quantity based on volume participation limits.
+    /// Returns the original quantity if no limit is set.
+    /// Returns 0.0 if bar volume is zero (to prevent unrealistic fills).
+    pub fn apply_volume_participation_limit(
+        &self,
+        requested_quantity: f64,
+        bar_volume: f64,
+    ) -> f64 {
+        match self.max_volume_participation {
+            Some(max_pct) if max_pct > 0.0 => {
+                let max_allowed = bar_volume * max_pct;
+                requested_quantity.min(max_allowed)
+            }
+            _ => requested_quantity,
         }
     }
 }
@@ -937,7 +960,15 @@ impl Portfolio {
         self.last_fill_price = None;
 
         let asset = self.asset_config_for(&order.symbol);
-        let quantity = asset.normalize_quantity(order.quantity);
+        let normalized_quantity = asset.normalize_quantity(order.quantity);
+        if normalized_quantity <= 0.0 {
+            return Ok(None);
+        }
+
+        // Apply volume participation limit if configured
+        let quantity = self
+            .cost_model
+            .apply_volume_participation_limit(normalized_quantity, bar.volume);
         if quantity <= 0.0 {
             return Ok(None);
         }
@@ -2207,5 +2238,175 @@ mod tests {
 
         assert!(!portfolio.has_position("BTC"));
         assert!((portfolio.cash - 1015.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_volume_participation_limit_no_limit() {
+        // Test that without a limit, full order quantity is allowed
+        let mut cost_model = CostModel::zero();
+        cost_model.max_volume_participation = None;
+        let mut portfolio = Portfolio::with_cost_model(1000000.0, cost_model); // $1M capital
+        // Disable margin to avoid leverage violations
+        portfolio.set_margin_config(MarginConfig {
+            enabled: false,
+            ..MarginConfig::default()
+        });
+
+        let bar = Bar::new(
+            chrono::Utc::now(),
+            100.0,
+            105.0,
+            99.0,
+            102.0,
+            10000.0, // Bar volume
+        );
+
+        // Order for 5000 shares (50% of bar volume) - should fill completely
+        let order = Order::market("AAPL", Side::Buy, 5000.0, bar.timestamp);
+        let trade = portfolio.execute_order(&order, &bar).unwrap();
+
+        assert!(trade.is_some());
+        assert_eq!(portfolio.position("AAPL").unwrap().quantity, 5000.0);
+    }
+
+    #[test]
+    fn test_volume_participation_limit_enforced() {
+        // Test that with a 10% limit, orders are capped at 10% of bar volume
+        let mut cost_model = CostModel::zero();
+        cost_model.max_volume_participation = Some(0.10); // 10% limit
+        let mut portfolio = Portfolio::with_cost_model(100000.0, cost_model);
+
+        let bar = Bar::new(
+            chrono::Utc::now(),
+            100.0,
+            105.0,
+            99.0,
+            102.0,
+            10000.0, // Bar volume
+        );
+
+        // Order for 5000 shares (50% of bar volume) - should only fill 1000 (10%)
+        let order = Order::market("AAPL", Side::Buy, 5000.0, bar.timestamp);
+        let trade = portfolio.execute_order(&order, &bar).unwrap();
+
+        assert!(trade.is_some());
+        // Should only fill 10% of bar volume = 1000 shares
+        assert_eq!(portfolio.position("AAPL").unwrap().quantity, 1000.0);
+    }
+
+    #[test]
+    fn test_volume_participation_limit_below_limit() {
+        // Test that orders below the limit fill completely
+        let mut cost_model = CostModel::zero();
+        cost_model.max_volume_participation = Some(0.10); // 10% limit
+        let mut portfolio = Portfolio::with_cost_model(100000.0, cost_model);
+
+        let bar = Bar::new(
+            chrono::Utc::now(),
+            100.0,
+            105.0,
+            99.0,
+            102.0,
+            10000.0, // Bar volume
+        );
+
+        // Order for 500 shares (5% of bar volume) - should fill completely
+        let order = Order::market("AAPL", Side::Buy, 500.0, bar.timestamp);
+        let trade = portfolio.execute_order(&order, &bar).unwrap();
+
+        assert!(trade.is_some());
+        assert_eq!(portfolio.position("AAPL").unwrap().quantity, 500.0);
+    }
+
+    #[test]
+    fn test_volume_participation_limit_zero_volume() {
+        // Test that zero volume bars reject orders with participation limits
+        let mut cost_model = CostModel::zero();
+        cost_model.max_volume_participation = Some(0.10); // 10% limit
+        let mut portfolio = Portfolio::with_cost_model(100000.0, cost_model);
+
+        let bar = Bar::new(
+            chrono::Utc::now(),
+            100.0,
+            105.0,
+            99.0,
+            102.0,
+            0.0, // Zero volume
+        );
+
+        // Order should not fill since bar volume is zero and limit applies
+        let order = Order::market("AAPL", Side::Buy, 100.0, bar.timestamp);
+        let trade = portfolio.execute_order(&order, &bar).unwrap();
+
+        assert!(trade.is_none());
+        assert!(!portfolio.has_position("AAPL"));
+    }
+
+    #[test]
+    fn test_volume_participation_limit_sell_orders() {
+        // Test that volume participation limits apply to sell orders too
+        let mut cost_model = CostModel::zero();
+        cost_model.max_volume_participation = Some(0.20); // 20% limit from the start
+        let mut portfolio = Portfolio::with_cost_model(1000000.0, cost_model); // $1M capital
+        // Disable margin to avoid leverage violations
+        portfolio.set_margin_config(MarginConfig {
+            enabled: false,
+            ..MarginConfig::default()
+        });
+
+        // First, buy shares (will be limited by volume participation)
+        let buy_bar = Bar::new(
+            chrono::Utc::now(),
+            100.0,
+            105.0,
+            99.0,
+            102.0,
+            25000.0, // Large volume to allow the buy
+        );
+        // Buy 5000 shares - with 20% limit on 25000 volume = 5000 allowed
+        let buy_order = Order::market("AAPL", Side::Buy, 5000.0, buy_bar.timestamp);
+        portfolio.execute_order(&buy_order, &buy_bar).unwrap();
+        assert_eq!(portfolio.position("AAPL").unwrap().quantity, 5000.0);
+
+        // Now try to sell all shares on a bar with lower volume
+        let sell_bar = Bar::new(
+            chrono::Utc::now() + chrono::Duration::days(1),
+            102.0,
+            106.0,
+            101.0,
+            104.0,
+            10000.0, // Bar volume
+        );
+
+        // Try to sell all 5000 shares (50% of volume) - should only sell 2000 (20%)
+        let sell_order = Order::market("AAPL", Side::Sell, 5000.0, sell_bar.timestamp);
+        portfolio.execute_order(&sell_order, &sell_bar).unwrap();
+
+        // Should still hold 3000 shares after selling 2000
+        assert_eq!(portfolio.position("AAPL").unwrap().quantity, 3000.0);
+    }
+
+    #[test]
+    fn test_volume_participation_limit_fractional() {
+        // Test that fractional participation rates work correctly
+        let mut cost_model = CostModel::zero();
+        cost_model.max_volume_participation = Some(0.05); // 5% limit
+        let mut portfolio = Portfolio::with_cost_model(100000.0, cost_model);
+
+        let bar = Bar::new(
+            chrono::Utc::now(),
+            50.0,
+            52.0,
+            49.0,
+            51.0,
+            1000.0, // Bar volume
+        );
+
+        // Order for 200 shares (20% of bar volume) - should only fill 50 (5%)
+        let order = Order::market("AAPL", Side::Buy, 200.0, bar.timestamp);
+        let trade = portfolio.execute_order(&order, &bar).unwrap();
+
+        assert!(trade.is_some());
+        assert_eq!(portfolio.position("AAPL").unwrap().quantity, 50.0);
     }
 }

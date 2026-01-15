@@ -282,6 +282,9 @@ pub struct CostSettings {
     /// Minimum commission.
     #[serde(default)]
     pub min_commission: f64,
+    /// Maximum volume participation rate (0.0-1.0, e.g., 0.10 = 10% of bar volume).
+    #[serde(default)]
+    pub max_volume_participation: Option<f64>,
 }
 
 fn default_commission_pct() -> f64 {
@@ -298,6 +301,7 @@ impl Default for CostSettings {
             commission_pct: 0.1,
             slippage_pct: 0.05,
             min_commission: 0.0,
+            max_volume_participation: None,
         }
     }
 }
@@ -374,6 +378,7 @@ impl BacktestFileConfig {
             crypto: CryptoCost::default(),
             forex: ForexCost::default(),
             market_impact: MarketImpactModel::None,
+            max_volume_participation: self.costs.max_volume_participation,
         };
 
         let stop_loss = match self.risk.stop_loss_type.to_lowercase().as_str() {
