@@ -6,6 +6,7 @@ use crate::engine::BacktestConfig;
 use crate::error::{BacktestError, Result};
 use crate::portfolio::{CostModel, CryptoCost, ForexCost, FuturesCost, MarketImpactModel};
 use crate::risk::{RiskConfig, StopLoss, TakeProfit};
+use crate::types::ExecutionPrice;
 use chrono::{NaiveDate, TimeZone, Utc};
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -47,6 +48,15 @@ pub struct BacktestSettings {
     /// Allow fractional shares.
     #[serde(default = "default_true")]
     pub fractional_shares: bool,
+    /// Execution price model for market orders.
+    #[serde(default = "default_execution_price")]
+    pub execution_price: ExecutionPrice,
+    /// Fill probability for order execution.
+    #[serde(default = "default_fill_probability")]
+    pub fill_probability: f64,
+    /// Pending limit order lifetime in bars (None = GTC).
+    #[serde(default = "default_limit_order_ttl")]
+    pub limit_order_ttl_bars: Option<usize>,
     /// Start date (YYYY-MM-DD format).
     #[serde(default)]
     pub start_date: Option<String>,
@@ -72,10 +82,25 @@ impl Default for BacktestSettings {
             position_size: 1.0,
             allow_short: true,
             fractional_shares: true,
+            execution_price: ExecutionPrice::Open,
+            fill_probability: default_fill_probability(),
+            limit_order_ttl_bars: Some(5),
             start_date: None,
             end_date: None,
         }
     }
+}
+
+fn default_execution_price() -> ExecutionPrice {
+    ExecutionPrice::Open
+}
+
+fn default_fill_probability() -> f64 {
+    1.0
+}
+
+fn default_limit_order_ttl() -> Option<usize> {
+    Some(5)
 }
 
 /// Data settings.
@@ -320,6 +345,9 @@ impl BacktestFileConfig {
             start_date,
             end_date,
             risk_config,
+            execution_price: self.backtest.execution_price,
+            fill_probability: self.backtest.fill_probability,
+            limit_order_ttl_bars: self.backtest.limit_order_ttl_bars,
         })
     }
 
@@ -333,6 +361,9 @@ initial_capital = 100000.0
 position_size = 1.0
 allow_short = true
 fractional_shares = true
+execution_price = "open"
+fill_probability = 1.0
+limit_order_ttl_bars = 5
 # start_date = "2023-01-01"
 # end_date = "2023-12-31"
 
@@ -461,6 +492,9 @@ stop_loss_value = 3.0
         assert_eq!(config.position_size, 0.8);
         assert!(!config.allow_short);
         assert!((config.cost_model.commission_pct - 0.0015).abs() < 0.0001);
+        assert_eq!(config.execution_price, ExecutionPrice::Open);
+        assert!((config.fill_probability - 1.0).abs() < f64::EPSILON);
+        assert_eq!(config.limit_order_ttl_bars, Some(5));
     }
 
     #[test]

@@ -27,3 +27,4 @@ Run these after implementing to get immediate feedback:
 - Result export via `Exporter` in `src/export.rs`
 - CLI `mantis run` supports `--asset-class` (equity/future/crypto/forex/option) plus parameters
   like `--multiplier`, `--tick-size`, `--margin-requirement`, etc., to configure symbol metadata.
+- Execution realism can be tuned via `--execution-price`, `--fill-probability`, and `--limit-order-ttl` flags on `mantis run`.

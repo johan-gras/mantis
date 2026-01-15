@@ -2,10 +2,11 @@
 
 use crate::error::{BacktestError, Result};
 use crate::types::{
-    AssetClass, AssetConfig, Bar, EquityPoint, Order, OrderType, Position, Side, Trade,
-    VolumeProfile,
+    AssetClass, AssetConfig, Bar, EquityPoint, ExecutionPrice, Order, OrderType, Position, Side,
+    Trade, VolumeProfile,
 };
 use chrono::{DateTime, Utc};
+use rand::{rngs::StdRng, Rng, SeedableRng};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use tracing::debug;
@@ -268,6 +269,20 @@ pub struct Portfolio {
     volume_profiles: HashMap<String, VolumeProfile>,
     /// Margin set aside for futures positions.
     margin_reserve: HashMap<String, f64>,
+    /// Execution price model for market orders.
+    execution_price: ExecutionPrice,
+    /// Last execution price (used for fill reporting).
+    last_fill_price: Option<f64>,
+}
+
+/// Result information for an executed (potentially partial) order.
+#[derive(Debug, Clone)]
+pub struct FillResult {
+    pub filled_quantity: f64,
+    pub remaining_quantity: f64,
+    pub fill_price: f64,
+    pub partial: bool,
+    pub trade: Option<Trade>,
 }
 
 impl Portfolio {
@@ -286,6 +301,8 @@ impl Portfolio {
             asset_configs: HashMap::new(),
             volume_profiles: HashMap::new(),
             margin_reserve: HashMap::new(),
+            execution_price: ExecutionPrice::Open,
+            last_fill_price: None,
         }
     }
 
@@ -304,7 +321,14 @@ impl Portfolio {
             asset_configs: HashMap::new(),
             volume_profiles: HashMap::new(),
             margin_reserve: HashMap::new(),
+            execution_price: ExecutionPrice::Open,
+            last_fill_price: None,
         }
+    }
+
+    /// Set the execution price model.
+    pub fn set_execution_price(&mut self, price: ExecutionPrice) {
+        self.execution_price = price;
     }
 
     /// Set the cost model.
@@ -339,6 +363,38 @@ impl Portfolio {
     /// Get the volume profile for a symbol if configured.
     pub fn volume_profile(&self, symbol: &str) -> Option<&VolumeProfile> {
         self.volume_profiles.get(symbol)
+    }
+
+    fn market_execution_price(&self, bar: &Bar) -> f64 {
+        match self.execution_price {
+            ExecutionPrice::Open => bar.open,
+            ExecutionPrice::Close => bar.close,
+            ExecutionPrice::Vwap => (bar.high + bar.low + bar.close) / 3.0,
+            ExecutionPrice::Twap => (bar.open + bar.close) / 2.0,
+            ExecutionPrice::RandomInRange => {
+                let (min_price, max_price) = if bar.high >= bar.low {
+                    (bar.low, bar.high)
+                } else {
+                    (bar.high, bar.low)
+                };
+                if (max_price - min_price).abs() < f64::EPSILON {
+                    min_price
+                } else {
+                    let seed = Self::rng_seed(bar.timestamp, None, self.trades.len() as u64);
+                    let mut rng = StdRng::seed_from_u64(seed);
+                    rng.gen_range(min_price..=max_price)
+                }
+            }
+            ExecutionPrice::Midpoint => (bar.high + bar.low) / 2.0,
+        }
+    }
+
+    fn rng_seed(bar_time: DateTime<Utc>, order_time: Option<DateTime<Utc>>, extra: u64) -> u64 {
+        let bar_part = bar_time.timestamp_nanos_opt().unwrap_or(0) as u64;
+        let order_part = order_time
+            .and_then(|ts| ts.timestamp_nanos_opt())
+            .unwrap_or(0) as u64;
+        bar_part ^ order_part ^ extra
     }
 
     fn asset_config_for(&self, symbol: &str) -> AssetConfig {
@@ -435,6 +491,8 @@ impl Portfolio {
             )));
         }
 
+        self.last_fill_price = None;
+
         let asset = self.asset_config_for(&order.symbol);
         let quantity = asset.normalize_quantity(order.quantity);
         if quantity <= 0.0 {
@@ -442,6 +500,7 @@ impl Portfolio {
         }
 
         let Some(base_price) = self.order_fill_price(order, bar) else {
+            self.last_fill_price = None;
             return Ok(None);
         };
 
@@ -487,6 +546,67 @@ impl Portfolio {
         )
     }
 
+    /// Execute an order applying a probabilistic partial-fill model.
+    pub fn execute_with_fill_probability(
+        &mut self,
+        order: &Order,
+        bar: &Bar,
+        fill_probability: f64,
+    ) -> Result<Option<FillResult>> {
+        let probability = fill_probability.clamp(0.0, 1.0);
+        if probability <= 0.0 {
+            return Ok(None);
+        }
+
+        let fraction = if probability >= 1.0 {
+            1.0
+        } else {
+            let seed = Self::rng_seed(
+                bar.timestamp,
+                Some(order.timestamp),
+                self.trades.len() as u64,
+            );
+            let mut rng = StdRng::seed_from_u64(seed);
+            let outcome: f64 = rng.gen();
+            if outcome <= probability {
+                1.0
+            } else {
+                let lower = (probability * 0.5).max(f64::EPSILON);
+                let upper = probability.max(lower);
+                if upper <= lower {
+                    lower
+                } else {
+                    rng.gen_range(lower..=upper)
+                }
+            }
+        };
+
+        if fraction <= f64::EPSILON {
+            return Ok(None);
+        }
+
+        let fill_quantity = (order.quantity * fraction).min(order.quantity);
+        if fill_quantity <= f64::EPSILON {
+            return Ok(None);
+        }
+
+        let mut adjusted_order = order.clone();
+        adjusted_order.quantity = fill_quantity;
+        let trade = self.execute_order(&adjusted_order, bar)?;
+        let Some(fill_price) = self.last_fill_price else {
+            return Ok(None);
+        };
+
+        let remaining_quantity = (order.quantity - fill_quantity).max(0.0);
+        Ok(Some(FillResult {
+            filled_quantity: fill_quantity,
+            remaining_quantity,
+            fill_price,
+            partial: remaining_quantity > f64::EPSILON,
+            trade,
+        }))
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn execute_spot_order(
         &mut self,
@@ -529,6 +649,7 @@ impl Portfolio {
             });
         }
         self.cash -= total_cost;
+        self.last_fill_price = Some(exec_price);
 
         let existing_position = self.positions.get(&order.symbol).cloned();
         let closing_qty = existing_position
@@ -631,6 +752,7 @@ impl Portfolio {
         }
 
         self.cash += notional - commission;
+        self.last_fill_price = Some(exec_price);
 
         let per_unit_commission = if quantity > 0.0 {
             commission / quantity
@@ -718,6 +840,7 @@ impl Portfolio {
             });
         }
         self.cash -= commission;
+        self.last_fill_price = Some(exec_price);
 
         let multiplier = asset.notional_multiplier();
         let mut qty_remaining = quantity;
@@ -932,7 +1055,7 @@ impl Portfolio {
 
     fn order_fill_price(&self, order: &Order, bar: &Bar) -> Option<f64> {
         match order.order_type {
-            OrderType::Market => Some(bar.open),
+            OrderType::Market => Some(self.market_execution_price(bar)),
             OrderType::Limit(limit) => match order.side {
                 Side::Buy => {
                     if bar.low <= limit.0 {
@@ -1158,6 +1281,60 @@ mod tests {
         assert!(portfolio.has_position("AAPL"));
         assert_eq!(portfolio.position_qty("AAPL"), 100.0);
         assert_eq!(portfolio.cash, 90000.0); // 100000 - 100*100
+    }
+
+    #[test]
+    fn test_execution_price_close_model() {
+        let mut portfolio = Portfolio::with_cost_model(100000.0, CostModel::zero());
+        portfolio.set_execution_price(ExecutionPrice::Close);
+        let bar = sample_bar();
+        let order = Order::market("AAPL", Side::Buy, 10.0, bar.timestamp);
+
+        let trade = portfolio.execute_order(&order, &bar).unwrap().unwrap();
+        assert!((trade.entry_price - bar.close).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_fill_probability_zero_no_fill() {
+        let mut portfolio = Portfolio::with_cost_model(100000.0, CostModel::zero());
+        let bar = sample_bar();
+        let order = Order::market("AAPL", Side::Buy, 10.0, bar.timestamp);
+
+        let result = portfolio
+            .execute_with_fill_probability(&order, &bar, 0.0)
+            .unwrap();
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_fill_probability_partial_fill_occurs() {
+        let base_ts = Utc.with_ymd_and_hms(2024, 1, 15, 9, 30, 0).unwrap();
+        let mut partial_seen = false;
+
+        for offset in 0..50 {
+            let mut portfolio = Portfolio::with_cost_model(100000.0, CostModel::zero());
+            let order_ts = base_ts + chrono::Duration::seconds(offset);
+            let bar_ts = order_ts + chrono::Duration::minutes(1);
+            let bar = Bar::new(bar_ts, 100.0, 105.0, 98.0, 101.0, 1000.0);
+            let order = Order::market("AAPL", Side::Buy, 10.0, order_ts);
+
+            if let Some(fill) = portfolio
+                .execute_with_fill_probability(&order, &bar, 0.5)
+                .unwrap()
+            {
+                if fill.partial {
+                    assert!(fill.filled_quantity < 10.0);
+                    assert!(fill.remaining_quantity > 0.0);
+                    partial_seen = true;
+                    break;
+                }
+            }
+        }
+
+        assert!(
+            partial_seen,
+            "expected at least one partial fill within the sample window"
+        );
     }
 
     #[test]

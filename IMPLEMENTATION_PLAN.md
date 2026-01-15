@@ -205,59 +205,17 @@ These items significantly improve quality but are not explicit spec violations.
 
 **Verification:** `cargo fmt`, `cargo clippy -- -D warnings`, `cargo test`.
 
-### 3.4 Improve Order Execution Realism
+### 3.4 Improve Order Execution Realism - COMPLETE
 
-**Location:** `src/engine.rs` lines 189-256, `src/portfolio.rs` lines 180-256
+**Summary:**
+- Added `ExecutionPrice` enum with CLI/config wiring plus deterministic `RandomInRange` support.
+- Introduced `FillResult` and `Portfolio::execute_with_fill_probability` to simulate partial fills while keeping fill metadata for strategies.
+- Added limit-order aging via `PendingOrder` management inside the engine, including TTL configuration and retry handling.
+- Added CLI flags (`--execution-price`, `--fill-probability`, `--limit-order-ttl`) and config fields to control the new behavior.
+- Updated multi-asset engine to honor the new execution settings.
+- Added regression tests for execution price selection, fill-probability edge cases, partial fill detection, and pending order queuing.
 
-**Current state:**
-- Market orders always execute at `bar.open`
-- Limit orders fill at exact limit price or bar extremes
-- No partial fills
-- No execution uncertainty
-
-**Implementation tasks:**
-1. Add execution price options:
-   ```rust
-   pub enum ExecutionPrice {
-       Open,
-       Close,
-       VWAP,            // Requires volume profile
-       TWAP,            // Time-weighted average
-       RandomInRange,   // Random price within bar range
-       Midpoint,        // (high + low) / 2
-   }
-   ```
-
-2. Add partial fill support:
-   ```rust
-   pub struct FillResult {
-       pub filled_quantity: f64,
-       pub remaining_quantity: f64,
-       pub fill_price: f64,
-       pub partial: bool,
-   }
-
-   impl Portfolio {
-       fn execute_with_fill_probability(
-           &mut self,
-           order: &Order,
-           bar: &Bar,
-           fill_probability: f64
-       ) -> Result<Option<FillResult>>
-   }
-   ```
-
-3. Add order aging for limit orders:
-   ```rust
-   pub struct PendingOrder {
-       pub order: Order,
-       pub created_at: DateTime<Utc>,
-       pub expires_at: Option<DateTime<Utc>>,
-       pub remaining_quantity: f64,
-   }
-   ```
-
-4. CLI configuration: `--execution-price vwap --fill-probability 0.95`
+**Verification:** `cargo test`, `cargo fmt`, `cargo clippy -- -D warnings`
 
 ### 3.5 Add MultiAssetExporter Test Coverage
 
@@ -460,11 +418,10 @@ All clippy errors fixed and code formatted. Verification passes.
 2. ~~Add asset class differentiation (2.6)~~ - COMPLETE
 
 ### Phase 5: Polish
-1. Market impact modeling (3.3)
-2. Order execution improvements (3.4)
-3. Test coverage (3.5)
-4. Streaming indicator serialization (3.6)
-5. Enhancement items as time permits
+1. Order execution improvements (3.4)
+2. Test coverage (3.5)
+3. Streaming indicator serialization (3.6)
+4. Enhancement items as time permits
 
 ---
 

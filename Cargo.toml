@@ -24,6 +24,7 @@ arrow = { version = "53", default-features = false }
 
 # Numerics and statistics
 statrs = "0.16"
+rand = "0.8"
 
 # Error handling
 thiserror = "1.0"

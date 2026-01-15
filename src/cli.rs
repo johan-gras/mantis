@@ -13,7 +13,7 @@ use mantis::strategies::{
     BreakoutStrategy, MacdStrategy, MeanReversion, MomentumStrategy, RsiStrategy, SmaCrossover,
 };
 use mantis::strategy::Strategy;
-use mantis::types::{AssetClass, AssetConfig};
+use mantis::types::{AssetClass, AssetConfig, ExecutionPrice};
 
 use clap::{Parser, Subcommand, ValueEnum};
 use std::fs;
@@ -72,6 +72,18 @@ pub enum Commands {
         /// Slippage percentage (e.g., 0.05 for 0.05%)
         #[arg(long, default_value = "0.05")]
         slippage: f64,
+
+        /// Execution price model for market orders
+        #[arg(long, value_enum, default_value = "open")]
+        execution_price: ExecutionPriceArg,
+
+        /// Probability that an order fully fills on each attempt (0.0 - 1.0)
+        #[arg(long, default_value = "1.0")]
+        fill_probability: f64,
+
+        /// Lifetime of pending limit orders in bars (0 = good-till-cancelled)
+        #[arg(long, default_value = "5")]
+        limit_order_ttl: usize,
 
         /// Allow short selling
         #[arg(long)]
@@ -260,6 +272,18 @@ pub enum AssetClassArg {
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, ValueEnum)]
+#[value(rename_all = "kebab-case")]
+pub enum ExecutionPriceArg {
+    Open,
+    Close,
+    Vwap,
+    Twap,
+    #[value(name = "random-in-range")]
+    RandomInRange,
+    Midpoint,
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, ValueEnum)]
 pub enum StrategyType {
     SmaCrossover,
     Momentum,
@@ -389,6 +413,9 @@ pub fn run() -> Result<()> {
             position_size,
             commission,
             slippage,
+            execution_price,
+            fill_probability,
+            limit_order_ttl,
             allow_short,
             fast_period,
             slow_period,
@@ -412,6 +439,9 @@ pub fn run() -> Result<()> {
             *position_size,
             *commission,
             *slippage,
+            *execution_price,
+            *fill_probability,
+            *limit_order_ttl,
             *allow_short,
             *fast_period,
             *slow_period,
@@ -489,6 +519,9 @@ fn run_backtest(
     position_size: f64,
     commission: f64,
     slippage: f64,
+    execution_price: ExecutionPriceArg,
+    fill_probability: f64,
+    limit_order_ttl: usize,
     allow_short: bool,
     fast_period: usize,
     slow_period: usize,
@@ -509,6 +542,13 @@ fn run_backtest(
     info!("Loading data from: {}", data_path.display());
     let bars = load_data_with_format(data_path, &DataConfig::default(), format)?;
 
+    let fill_probability = fill_probability.clamp(0.0, 1.0);
+    let limit_order_ttl_bars = if limit_order_ttl == 0 {
+        None
+    } else {
+        Some(limit_order_ttl)
+    };
+
     let cost_model = CostModel {
         commission_pct: commission / 100.0,
         slippage_pct: slippage / 100.0,
@@ -521,6 +561,9 @@ fn run_backtest(
         position_size,
         allow_short,
         show_progress: true,
+        execution_price: execution_price.into(),
+        fill_probability,
+        limit_order_ttl_bars,
         ..Default::default()
     };
 
@@ -603,6 +646,19 @@ fn build_asset_config(
                     multiplier,
                 },
             )
+        }
+    }
+}
+
+impl From<ExecutionPriceArg> for ExecutionPrice {
+    fn from(arg: ExecutionPriceArg) -> Self {
+        match arg {
+            ExecutionPriceArg::Open => ExecutionPrice::Open,
+            ExecutionPriceArg::Close => ExecutionPrice::Close,
+            ExecutionPriceArg::Vwap => ExecutionPrice::Vwap,
+            ExecutionPriceArg::Twap => ExecutionPrice::Twap,
+            ExecutionPriceArg::RandomInRange => ExecutionPrice::RandomInRange,
+            ExecutionPriceArg::Midpoint => ExecutionPrice::Midpoint,
         }
     }
 }

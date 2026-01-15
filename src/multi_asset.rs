@@ -263,6 +263,7 @@ impl MultiAssetEngine {
             Portfolio::with_cost_model(self.config.initial_capital, self.config.cost_model.clone());
         portfolio.allow_short = self.config.allow_short;
         portfolio.fractional_shares = self.config.fractional_shares;
+        portfolio.set_execution_price(self.config.execution_price);
         portfolio.set_asset_configs(self.data.asset_configs());
         let volume_profiles = self.data.volume_profiles();
         portfolio.set_volume_profiles(&volume_profiles);
@@ -529,10 +530,18 @@ impl MultiAssetEngine {
 
             if qty_change > 0.0 {
                 let order = Order::market(symbol, Side::Buy, qty_change, Utc::now());
-                let _ = portfolio.execute_order(&order, &bar);
+                let _ = portfolio.execute_with_fill_probability(
+                    &order,
+                    &bar,
+                    self.config.fill_probability,
+                );
             } else {
                 let order = Order::market(symbol, Side::Sell, qty_change.abs(), Utc::now());
-                let _ = portfolio.execute_order(&order, &bar);
+                let _ = portfolio.execute_with_fill_probability(
+                    &order,
+                    &bar,
+                    self.config.fill_probability,
+                );
             }
         }
 
@@ -579,7 +588,8 @@ impl MultiAssetEngine {
 
             let side = if qty > 0.0 { Side::Sell } else { Side::Buy };
             let order = Order::market(&symbol, side, qty.abs(), Utc::now());
-            let _ = portfolio.execute_order(&order, &bar);
+            let _ =
+                portfolio.execute_with_fill_probability(&order, &bar, self.config.fill_probability);
         }
 
         Ok(())

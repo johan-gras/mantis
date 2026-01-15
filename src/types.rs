@@ -65,6 +65,25 @@ impl VolumeProfile {
     }
 }
 
+/// Execution price model for market orders.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum ExecutionPrice {
+    /// Fill at the opening price of the bar.
+    #[default]
+    Open,
+    /// Fill at the closing price of the bar.
+    Close,
+    /// Fill using the bar's typical price as a VWAP approximation.
+    Vwap,
+    /// Fill at the average of open and close (TWAP approximation).
+    Twap,
+    /// Fill at a random price within the bar's range.
+    RandomInRange,
+    /// Fill at the midpoint between the bar's high and low.
+    Midpoint,
+}
+
 /// Supported asset classes in the engine.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub enum AssetClass {

@@ -5,7 +5,9 @@ use crate::error::{BacktestError, Result};
 use crate::portfolio::{CostModel, Portfolio};
 use crate::risk::{RiskConfig, StopLoss, TrailingStop};
 use crate::strategy::{Strategy, StrategyContext};
-use crate::types::{Bar, EquityPoint, Order, Side, Signal, Trade, VolumeProfile};
+use crate::types::{
+    Bar, EquityPoint, ExecutionPrice, Order, OrderType, Side, Signal, Trade, VolumeProfile,
+};
 use chrono::{DateTime, Utc};
 use indicatif::{ProgressBar, ProgressStyle};
 use rayon::prelude::*;
@@ -35,6 +37,15 @@ pub struct BacktestConfig {
     /// Risk management configuration.
     #[serde(default)]
     pub risk_config: RiskConfig,
+    /// Execution price model for market orders.
+    #[serde(default)]
+    pub execution_price: ExecutionPrice,
+    /// Probability that an order fully fills on a given attempt.
+    #[serde(default = "default_fill_probability")]
+    pub fill_probability: f64,
+    /// Number of bars before pending limit orders expire (None = GTC).
+    #[serde(default)]
+    pub limit_order_ttl_bars: Option<usize>,
 }
 
 impl Default for BacktestConfig {
@@ -49,8 +60,15 @@ impl Default for BacktestConfig {
             start_date: None,
             end_date: None,
             risk_config: RiskConfig::default(),
+            execution_price: ExecutionPrice::Open,
+            fill_probability: default_fill_probability(),
+            limit_order_ttl_bars: Some(5),
         }
     }
+}
+
+fn default_fill_probability() -> f64 {
+    1.0
 }
 
 /// Results from a backtest run.
@@ -102,6 +120,22 @@ pub struct BacktestResult {
     pub start_time: DateTime<Utc>,
     /// End timestamp.
     pub end_time: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone)]
+struct PendingOrder {
+    order: Order,
+    created_at: DateTime<Utc>,
+    expires_at: Option<DateTime<Utc>>,
+    remaining_quantity: f64,
+}
+
+impl PendingOrder {
+    fn is_expired(&self, timestamp: DateTime<Utc>) -> bool {
+        self.expires_at
+            .map(|expires| timestamp >= expires)
+            .unwrap_or(false)
+    }
 }
 
 /// The main backtest engine.
@@ -190,6 +224,7 @@ impl Engine {
             Portfolio::with_cost_model(self.config.initial_capital, self.config.cost_model.clone());
         portfolio.allow_short = self.config.allow_short;
         portfolio.fractional_shares = self.config.fractional_shares;
+        portfolio.set_execution_price(self.config.execution_price);
         portfolio.set_asset_configs(self.data.asset_configs());
         if let Some(profile) = volume_profile {
             portfolio.set_volume_profile(symbol.to_string(), profile);
@@ -214,6 +249,7 @@ impl Engine {
         // Track entry prices and trailing stops for risk management
         let mut entry_prices: HashMap<String, f64> = HashMap::new();
         let mut trailing_stops: HashMap<String, TrailingStop> = HashMap::new();
+        let mut pending_orders: Vec<PendingOrder> = Vec::new();
 
         // Main backtest loop
         for i in 0..bars.len() {
@@ -278,7 +314,11 @@ impl Engine {
                         let exit_order =
                             Order::market(symbol, exit_side, position.quantity, bar.timestamp);
 
-                        if let Ok(Some(_)) = portfolio.execute_order(&exit_order, bar) {
+                        if let Ok(Some(_)) = portfolio.execute_with_fill_probability(
+                            &exit_order,
+                            bar,
+                            self.config.fill_probability,
+                        ) {
                             debug!(
                                 "Position closed due to {}: {} @ {:.2}",
                                 exit_reason, symbol, current_price
@@ -306,38 +346,77 @@ impl Engine {
                 volume_profile,
             };
 
+            self.handle_pending_orders(&mut pending_orders, bar, strategy, &ctx, &mut portfolio)?;
+
             // Check for custom orders first
             if let Some(orders) = strategy.generate_orders(&ctx) {
                 for order in orders {
-                    if let Err(e) = portfolio.execute_order(&order, bar) {
-                        debug!("Order execution failed: {}", e);
+                    match portfolio.execute_with_fill_probability(
+                        &order,
+                        bar,
+                        self.config.fill_probability,
+                    ) {
+                        Ok(Some(fill)) => {
+                            self.enqueue_pending_if_needed(
+                                &mut pending_orders,
+                                &order,
+                                fill.remaining_quantity,
+                                &bars,
+                                i,
+                            );
+                        }
+                        Ok(None) => {
+                            debug!("Order not filled (limit/stop not triggered)");
+                        }
+                        Err(e) => {
+                            debug!("Order execution failed: {}", e);
+                        }
                     }
                 }
             } else {
                 // Get signal and convert to order
                 let signal = strategy.on_bar(&ctx);
                 if let Some(order) = self.signal_to_order(signal, symbol, bar, &portfolio) {
-                    match portfolio.execute_order(&order, bar) {
-                        Ok(Some(trade)) => {
-                            strategy.on_trade(&ctx, &order);
-                            debug!("Trade executed: {:?}", trade);
+                    match portfolio.execute_with_fill_probability(
+                        &order,
+                        bar,
+                        self.config.fill_probability,
+                    ) {
+                        Ok(Some(fill)) => {
+                            if let Some(trade) = fill.trade.as_ref() {
+                                strategy.on_trade(&ctx, &order);
+                                debug!("Trade executed: {:?}", trade);
+                            }
 
-                            // Track entry for risk management
                             if matches!(signal, Signal::Long | Signal::Short) {
-                                entry_prices.insert(symbol.to_string(), trade.entry_price);
+                                if let Some(trade) = fill.trade.as_ref() {
+                                    entry_prices.insert(symbol.to_string(), trade.entry_price);
 
-                                // Setup trailing stop if configured
-                                if let StopLoss::Trailing(trail_pct) =
-                                    self.config.risk_config.stop_loss
-                                {
-                                    let ts =
-                                        TrailingStop::new(trade.entry_price, trade.side, trail_pct);
-                                    trailing_stops.insert(symbol.to_string(), ts);
+                                    if let StopLoss::Trailing(trail_pct) =
+                                        self.config.risk_config.stop_loss
+                                    {
+                                        let ts = TrailingStop::new(
+                                            trade.entry_price,
+                                            trade.side,
+                                            trail_pct,
+                                        );
+                                        trailing_stops.insert(symbol.to_string(), ts);
+                                    }
                                 }
-                            } else if matches!(signal, Signal::Exit) {
+                            } else if matches!(signal, Signal::Exit)
+                                && portfolio.position(symbol).is_none()
+                            {
                                 entry_prices.remove(symbol);
                                 trailing_stops.remove(symbol);
                             }
+
+                            self.enqueue_pending_if_needed(
+                                &mut pending_orders,
+                                &order,
+                                fill.remaining_quantity,
+                                &bars,
+                                i,
+                            );
                         }
                         Ok(None) => {
                             debug!("Order not filled (limit/stop not triggered)");
@@ -444,6 +523,84 @@ impl Engine {
         }
 
         None
+    }
+
+    fn handle_pending_orders(
+        &self,
+        pending_orders: &mut Vec<PendingOrder>,
+        bar: &Bar,
+        strategy: &mut dyn Strategy,
+        ctx: &StrategyContext,
+        portfolio: &mut Portfolio,
+    ) -> Result<()> {
+        if pending_orders.is_empty() {
+            return Ok(());
+        }
+
+        let mut still_pending = Vec::new();
+        for mut pending in pending_orders.drain(..) {
+            if pending.is_expired(bar.timestamp) {
+                debug!(
+                    "Pending order expired after {:?}",
+                    bar.timestamp - pending.created_at
+                );
+                continue;
+            }
+
+            let mut pending_order = pending.order.clone();
+            pending_order.quantity = pending.remaining_quantity;
+            match portfolio.execute_with_fill_probability(
+                &pending_order,
+                bar,
+                self.config.fill_probability,
+            )? {
+                Some(fill) => {
+                    if let Some(trade) = fill.trade.as_ref() {
+                        strategy.on_trade(ctx, &pending_order);
+                        debug!("Trade executed: {:?}", trade);
+                    }
+
+                    if fill.partial && fill.remaining_quantity > f64::EPSILON {
+                        pending.remaining_quantity = fill.remaining_quantity;
+                        still_pending.push(pending);
+                    }
+                }
+                None => still_pending.push(pending),
+            }
+        }
+
+        *pending_orders = still_pending;
+        Ok(())
+    }
+
+    fn enqueue_pending_if_needed(
+        &self,
+        pending_orders: &mut Vec<PendingOrder>,
+        order: &Order,
+        remaining: f64,
+        bars: &[Bar],
+        index: usize,
+    ) {
+        if remaining <= f64::EPSILON {
+            return;
+        }
+
+        if !matches!(
+            order.order_type,
+            OrderType::Limit(_) | OrderType::StopLimit { .. }
+        ) {
+            return;
+        }
+
+        let mut pending_order = order.clone();
+        pending_order.quantity = remaining;
+        let expires_at = self.pending_expiry_for(bars, index);
+        pending_orders.push(PendingOrder {
+            order: pending_order,
+            created_at: bars[index].timestamp,
+            expires_at,
+            remaining_quantity: remaining,
+        });
     }
 
     /// Calculate backtest results.
@@ -614,6 +771,17 @@ impl Engine {
 
         Ok(results)
     }
+
+    fn pending_expiry_for(&self, bars: &[Bar], index: usize) -> Option<DateTime<Utc>> {
+        self.config.limit_order_ttl_bars.and_then(|ttl| {
+            if ttl == 0 || bars.is_empty() {
+                None
+            } else {
+                let target = (index + ttl).min(bars.len().saturating_sub(1));
+                bars.get(target).map(|b| b.timestamp)
+            }
+        })
+    }
 }
 
 /// Calculate Sharpe ratio from returns.
@@ -727,6 +895,27 @@ mod tests {
         assert_eq!(result.strategy_name, "SimpleStrategy");
         assert!(result.total_trades > 0);
         assert_eq!(result.trading_days, 20);
+    }
+
+    #[test]
+    fn test_enqueue_pending_limit_order() {
+        let mut config = BacktestConfig::default();
+        config.limit_order_ttl_bars = Some(3);
+        config.show_progress = false;
+        let engine = Engine::new(config);
+        let bars = create_test_bars();
+        let order = Order::limit("TEST", Side::Buy, 10.0, 99.0, bars[0].timestamp);
+        let mut pending = Vec::new();
+
+        engine.enqueue_pending_if_needed(&mut pending, &order, 4.0, &bars, 0);
+        assert_eq!(pending.len(), 1);
+        assert!((pending[0].remaining_quantity - 4.0).abs() < f64::EPSILON);
+        assert!(pending[0].expires_at.is_some());
+
+        // Market order should not create pending entry
+        let market = Order::market("TEST", Side::Buy, 5.0, bars[0].timestamp);
+        engine.enqueue_pending_if_needed(&mut pending, &market, 2.0, &bars, 0);
+        assert_eq!(pending.len(), 1);
     }
 
     #[test]
