@@ -94,6 +94,7 @@
 //! - [`risk`]: Risk management (stop-loss, take-profit, position sizing)
 //! - [`walkforward`]: Walk-forward optimization analysis
 //! - [`cost_sensitivity`]: Transaction cost sensitivity analysis for robustness testing
+//! - [`options`]: Options pricing (Black-Scholes), Greeks, and derivatives support
 //! - [`config`]: TOML configuration file support
 //! - [`features`]: Feature extraction for ML/DL workflows
 
@@ -112,6 +113,7 @@ pub mod multi_asset;
 // TODO: ONNX module awaiting ort crate stabilization (v2.0 API in flux, v1.x yanked)
 // Infrastructure code complete in src/onnx.rs, needs: stable ort version + integration testing
 // pub mod onnx;
+pub mod options;
 pub mod cost_sensitivity;
 pub mod portfolio;
 pub mod regime;
@@ -128,6 +130,10 @@ pub use analytics::{
 };
 pub use engine::{BacktestConfig, BacktestResult, Engine};
 pub use error::{BacktestError, Result};
+pub use options::{
+    black_scholes, calculate_greeks, validate_put_call_parity, ExerciseStyle, Greeks,
+    OptionContract, OptionType, SettlementType,
+};
 pub use strategy::Strategy;
 pub use types::{
     AssetClass, AssetConfig, Bar, CorporateAction, CorporateActionType, DividendAdjustMethod,
