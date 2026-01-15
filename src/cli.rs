@@ -13,6 +13,7 @@ use mantis::strategies::{
     BreakoutStrategy, MacdStrategy, MeanReversion, MomentumStrategy, RsiStrategy, SmaCrossover,
 };
 use mantis::strategy::Strategy;
+use mantis::types::{AssetClass, AssetConfig};
 
 use clap::{Parser, Subcommand, ValueEnum};
 use std::fs;
@@ -95,6 +96,42 @@ pub enum Commands {
         /// Data file format (auto-detects from extension if not specified)
         #[arg(short, long, value_enum, default_value = "auto")]
         format: DataFormatArg,
+
+        /// Asset class for the provided data (equity, future, crypto, forex, option)
+        #[arg(long, value_enum, default_value = "equity")]
+        asset_class: AssetClassArg,
+
+        /// Contract or option multiplier (futures/options)
+        #[arg(long, default_value = "1.0")]
+        multiplier: f64,
+
+        /// Minimum tick size for prices (futures)
+        #[arg(long, default_value = "0.01")]
+        tick_size: f64,
+
+        /// Margin requirement as a decimal fraction (e.g., 0.1 for 10%)
+        #[arg(long, default_value = "0.1")]
+        margin_requirement: f64,
+
+        /// Maximum decimals for crypto base asset quantity
+        #[arg(long, default_value = "8")]
+        base_precision: u8,
+
+        /// Maximum decimals for crypto quote prices
+        #[arg(long, default_value = "2")]
+        quote_precision: u8,
+
+        /// Pip size for forex pairs (e.g., 0.0001)
+        #[arg(long, default_value = "0.0001")]
+        pip_size: f64,
+
+        /// Lot size for forex positions
+        #[arg(long, default_value = "100000")]
+        lot_size: f64,
+
+        /// Underlying symbol for options (defaults to same as symbol)
+        #[arg(long)]
+        underlying: Option<String>,
     },
 
     /// Optimize strategy parameters
@@ -211,6 +248,15 @@ pub enum OutputFormat {
     Text,
     Json,
     Csv,
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, ValueEnum)]
+pub enum AssetClassArg {
+    Equity,
+    Future,
+    Crypto,
+    Forex,
+    Option,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, ValueEnum)]
@@ -349,6 +395,15 @@ pub fn run() -> Result<()> {
             rsi_period,
             lookback,
             format,
+            asset_class,
+            multiplier,
+            tick_size,
+            margin_requirement,
+            base_precision,
+            quote_precision,
+            pip_size,
+            lot_size,
+            underlying,
         } => run_backtest(
             data,
             symbol,
@@ -363,6 +418,15 @@ pub fn run() -> Result<()> {
             *rsi_period,
             *lookback,
             *format,
+            *asset_class,
+            *multiplier,
+            *tick_size,
+            *margin_requirement,
+            *base_precision,
+            *quote_precision,
+            *pip_size,
+            *lot_size,
+            underlying.clone(),
             cli.output,
         ),
 
@@ -431,6 +495,15 @@ fn run_backtest(
     rsi_period: usize,
     lookback: usize,
     format: DataFormatArg,
+    asset_class: AssetClassArg,
+    multiplier: f64,
+    tick_size: f64,
+    margin_requirement: f64,
+    base_precision: u8,
+    quote_precision: u8,
+    pip_size: f64,
+    lot_size: f64,
+    underlying: Option<String>,
     output: OutputFormat,
 ) -> Result<()> {
     info!("Loading data from: {}", data_path.display());
@@ -453,6 +526,19 @@ fn run_backtest(
 
     let mut engine = Engine::new(config);
     engine.add_data(symbol.to_string(), bars);
+    let asset_config = build_asset_config(
+        symbol,
+        asset_class,
+        multiplier,
+        tick_size,
+        margin_requirement,
+        base_precision,
+        quote_precision,
+        pip_size,
+        lot_size,
+        underlying,
+    );
+    engine.data_mut().set_asset_config(asset_config);
 
     let mut strategy: Box<dyn Strategy> = match strategy_type {
         StrategyType::SmaCrossover => Box::new(SmaCrossover::new(fast_period, slow_period)),
@@ -475,6 +561,49 @@ fn run_backtest(
     }
 
     Ok(())
+}
+
+fn build_asset_config(
+    symbol: &str,
+    asset_class: AssetClassArg,
+    multiplier: f64,
+    tick_size: f64,
+    margin_requirement: f64,
+    base_precision: u8,
+    quote_precision: u8,
+    pip_size: f64,
+    lot_size: f64,
+    underlying: Option<String>,
+) -> AssetConfig {
+    match asset_class {
+        AssetClassArg::Equity => AssetConfig::equity(symbol),
+        AssetClassArg::Future => AssetConfig::new(
+            symbol,
+            AssetClass::Future {
+                multiplier,
+                tick_size,
+                margin_requirement,
+            },
+        ),
+        AssetClassArg::Crypto => AssetConfig::new(
+            symbol,
+            AssetClass::Crypto {
+                base_precision,
+                quote_precision,
+            },
+        ),
+        AssetClassArg::Forex => AssetConfig::new(symbol, AssetClass::Forex { pip_size, lot_size }),
+        AssetClassArg::Option => {
+            let underlying_symbol = underlying.unwrap_or_else(|| symbol.to_string());
+            AssetConfig::new(
+                symbol,
+                AssetClass::Option {
+                    underlying: underlying_symbol,
+                    multiplier,
+                },
+            )
+        }
+    }
 }
 
 fn run_optimization(

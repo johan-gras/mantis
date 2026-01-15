@@ -15,6 +15,121 @@ pub struct Bar {
     pub volume: f64,
 }
 
+/// Supported asset classes in the engine.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum AssetClass {
+    /// Traditional equities where notional = price * quantity.
+    Equity,
+    /// Exchange-traded futures contracts with multipliers and margin.
+    Future {
+        multiplier: f64,
+        tick_size: f64,
+        margin_requirement: f64,
+    },
+    /// Crypto assets with explicit decimal precision.
+    Crypto {
+        base_precision: u8,
+        quote_precision: u8,
+    },
+    /// FX pairs quoted in lots and pip sizes.
+    Forex { pip_size: f64, lot_size: f64 },
+    /// Listed options referencing an underlying symbol.
+    Option { underlying: String, multiplier: f64 },
+}
+
+impl Default for AssetClass {
+    fn default() -> Self {
+        AssetClass::Equity
+    }
+}
+
+impl AssetClass {
+    /// Determine the price tick/pip constraints for this asset class.
+    fn price_increment(&self) -> Option<f64> {
+        match self {
+            AssetClass::Future { tick_size, .. } => Some(*tick_size),
+            AssetClass::Forex { pip_size, .. } => Some(*pip_size),
+            _ => None,
+        }
+    }
+}
+
+/// Configuration describing how a symbol should be treated by the engine.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AssetConfig {
+    pub symbol: String,
+    pub asset_class: AssetClass,
+    pub currency: String,
+    pub exchange: Option<String>,
+}
+
+impl AssetConfig {
+    /// Create a new configuration for a symbol.
+    pub fn new(symbol: impl Into<String>, asset_class: AssetClass) -> Self {
+        Self {
+            symbol: symbol.into(),
+            asset_class,
+            currency: "USD".to_string(),
+            exchange: None,
+        }
+    }
+
+    /// Convenience constructor for equity symbols.
+    pub fn equity(symbol: impl Into<String>) -> Self {
+        Self::new(symbol, AssetClass::Equity)
+    }
+
+    /// Create a futures configuration with sensible defaults.
+    pub fn future(symbol: impl Into<String>, multiplier: f64, tick_size: f64, margin: f64) -> Self {
+        Self::new(
+            symbol,
+            AssetClass::Future {
+                multiplier,
+                tick_size,
+                margin_requirement: margin,
+            },
+        )
+    }
+
+    /// Normalize a raw quantity to match asset precision or lot size rules.
+    pub fn normalize_quantity(&self, quantity: f64) -> f64 {
+        match &self.asset_class {
+            AssetClass::Crypto { base_precision, .. } => {
+                let factor = 10_f64.powi(*base_precision as i32);
+                (quantity * factor).round() / factor
+            }
+            _ => quantity,
+        }
+    }
+
+    /// Normalize price to valid tick/pip increments when defined.
+    pub fn normalize_price(&self, price: f64) -> f64 {
+        match self.asset_class.price_increment() {
+            Some(increment) if increment > 0.0 => (price / increment).round() * increment,
+            _ => price,
+        }
+    }
+
+    /// Determine the notional multiplier for this asset class.
+    pub fn notional_multiplier(&self) -> f64 {
+        match &self.asset_class {
+            AssetClass::Future { multiplier, .. } => *multiplier,
+            AssetClass::Option { multiplier, .. } => *multiplier,
+            _ => 1.0,
+        }
+    }
+
+    /// Margin requirement as a percentage of notional, if any.
+    pub fn margin_requirement(&self) -> Option<f64> {
+        match &self.asset_class {
+            AssetClass::Future {
+                margin_requirement, ..
+            } => Some(*margin_requirement),
+            _ => None,
+        }
+    }
+}
+
 impl Bar {
     /// Create a new bar with validation.
     pub fn new(

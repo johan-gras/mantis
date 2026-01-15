@@ -1,7 +1,7 @@
 //! Data loading and management for the backtest engine.
 
 use crate::error::{BacktestError, Result};
-use crate::types::Bar;
+use crate::types::{AssetConfig, Bar};
 use chrono::{DateTime, NaiveDate, NaiveDateTime, TimeZone, Utc};
 use csv::ReaderBuilder;
 use serde::Deserialize;
@@ -585,9 +585,19 @@ pub fn load_data(path: impl AsRef<Path>, config: &DataConfig) -> Result<Vec<Bar>
 }
 
 /// Multi-symbol data container.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct DataManager {
     data: HashMap<String, Vec<Bar>>,
+    asset_configs: HashMap<String, AssetConfig>,
+}
+
+impl Default for DataManager {
+    fn default() -> Self {
+        Self {
+            data: HashMap::new(),
+            asset_configs: HashMap::new(),
+        }
+    }
 }
 
 impl DataManager {
@@ -598,8 +608,10 @@ impl DataManager {
 
     /// Load data for a symbol from a file (auto-detects CSV or Parquet format).
     pub fn load(&mut self, symbol: impl Into<String>, path: impl AsRef<Path>) -> Result<()> {
+        let symbol = symbol.into();
         let bars = load_data(path, &DataConfig::default())?;
-        self.data.insert(symbol.into(), bars);
+        self.ensure_asset_config(&symbol);
+        self.data.insert(symbol, bars);
         Ok(())
     }
 
@@ -610,15 +622,19 @@ impl DataManager {
         path: impl AsRef<Path>,
         config: &DataConfig,
     ) -> Result<()> {
+        let symbol = symbol.into();
         let bars = load_data(path, config)?;
-        self.data.insert(symbol.into(), bars);
+        self.ensure_asset_config(&symbol);
+        self.data.insert(symbol, bars);
         Ok(())
     }
 
     /// Load data for a symbol from a CSV file.
     pub fn load_csv(&mut self, symbol: impl Into<String>, path: impl AsRef<Path>) -> Result<()> {
+        let symbol = symbol.into();
         let bars = load_csv(path, &DataConfig::default())?;
-        self.data.insert(symbol.into(), bars);
+        self.ensure_asset_config(&symbol);
+        self.data.insert(symbol, bars);
         Ok(())
     }
 
@@ -628,8 +644,10 @@ impl DataManager {
         symbol: impl Into<String>,
         path: impl AsRef<Path>,
     ) -> Result<()> {
+        let symbol = symbol.into();
         let bars = load_parquet(path, &DataConfig::default())?;
-        self.data.insert(symbol.into(), bars);
+        self.ensure_asset_config(&symbol);
+        self.data.insert(symbol, bars);
         Ok(())
     }
 
@@ -640,14 +658,33 @@ impl DataManager {
         path: impl AsRef<Path>,
         config: &DataConfig,
     ) -> Result<()> {
+        let symbol = symbol.into();
         let bars = load_parquet(path, config)?;
-        self.data.insert(symbol.into(), bars);
+        self.ensure_asset_config(&symbol);
+        self.data.insert(symbol, bars);
         Ok(())
     }
 
     /// Add pre-loaded data for a symbol.
     pub fn add(&mut self, symbol: impl Into<String>, bars: Vec<Bar>) {
-        self.data.insert(symbol.into(), bars);
+        let symbol = symbol.into();
+        self.ensure_asset_config(&symbol);
+        self.data.insert(symbol, bars);
+    }
+
+    /// Register or override the asset configuration for a symbol.
+    pub fn set_asset_config(&mut self, config: AssetConfig) {
+        self.asset_configs.insert(config.symbol.clone(), config);
+    }
+
+    /// Get the configured asset metadata for a symbol.
+    pub fn asset_config(&self, symbol: &str) -> Option<&AssetConfig> {
+        self.asset_configs.get(symbol)
+    }
+
+    /// Return the asset configurations for all loaded symbols.
+    pub fn asset_configs(&self) -> &HashMap<String, AssetConfig> {
+        &self.asset_configs
     }
 
     /// Get data for a symbol.
@@ -690,6 +727,14 @@ impl DataManager {
         }
 
         min_date.zip(max_date)
+    }
+}
+
+impl DataManager {
+    fn ensure_asset_config(&mut self, symbol: &str) {
+        self.asset_configs
+            .entry(symbol.to_string())
+            .or_insert_with(|| AssetConfig::equity(symbol));
     }
 }
 

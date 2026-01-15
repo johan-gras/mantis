@@ -130,62 +130,19 @@ These features are explicitly required in the spec but not implemented.
   `test_apply_adjustment_factor`, `test_cumulative_adjustment_factor`, `test_filter_actions_for_symbol`,
   `test_load_corporate_actions`, `test_adjust_for_splits_empty`, `test_multiple_splits`
 
-### 2.6 Multi-Asset Class Support
+### 2.6 Multi-Asset Class Support - COMPLETE
 
 **Spec requirement:** "Support for multiple asset classes (equities, futures, crypto)" (backtest-engine.md line 10)
 
 **Location:** `src/multi_asset.rs`, `src/portfolio.rs`, `src/types.rs`
 
-**Current state:** Multi-SYMBOL support exists, but no asset-CLASS differentiation
-
-**Implementation tasks:**
-1. Add asset class enum to `src/types.rs`:
-   ```rust
-   pub enum AssetClass {
-       Equity,
-       Future {
-           multiplier: f64,
-           tick_size: f64,
-           margin_requirement: f64,  // As percentage
-       },
-       Crypto {
-           base_precision: u8,      // Decimals for quantity
-           quote_precision: u8,     // Decimals for price
-       },
-       Forex {
-           pip_size: f64,
-           lot_size: f64,
-       },
-       Option {
-           underlying: String,
-           multiplier: f64,
-       },
-   }
-   ```
-
-2. Update `Bar` or add `AssetConfig`:
-   ```rust
-   pub struct AssetConfig {
-       pub symbol: String,
-       pub asset_class: AssetClass,
-       pub currency: String,
-       pub exchange: Option<String>,
-   }
-   ```
-
-3. Add asset-class-specific cost models:
-   - Futures: clearing fees, exchange fees, margin interest
-   - Crypto: maker/taker fees, withdrawal fees
-   - Forex: spread-based costs, swap rates
-
-4. Update portfolio calculations:
-   - Futures: use notional value (price * multiplier * quantity)
-   - Crypto: handle small decimal quantities
-   - Margin tracking for futures positions
-
-5. Update `MultiAssetEngine` to handle mixed asset classes
-
-6. CLI support: `mantis backtest --asset-class futures --multiplier 50`
+**Implementation Summary:**
+- Added `AssetClass` enum and `AssetConfig` metadata in `types.rs` with variants for equities, futures, crypto, forex, and options.
+- `DataManager` now tracks per-symbol asset configs; `Engine`/`MultiAssetEngine` pass configs into `Portfolio`.
+- Extended `CostModel` with futures/crypto/forex fee profiles and logic for maker/taker fees, spread adjustments, swap rates, and margin interest.
+- Reworked `Portfolio::execute_order` to normalize quantities/prices, manage futures margin reserves/P&L, apply crypto withdrawal fees, and honor forex spreads.
+- Added CLI flags (`--asset-class`, `--multiplier`, etc.) to configure symbol metadata and propagate through `build_asset_config` into the engine.
+- Added regression tests for futures margin handling and crypto withdrawal fees; integration tests updated for new `CostModel` fields.
 
 ---
 
@@ -534,7 +491,7 @@ All clippy errors fixed and code formatted. Verification passes.
 
 ### Phase 4: Asset Classes and Corporate Actions
 1. ~~Add corporate actions support (2.5)~~ - COMPLETE
-2. Add asset class differentiation (2.6)
+2. ~~Add asset class differentiation (2.6)~~ - COMPLETE
 
 ### Phase 5: Polish
 1. Market impact modeling (3.3)

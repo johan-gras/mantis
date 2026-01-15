@@ -188,6 +188,7 @@ impl Engine {
             Portfolio::with_cost_model(self.config.initial_capital, self.config.cost_model.clone());
         portfolio.allow_short = self.config.allow_short;
         portfolio.fractional_shares = self.config.fractional_shares;
+        portfolio.set_asset_configs(self.data.asset_configs());
 
         // Setup progress bar
         let progress = if self.config.show_progress {

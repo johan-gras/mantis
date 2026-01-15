@@ -25,3 +25,5 @@ Run these after implementing to get immediate feedback:
 - Multi-asset strategies implement `PortfolioStrategy`
 - Data loading via `load_csv()` in `src/data.rs`
 - Result export via `Exporter` in `src/export.rs`
+- CLI `mantis run` supports `--asset-class` (equity/future/crypto/forex/option) plus parameters
+  like `--multiplier`, `--tick-size`, `--margin-requirement`, etc., to configure symbol metadata.
