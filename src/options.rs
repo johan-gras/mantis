@@ -254,9 +254,7 @@ pub fn calculate_greeks(
     // Rho: ∂V/∂r (sensitivity to 1% change in interest rate)
     let rho = match option_type {
         OptionType::Call => strike * time_to_expiration * discount_factor * normal_cdf(d2) / 100.0,
-        OptionType::Put => {
-            -strike * time_to_expiration * discount_factor * normal_cdf(-d2) / 100.0
-        }
+        OptionType::Put => -strike * time_to_expiration * discount_factor * normal_cdf(-d2) / 100.0,
     };
 
     Greeks {

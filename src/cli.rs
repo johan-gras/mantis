@@ -7,7 +7,9 @@ use mantis::data::{
 };
 use mantis::engine::{BacktestConfig, Engine};
 use mantis::error::Result;
-use mantis::experiments::{default_store_path, ensure_store_directory, ExperimentFilter, ExperimentStore, ExperimentRecord};
+use mantis::experiments::{
+    default_store_path, ensure_store_directory, ExperimentFilter, ExperimentRecord, ExperimentStore,
+};
 use mantis::features::{FeatureConfig, FeatureExtractor, TimeSeriesSplitter};
 use mantis::portfolio::CostModel;
 use mantis::strategies::{
@@ -930,7 +932,10 @@ fn run_backtest(
     if let Err(e) = log_experiment_to_store(&result, duration_ms) {
         eprintln!("Warning: Failed to log experiment: {}", e);
     } else {
-        println!("\nExperiment logged: {}", result.experiment_id.to_string().bright_cyan());
+        println!(
+            "\nExperiment logged: {}",
+            result.experiment_id.to_string().bright_cyan()
+        );
     }
 
     match output {
@@ -1894,7 +1899,10 @@ fn experiments_list(
         return Ok(());
     }
 
-    println!("\n{}", format!("Found {} experiments", experiments.len()).bold());
+    println!(
+        "\n{}",
+        format!("Found {} experiments", experiments.len()).bold()
+    );
     println!("Store: {}\n", default_store_path().dimmed());
 
     let mut builder = Builder::default();
@@ -1953,18 +1961,27 @@ fn experiments_list(
 fn experiments_show(id: &str) -> Result<()> {
     let store = ExperimentStore::new(default_store_path())?;
 
-    let exp = store.get(id)?
-        .ok_or_else(|| mantis::BacktestError::ConfigError(format!("Experiment not found: {}", id)))?;
+    let exp = store.get(id)?.ok_or_else(|| {
+        mantis::BacktestError::ConfigError(format!("Experiment not found: {}", id))
+    })?;
 
     println!("\n{}", "Experiment Details".bold().underline());
     println!();
 
     println!("{}: {}", "ID".bold(), exp.experiment_id.bright_cyan());
-    println!("{}: {}", "Timestamp".bold(), exp.timestamp.format("%Y-%m-%d %H:%M:%S"));
+    println!(
+        "{}: {}",
+        "Timestamp".bold(),
+        exp.timestamp.format("%Y-%m-%d %H:%M:%S")
+    );
     if let Some(duration) = exp.duration_ms {
         println!("{}: {}ms", "Duration".bold(), duration);
     }
-    println!("{}: {}", "Strategy".bold(), exp.strategy_name.bright_yellow());
+    println!(
+        "{}: {}",
+        "Strategy".bold(),
+        exp.strategy_name.bright_yellow()
+    );
     println!("{}: {}", "Symbols".bold(), exp.symbols);
     println!();
 
@@ -1975,7 +1992,15 @@ fn experiments_show(id: &str) -> Result<()> {
     if let Some(branch) = &exp.git_branch {
         println!("{}: {}", "Branch".bold(), branch);
     }
-    println!("{}: {}", "Dirty".bold(), if exp.git_dirty { "Yes".red() } else { "No".green() });
+    println!(
+        "{}: {}",
+        "Dirty".bold(),
+        if exp.git_dirty {
+            "Yes".red()
+        } else {
+            "No".green()
+        }
+    );
     println!();
 
     println!("{}", "Performance Metrics".bold().underline());
@@ -1997,7 +2022,11 @@ fn experiments_show(id: &str) -> Result<()> {
     println!("{}: {}", "Sharpe Ratio".bold(), sharpe_colored);
     println!("{}: {:.3}", "Sortino Ratio".bold(), exp.sortino_ratio);
     println!("{}: {:.3}", "Calmar Ratio".bold(), exp.calmar_ratio);
-    println!("{}: {}", "Max Drawdown".bold(), format!("{:.2}%", exp.max_drawdown).red());
+    println!(
+        "{}: {}",
+        "Max Drawdown".bold(),
+        format!("{:.2}%", exp.max_drawdown).red()
+    );
     println!();
 
     println!("{}", "Trade Statistics".bold().underline());
@@ -2023,10 +2052,12 @@ fn experiments_show(id: &str) -> Result<()> {
 fn experiments_compare(id1: &str, id2: &str) -> Result<()> {
     let store = ExperimentStore::new(default_store_path())?;
 
-    let exp1 = store.get(id1)?
-        .ok_or_else(|| mantis::BacktestError::ConfigError(format!("Experiment not found: {}", id1)))?;
-    let exp2 = store.get(id2)?
-        .ok_or_else(|| mantis::BacktestError::ConfigError(format!("Experiment not found: {}", id2)))?;
+    let exp1 = store.get(id1)?.ok_or_else(|| {
+        mantis::BacktestError::ConfigError(format!("Experiment not found: {}", id1))
+    })?;
+    let exp2 = store.get(id2)?.ok_or_else(|| {
+        mantis::BacktestError::ConfigError(format!("Experiment not found: {}", id2))
+    })?;
 
     println!("\n{}", "Experiment Comparison".bold().underline());
     println!();
@@ -2034,8 +2065,12 @@ fn experiments_compare(id1: &str, id2: &str) -> Result<()> {
     let mut builder = Builder::default();
     builder.push_record(vec![
         "Metric".bold().to_string(),
-        format!("Experiment 1 ({})", id1.chars().take(8).collect::<String>()).bold().to_string(),
-        format!("Experiment 2 ({})", id2.chars().take(8).collect::<String>()).bold().to_string(),
+        format!("Experiment 1 ({})", id1.chars().take(8).collect::<String>())
+            .bold()
+            .to_string(),
+        format!("Experiment 2 ({})", id2.chars().take(8).collect::<String>())
+            .bold()
+            .to_string(),
         "Difference".bold().to_string(),
     ]);
 
@@ -2154,12 +2189,14 @@ fn experiments_tag(id: &str, tags: &[String]) -> Result<()> {
     let store = ExperimentStore::new(default_store_path())?;
 
     // Verify experiment exists and get full ID
-    let exp = store.get(id)?
-        .ok_or_else(|| mantis::BacktestError::ConfigError(format!("Experiment not found: {}", id)))?;
+    let exp = store.get(id)?.ok_or_else(|| {
+        mantis::BacktestError::ConfigError(format!("Experiment not found: {}", id))
+    })?;
 
     store.add_tags(&exp.experiment_id, tags)?;
 
-    println!("{} Added tags to experiment {}: {}",
+    println!(
+        "{} Added tags to experiment {}: {}",
         "Success:".green().bold(),
         id.bright_cyan(),
         tags.join(", ").bright_magenta()
@@ -2172,12 +2209,14 @@ fn experiments_note(id: &str, note: &str) -> Result<()> {
     let store = ExperimentStore::new(default_store_path())?;
 
     // Verify experiment exists and get full ID
-    let exp = store.get(id)?
-        .ok_or_else(|| mantis::BacktestError::ConfigError(format!("Experiment not found: {}", id)))?;
+    let exp = store.get(id)?.ok_or_else(|| {
+        mantis::BacktestError::ConfigError(format!("Experiment not found: {}", id))
+    })?;
 
     store.add_notes(&exp.experiment_id, note)?;
 
-    println!("{} Added note to experiment {}",
+    println!(
+        "{} Added note to experiment {}",
         "Success:".green().bold(),
         id.bright_cyan()
     );
@@ -2189,8 +2228,9 @@ fn experiments_delete(id: &str) -> Result<()> {
     let store = ExperimentStore::new(default_store_path())?;
 
     // Verify experiment exists
-    let exp = store.get(id)?
-        .ok_or_else(|| mantis::BacktestError::ConfigError(format!("Experiment not found: {}", id)))?;
+    let exp = store.get(id)?.ok_or_else(|| {
+        mantis::BacktestError::ConfigError(format!("Experiment not found: {}", id))
+    })?;
 
     println!("Are you sure you want to delete this experiment?");
     println!("  ID: {}", exp.experiment_id.bright_cyan());
@@ -2206,7 +2246,8 @@ fn experiments_delete(id: &str) -> Result<()> {
 
     if line.trim().to_lowercase() == "yes" {
         store.delete(&exp.experiment_id)?;
-        println!("{} Deleted experiment {}",
+        println!(
+            "{} Deleted experiment {}",
             "Success:".green().bold(),
             id.bright_cyan()
         );

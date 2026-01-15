@@ -255,10 +255,7 @@ mod tests {
         assert!(manager.has_timeframe(ResampleInterval::Minute(5)));
 
         // Should have 12 five-minute bars from 60 one-minute bars
-        assert_eq!(
-            manager.timeframe_len(ResampleInterval::Minute(5)),
-            Some(12)
-        );
+        assert_eq!(manager.timeframe_len(ResampleInterval::Minute(5)), Some(12));
     }
 
     #[test]
@@ -296,7 +293,10 @@ mod tests {
             .unwrap();
 
         // Should be the 3rd five-minute bar (bars 10-14)
-        assert_eq!(current.timestamp, Utc.with_ymd_and_hms(2024, 1, 1, 9, 10, 0).unwrap());
+        assert_eq!(
+            current.timestamp,
+            Utc.with_ymd_and_hms(2024, 1, 1, 9, 10, 0).unwrap()
+        );
     }
 
     #[test]
@@ -313,7 +313,10 @@ mod tests {
             .unwrap();
 
         // At index 29 we have 6 bars, so lookback=1 should give us bar[4] (the 5th bar)
-        assert_eq!(prev_bar.timestamp, Utc.with_ymd_and_hms(2024, 1, 1, 9, 20, 0).unwrap());
+        assert_eq!(
+            prev_bar.timestamp,
+            Utc.with_ymd_and_hms(2024, 1, 1, 9, 20, 0).unwrap()
+        );
     }
 
     #[test]
@@ -328,19 +331,15 @@ mod tests {
         manager
             .request_timeframe(ResampleInterval::Minute(15))
             .unwrap();
-        manager.request_timeframe(ResampleInterval::Hour(1)).unwrap();
+        manager
+            .request_timeframe(ResampleInterval::Hour(1))
+            .unwrap();
 
         assert_eq!(manager.registered_timeframes().len(), 3);
 
         // Verify counts at base_index=119 (all bars)
-        assert_eq!(
-            manager.timeframe_len(ResampleInterval::Minute(5)),
-            Some(24)
-        );
-        assert_eq!(
-            manager.timeframe_len(ResampleInterval::Minute(15)),
-            Some(8)
-        );
+        assert_eq!(manager.timeframe_len(ResampleInterval::Minute(5)), Some(24));
+        assert_eq!(manager.timeframe_len(ResampleInterval::Minute(15)), Some(8));
         assert_eq!(manager.timeframe_len(ResampleInterval::Hour(1)), Some(2));
     }
 

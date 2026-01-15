@@ -76,8 +76,8 @@ impl Strategy for MultiTimeframeStrategy {
 
     fn requested_timeframes(&self) -> Vec<ResampleInterval> {
         vec![
-            ResampleInterval::Hour(1),  // For hourly RSI
-            ResampleInterval::Day,       // For daily SMA
+            ResampleInterval::Hour(1), // For hourly RSI
+            ResampleInterval::Day,     // For daily SMA
         ]
     }
 
@@ -146,10 +146,22 @@ impl Strategy for MultiTimeframeStrategy {
 
     fn parameters(&self) -> Vec<(String, String)> {
         vec![
-            ("daily_sma_period".to_string(), self.daily_sma_period.to_string()),
-            ("hourly_rsi_period".to_string(), self.hourly_rsi_period.to_string()),
-            ("rsi_oversold".to_string(), format!("{:.1}", self.rsi_oversold)),
-            ("rsi_overbought".to_string(), format!("{:.1}", self.rsi_overbought)),
+            (
+                "daily_sma_period".to_string(),
+                self.daily_sma_period.to_string(),
+            ),
+            (
+                "hourly_rsi_period".to_string(),
+                self.hourly_rsi_period.to_string(),
+            ),
+            (
+                "rsi_oversold".to_string(),
+                format!("{:.1}", self.rsi_oversold),
+            ),
+            (
+                "rsi_overbought".to_string(),
+                format!("{:.1}", self.rsi_overbought),
+            ),
         ]
     }
 }
@@ -180,7 +192,10 @@ mod tests {
     #[test]
     fn test_strategy_creation() {
         let strategy = MultiTimeframeStrategy::new(50, 14, 30.0, 70.0);
-        assert_eq!(strategy.name(), "Multi-Timeframe (Daily Trend + Hourly Entry)");
+        assert_eq!(
+            strategy.name(),
+            "Multi-Timeframe (Daily Trend + Hourly Entry)"
+        );
         assert_eq!(strategy.warmup_period(), 50 * 390);
     }
 
@@ -219,7 +234,11 @@ mod tests {
         let strategy = MultiTimeframeStrategy::new(50, 14, 30.0, 70.0);
         let params = strategy.parameters();
         assert_eq!(params.len(), 4);
-        assert!(params.iter().any(|(k, v)| k == "daily_sma_period" && v == "50"));
-        assert!(params.iter().any(|(k, v)| k == "hourly_rsi_period" && v == "14"));
+        assert!(params
+            .iter()
+            .any(|(k, v)| k == "daily_sma_period" && v == "50"));
+        assert!(params
+            .iter()
+            .any(|(k, v)| k == "hourly_rsi_period" && v == "14"));
     }
 }

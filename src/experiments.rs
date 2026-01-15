@@ -165,8 +165,9 @@ impl ExperimentStore {
         ];
 
         for sql in indices {
-            conn.execute(sql, [])
-                .map_err(|e| BacktestError::DatabaseError(format!("Failed to create index: {}", e)))?;
+            conn.execute(sql, []).map_err(|e| {
+                BacktestError::DatabaseError(format!("Failed to create index: {}", e))
+            })?;
         }
 
         info!("Opened experiment store at {}", db_path);
@@ -221,34 +222,42 @@ impl ExperimentStore {
         let conn = self.connect()?;
 
         // First try exact match
-        let result = conn.query_row(
-            "SELECT experiment_id, timestamp, duration_ms, strategy_name, config_hash,
+        let result = conn
+            .query_row(
+                "SELECT experiment_id, timestamp, duration_ms, strategy_name, config_hash,
                     git_commit, git_branch, git_dirty, symbols,
                     total_return, sharpe_ratio, sortino_ratio, calmar_ratio, max_drawdown,
                     num_trades, win_rate, profit_factor,
                     config_json, data_files_json, tags, notes
              FROM experiments WHERE experiment_id = ?1",
-            params![experiment_id],
-            Self::row_to_record,
-        ).optional()
-        .map_err(|e| BacktestError::DatabaseError(format!("Failed to query experiment: {}", e)))?;
+                params![experiment_id],
+                Self::row_to_record,
+            )
+            .optional()
+            .map_err(|e| {
+                BacktestError::DatabaseError(format!("Failed to query experiment: {}", e))
+            })?;
 
         if result.is_some() {
             return Ok(result);
         }
 
         // Try partial match if no exact match found
-        let result = conn.query_row(
-            "SELECT experiment_id, timestamp, duration_ms, strategy_name, config_hash,
+        let result = conn
+            .query_row(
+                "SELECT experiment_id, timestamp, duration_ms, strategy_name, config_hash,
                     git_commit, git_branch, git_dirty, symbols,
                     total_return, sharpe_ratio, sortino_ratio, calmar_ratio, max_drawdown,
                     num_trades, win_rate, profit_factor,
                     config_json, data_files_json, tags, notes
              FROM experiments WHERE experiment_id LIKE ?1 || '%'",
-            params![experiment_id],
-            Self::row_to_record,
-        ).optional()
-        .map_err(|e| BacktestError::DatabaseError(format!("Failed to query experiment: {}", e)))?;
+                params![experiment_id],
+                Self::row_to_record,
+            )
+            .optional()
+            .map_err(|e| {
+                BacktestError::DatabaseError(format!("Failed to query experiment: {}", e))
+            })?;
 
         Ok(result)
     }
@@ -262,7 +271,8 @@ impl ExperimentStore {
                               total_return, sharpe_ratio, sortino_ratio, calmar_ratio, max_drawdown,
                               num_trades, win_rate, profit_factor,
                               config_json, data_files_json, tags, notes
-                       FROM experiments WHERE 1=1".to_string();
+                       FROM experiments WHERE 1=1"
+            .to_string();
 
         let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
 
@@ -289,7 +299,11 @@ impl ExperimentStore {
 
         // Add sorting
         if let Some(ref sort_field) = filter.sort_by {
-            sql.push_str(&format!(" ORDER BY {} {}", sort_field, if filter.sort_desc { "DESC" } else { "ASC" }));
+            sql.push_str(&format!(
+                " ORDER BY {} {}",
+                sort_field,
+                if filter.sort_desc { "DESC" } else { "ASC" }
+            ));
         } else {
             sql.push_str(" ORDER BY timestamp DESC");
         }
@@ -301,15 +315,21 @@ impl ExperimentStore {
 
         let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|b| b.as_ref()).collect();
 
-        let mut stmt = conn.prepare(&sql)
+        let mut stmt = conn
+            .prepare(&sql)
             .map_err(|e| BacktestError::DatabaseError(format!("Failed to prepare query: {}", e)))?;
 
-        let rows = stmt.query_map(params_refs.as_slice(), Self::row_to_record)
+        let rows = stmt
+            .query_map(params_refs.as_slice(), Self::row_to_record)
             .map_err(|e| BacktestError::DatabaseError(format!("Failed to execute query: {}", e)))?;
 
         let mut results = Vec::new();
         for row in rows {
-            results.push(row.map_err(|e| BacktestError::DatabaseError(format!("Failed to read row: {}", e)))?);
+            results.push(
+                row.map_err(|e| {
+                    BacktestError::DatabaseError(format!("Failed to read row: {}", e))
+                })?,
+            );
         }
 
         Ok(results)
@@ -318,16 +338,22 @@ impl ExperimentStore {
     /// Count total experiments in the store.
     pub fn count(&self) -> Result<usize> {
         let conn = self.connect()?;
-        let count: i64 = conn.query_row("SELECT COUNT(*) FROM experiments", [], |row| row.get(0))
-            .map_err(|e| BacktestError::DatabaseError(format!("Failed to count experiments: {}", e)))?;
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM experiments", [], |row| row.get(0))
+            .map_err(|e| {
+                BacktestError::DatabaseError(format!("Failed to count experiments: {}", e))
+            })?;
         Ok(count as usize)
     }
 
     /// Delete an experiment by ID.
     pub fn delete(&self, experiment_id: &str) -> Result<()> {
         let conn = self.connect()?;
-        conn.execute("DELETE FROM experiments WHERE experiment_id = ?1", params![experiment_id])
-            .map_err(|e| BacktestError::DatabaseError(format!("Failed to delete experiment: {}", e)))?;
+        conn.execute(
+            "DELETE FROM experiments WHERE experiment_id = ?1",
+            params![experiment_id],
+        )
+        .map_err(|e| BacktestError::DatabaseError(format!("Failed to delete experiment: {}", e)))?;
         info!("Deleted experiment {}", experiment_id);
         Ok(())
     }
@@ -337,13 +363,15 @@ impl ExperimentStore {
         let conn = self.connect()?;
 
         // Get existing tags
-        let existing: Option<String> = conn.query_row(
-            "SELECT tags FROM experiments WHERE experiment_id = ?1",
-            params![experiment_id],
-            |row| row.get(0),
-        ).optional()
-        .map_err(|e| BacktestError::DatabaseError(format!("Failed to query tags: {}", e)))?
-        .flatten();
+        let existing: Option<String> = conn
+            .query_row(
+                "SELECT tags FROM experiments WHERE experiment_id = ?1",
+                params![experiment_id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(|e| BacktestError::DatabaseError(format!("Failed to query tags: {}", e)))?
+            .flatten();
 
         let mut all_tags: Vec<String> = existing
             .map(|s| s.split(',').map(|t| t.trim().to_string()).collect())
@@ -379,8 +407,9 @@ impl ExperimentStore {
     // Helper methods
 
     fn connect(&self) -> Result<Connection> {
-        Connection::open(&self.db_path)
-            .map_err(|e| BacktestError::DatabaseError(format!("Failed to connect to database: {}", e)))
+        Connection::open(&self.db_path).map_err(|e| {
+            BacktestError::DatabaseError(format!("Failed to connect to database: {}", e))
+        })
     }
 
     fn row_to_record(row: &rusqlite::Row) -> rusqlite::Result<ExperimentRecord> {
@@ -418,22 +447,22 @@ impl ExperimentStore {
 
 /// Get the default experiment store path.
 pub fn default_store_path() -> String {
-    std::env::var("MANTIS_EXPERIMENTS_DB")
-        .unwrap_or_else(|_| {
-            if let Some(home) = std::env::var_os("HOME") {
-                format!("{}/.mantis/experiments.db", home.to_string_lossy())
-            } else {
-                "mantis_experiments.db".to_string()
-            }
-        })
+    std::env::var("MANTIS_EXPERIMENTS_DB").unwrap_or_else(|_| {
+        if let Some(home) = std::env::var_os("HOME") {
+            format!("{}/.mantis/experiments.db", home.to_string_lossy())
+        } else {
+            "mantis_experiments.db".to_string()
+        }
+    })
 }
 
 /// Ensure the default experiment store directory exists.
 pub fn ensure_store_directory() -> Result<()> {
     let store_path = default_store_path();
     if let Some(parent) = Path::new(&store_path).parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|e| BacktestError::DatabaseError(format!("Failed to create experiment directory: {}", e)))?;
+        std::fs::create_dir_all(parent).map_err(|e| {
+            BacktestError::DatabaseError(format!("Failed to create experiment directory: {}", e))
+        })?;
     }
     Ok(())
 }
@@ -522,10 +551,12 @@ mod tests {
         assert_eq!(all.len(), 5);
 
         // Filter by min Sharpe
-        let filtered = store.list(&ExperimentFilter {
-            min_sharpe: Some(2.0),
-            ..Default::default()
-        }).unwrap();
+        let filtered = store
+            .list(&ExperimentFilter {
+                min_sharpe: Some(2.0),
+                ..Default::default()
+            })
+            .unwrap();
         assert_eq!(filtered.len(), 3); // Sharpe 2.0, 3.0, 4.0
     }
 
@@ -539,7 +570,9 @@ mod tests {
         let exp_id = record.experiment_id.clone();
 
         store.save(&record).unwrap();
-        store.add_tags(&exp_id, &["baseline".to_string(), "production".to_string()]).unwrap();
+        store
+            .add_tags(&exp_id, &["baseline".to_string(), "production".to_string()])
+            .unwrap();
 
         let retrieved = store.get(&exp_id).unwrap().unwrap();
         let tags = retrieved.tags.unwrap();
@@ -557,7 +590,9 @@ mod tests {
         let exp_id = record.experiment_id.clone();
 
         store.save(&record).unwrap();
-        store.add_notes(&exp_id, "This is a test experiment").unwrap();
+        store
+            .add_notes(&exp_id, "This is a test experiment")
+            .unwrap();
 
         let retrieved = store.get(&exp_id).unwrap().unwrap();
         assert_eq!(retrieved.notes.unwrap(), "This is a test experiment");
