@@ -832,7 +832,8 @@ mod tests {
     use super::*;
     use crate::engine::BacktestConfig;
     use crate::types::{Side, Trade};
-    use chrono::TimeZone;
+    use chrono::{Duration, TimeZone};
+    use std::collections::HashMap;
     use tempfile::NamedTempFile;
 
     fn create_test_result() -> BacktestResult {
@@ -879,6 +880,71 @@ mod tests {
             equity_curve: vec![],
             start_time: Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap(),
             end_time: Utc.with_ymd_and_hms(2024, 12, 31, 0, 0, 0).unwrap(),
+        }
+    }
+
+    fn create_test_multi_asset_result() -> MultiAssetResult {
+        let start_time = Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap();
+        let end_time = Utc.with_ymd_and_hms(2024, 1, 2, 0, 0, 0).unwrap();
+
+        let mut trade_aapl = Trade::open("AAPL", Side::Buy, 50.0, 200.0, start_time, 1.0, 0.0);
+        trade_aapl.close(210.0, end_time, 1.0);
+
+        let mut trade_msft = Trade::open("MSFT", Side::Sell, 25.0, 300.0, start_time, 1.0, 0.0);
+        trade_msft.close(290.0, end_time, 1.0);
+
+        let trades = vec![trade_aapl, trade_msft];
+
+        let mut trades_by_symbol = HashMap::new();
+        trades_by_symbol.insert("AAPL".to_string(), 1);
+        trades_by_symbol.insert("MSFT".to_string(), 1);
+
+        let equity_curve = vec![
+            EquityPoint {
+                timestamp: start_time,
+                equity: 1_000_000.0,
+                cash: 1_000_000.0,
+                positions_value: 0.0,
+                drawdown: 0.0,
+                drawdown_pct: 0.0,
+            },
+            EquityPoint {
+                timestamp: start_time + Duration::days(1),
+                equity: 1_030_000.0,
+                cash: 600_000.0,
+                positions_value: 430_000.0,
+                drawdown: 0.0,
+                drawdown_pct: 0.0,
+            },
+        ];
+
+        let mut weights_day1 = HashMap::new();
+        weights_day1.insert("AAPL".to_string(), 0.6);
+        weights_day1.insert("MSFT".to_string(), 0.4);
+
+        let mut weights_day2 = HashMap::new();
+        weights_day2.insert("AAPL".to_string(), 0.5);
+        weights_day2.insert("MSFT".to_string(), 0.5);
+
+        let weight_history = vec![(start_time, weights_day1), (end_time, weights_day2)];
+
+        MultiAssetResult {
+            strategy_name: "MultiAsset Strategy".to_string(),
+            symbols: vec!["AAPL".to_string(), "MSFT".to_string()],
+            initial_capital: 1_000_000.0,
+            final_equity: 1_030_000.0,
+            total_return_pct: 3.0,
+            annual_return_pct: 4.5,
+            max_drawdown_pct: 1.2,
+            sharpe_ratio: 1.1,
+            sortino_ratio: 1.3,
+            total_trades: trades.len(),
+            trades_by_symbol,
+            trades,
+            equity_curve,
+            start_time,
+            end_time,
+            weight_history,
         }
     }
 
@@ -949,6 +1015,50 @@ mod tests {
         assert!(content.contains("# Backtest Report"));
         assert!(content.contains("Performance Summary"));
         assert!(content.contains("Trade Statistics"));
+    }
+
+    #[test]
+    fn test_multi_asset_export_weights_csv() {
+        let result = create_test_multi_asset_result();
+        let exporter = MultiAssetExporter::new(result);
+
+        let file = NamedTempFile::new().unwrap();
+        exporter.export_weights_csv(file.path()).unwrap();
+
+        let content = std::fs::read_to_string(file.path()).unwrap();
+        assert!(content.contains("timestamp,AAPL,MSFT"));
+        assert!(content.contains("0.6000,0.4000"));
+        assert!(content.contains("0.5000,0.5000"));
+    }
+
+    #[test]
+    fn test_multi_asset_export_equity_csv() {
+        let result = create_test_multi_asset_result();
+        let exporter = MultiAssetExporter::new(result);
+
+        let file = NamedTempFile::new().unwrap();
+        exporter.export_equity_csv(file.path()).unwrap();
+
+        let content = std::fs::read_to_string(file.path()).unwrap();
+        assert!(content.contains("timestamp,equity,drawdown_pct"));
+        assert!(content.contains("1000000.0000"));
+        assert!(content.contains("1030000.0000"));
+    }
+
+    #[test]
+    fn test_multi_asset_export_report_md() {
+        let result = create_test_multi_asset_result();
+        let exporter = MultiAssetExporter::new(result);
+
+        let file = NamedTempFile::new().unwrap();
+        exporter.export_report_md(file.path()).unwrap();
+
+        let content = std::fs::read_to_string(file.path()).unwrap();
+        assert!(content.contains("# Multi-Asset Backtest Report: MultiAsset Strategy"));
+        assert!(content.contains("**Assets:** AAPL, MSFT"));
+        assert!(content.contains("| Symbol | Trades |"));
+        assert!(content.contains("| AAPL | 1 |"));
+        assert!(content.contains("| MSFT | 1 |"));
     }
 
     #[test]

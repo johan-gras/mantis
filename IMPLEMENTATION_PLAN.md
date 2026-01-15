@@ -217,30 +217,16 @@ These items significantly improve quality but are not explicit spec violations.
 
 **Verification:** `cargo test`, `cargo fmt`, `cargo clippy -- -D warnings`
 
-### 3.5 Add MultiAssetExporter Test Coverage
+### 3.5 Add MultiAssetExporter Test Coverage - COMPLETE
 
-**Location:** `src/export.rs` lines 699-823
+**Location:** `src/export.rs` tests module
 
-**Current state:** `MultiAssetExporter` has 0 tests - all tests in the file are for single-asset `Exporter`
+**Implementation Summary:**
+- Added `create_test_multi_asset_result()` helper that builds a realistic `MultiAssetResult` with weight history, equity curve, and per-symbol trade stats for reuse in tests.
+- Added regression tests `test_multi_asset_export_weights_csv`, `test_multi_asset_export_equity_csv`, and `test_multi_asset_export_report_md` to verify column headers, numeric formatting, and markdown tables for the multi-asset exporter API.
+- Ensured helper data covers multiple symbols so each export path exercises symbol iteration and `trades_by_symbol` logic.
 
-**Implementation tasks:**
-1. Add test for `export_weights_csv()`:
-   ```rust
-   #[test]
-   fn test_multi_asset_export_weights_csv() {
-       let result = create_test_multi_asset_result();
-       let exporter = MultiAssetExporter::new(result);
-       let file = NamedTempFile::new().unwrap();
-       exporter.export_weights_csv(file.path()).unwrap();
-       // Verify CSV content has correct columns and data
-   }
-   ```
-
-2. Add test for `export_equity_csv()` (multi-asset variant)
-
-3. Add test for `export_report_md()` (multi-asset variant)
-
-4. Add helper function `create_test_multi_asset_result() -> MultiAssetResult`
+**Verification:** `cargo fmt`, `cargo fmt --check`, `cargo test`, `cargo clippy -- -D warnings`
 
 ### 3.6 Add Streaming Indicator Serialization
 
