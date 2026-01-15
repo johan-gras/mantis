@@ -792,6 +792,7 @@ pub fn run() -> Result<()> {
             lot_size,
             underlying,
             seed,
+            max_volume_participation,
         } => run_backtest(
             data,
             symbol,

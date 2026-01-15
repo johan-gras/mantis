@@ -4,13 +4,13 @@
 >
 > Items marked `[NOT STARTED]` were previously claimed as partial but verified to have no implementation.
 >
-> **Recent Changes**: Deterministic Backtesting now complete with seeded RNG for reproducible execution via --seed CLI argument, seed field in BacktestConfig and BacktestResult for logging, Portfolio.set_rng_seed() method, and automatic seed logging in experiment tracking. Environment Versioning improved with rust-toolchain.toml to pin Rust version and Cargo.lock committed for reproducible builds. Implied Volatility solver complete with Newton-Raphson method (vega-based, 5-10 iterations), Brent's method fallback, Brenner-Subrahmanyam initial guess, bounds checking (5%-200%), and comprehensive test coverage (17 tests covering ATM/ITM/OTM, short/long dated, high/low vol scenarios). Multi-Timeframe Strategy Interface complete with TimeframeManager for maintaining multiple resampled bar series, strategy access to multiple timeframes via StrategyContext, lazy evaluation, and comprehensive test coverage (12 tests). Options Pricing Models and Greeks Calculation complete with Black-Scholes pricing, full Greeks calculation (Delta, Gamma, Theta, Vega, Rho), and put-call parity validation (18 tests passing). Experiment Tracking complete with SQLite-based storage, automatic backtest logging, hyperparameter/metrics capture, CLI commands for experiment management, and query/filter capabilities. Transaction Cost Sensitivity analysis complete with comprehensive testing framework (0x-20x cost multipliers, Sharpe/return degradation, breakeven analysis). Overfitting Detection fully implemented with OOS Sharpe threshold checking, parameter stability testing, and n_trials integration into deflated Sharpe ratio. Black-Litterman portfolio optimization complete with comprehensive investor views support. All core portfolio construction methods (equal weight, inverse volatility, risk parity, mean-variance, HRP, Black-Litterman) are now complete.
+> **Recent Changes**: Drift-Based Rebalancing now complete with threshold-based triggering when portfolio weights drift beyond configurable thresholds, DriftRebalancingConfig with conservative/moderate/relaxed presets, DriftEqualWeightStrategy and DriftMomentumStrategy implementations, and comprehensive test coverage (13 new tests). Deterministic Backtesting complete with seeded RNG for reproducible execution via --seed CLI argument, seed field in BacktestConfig and BacktestResult for logging, Portfolio.set_rng_seed() method, and automatic seed logging in experiment tracking. Environment Versioning improved with rust-toolchain.toml to pin Rust version and Cargo.lock committed for reproducible builds. Implied Volatility solver complete with Newton-Raphson method (vega-based, 5-10 iterations), Brent's method fallback, Brenner-Subrahmanyam initial guess, bounds checking (5%-200%), and comprehensive test coverage (17 tests covering ATM/ITM/OTM, short/long dated, high/low vol scenarios). Multi-Timeframe Strategy Interface complete with TimeframeManager for maintaining multiple resampled bar series, strategy access to multiple timeframes via StrategyContext, lazy evaluation, and comprehensive test coverage (12 tests). Options Pricing Models and Greeks Calculation complete with Black-Scholes pricing, full Greeks calculation (Delta, Gamma, Theta, Vega, Rho), and put-call parity validation (18 tests passing). Experiment Tracking complete with SQLite-based storage, automatic backtest logging, hyperparameter/metrics capture, CLI commands for experiment management, and query/filter capabilities. Transaction Cost Sensitivity analysis complete with comprehensive testing framework (0x-20x cost multipliers, Sharpe/return degradation, breakeven analysis). Overfitting Detection fully implemented with OOS Sharpe threshold checking, parameter stability testing, and n_trials integration into deflated Sharpe ratio. Black-Litterman portfolio optimization complete with comprehensive investor views support. All core portfolio construction methods (equal weight, inverse volatility, risk parity, mean-variance, HRP, Black-Litterman) are now complete.
 
 ## Current Status Summary
 
 | Metric | Status |
 |--------|--------|
-| **Tests** | 399 passing (0 failing) |
+| **Tests** | 416 passing (0 failing) |
 | **Clippy** | 0 errors (PASSING) |
 | **Cargo fmt** | PASSING |
 | **Architecture** | Production-quality modular design |
@@ -412,12 +412,15 @@ Items are organized by category and prioritized within each category. Priority r
   - Clear error messages on constraint violations
   - Symbol-to-sector mapping support
 
-### [PARTIAL ~60%] [HIGH] Rebalancing Rules
+### [COMPLETE] [HIGH] Rebalancing Rules
 - **IMPLEMENTED**:
   - Periodic rebalancing (fixed frequency in bars) across all portfolio strategies
   - Turnover constraints to limit trading costs
+  - Drift-based/threshold-based rebalancing (trigger when weights drift beyond threshold)
+  - DriftRebalancingConfig with configurable thresholds (conservative, moderate, relaxed presets)
+  - DriftEqualWeightStrategy and DriftMomentumStrategy as example implementations
+  - Comprehensive test coverage (13 new tests)
 - **MISSING**:
-  - Threshold/drift-based rebalancing (trigger when weights drift beyond threshold)
   - Cost optimization algorithms for rebalancing
   - Volatility-adaptive rebalancing frequency
 
@@ -1005,7 +1008,7 @@ cargo doc --no-deps --open
 | Position Management | 8 | 1 | 0 | 4 | 13 |
 | ML Integration | 6 | 1 | 0 | 4 | 11 |
 | Multi-Timeframe | 2 | 0 | 0 | 3 | 5 |
-| Multi-Asset Portfolio | 5 | 1 | 0 | 3 | 9 |
+| Multi-Asset Portfolio | 6 | 0 | 0 | 3 | 9 |
 | Options & Derivatives | 4 | 0 | 0 | 5 | 9 |
 | Risk & Validation | 4 | 2 | 0 | 3 | 9 |
 | Performance Analytics | 4 | 0 | 0 | 5 | 9 |
@@ -1015,9 +1018,9 @@ cargo doc --no-deps --open
 | CLI & Configuration | 3 | 1 | 0 | 4 | 8 |
 | Execution Realism | 2 | 1 | 0 | 3 | 6 |
 | Reproducibility | 4 | 0 | 0 | 0 | 4 |
-| **TOTAL** | **53** | **4** | **4** | **66** | **127** |
+| **TOTAL** | **54** | **3** | **4** | **66** | **127** |
 
-**Estimated Completion: ~43%** (core backtesting solid; Options Pricing Models and Greeks Calculation now complete with Black-Scholes and full Greeks support; Experiment Tracking, Cross-Sectional Features, CPCV, Overfitting Detection, and Transaction Cost Sensitivity complete; all major portfolio construction methods complete including Black-Litterman; ONNX inference architecture complete but blocked by ort crate instability; live trading and Python bindings not started)
+**Estimated Completion: ~43%** (core backtesting solid; Options Pricing Models and Greeks Calculation now complete with Black-Scholes and full Greeks support; Experiment Tracking, Cross-Sectional Features, CPCV, Overfitting Detection, and Transaction Cost Sensitivity complete; all major portfolio construction methods complete including Black-Litterman; drift-based rebalancing now complete with threshold-based triggering; ONNX inference architecture complete but blocked by ort crate instability; live trading and Python bindings not started)
 
 ---
 

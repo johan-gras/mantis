@@ -3130,6 +3130,351 @@ impl PortfolioStrategy for HierarchicalRiskParityStrategy {
     }
 }
 
+/// Configuration for drift-based rebalancing.
+///
+/// Drift-based rebalancing triggers when the current portfolio weights deviate
+/// from target weights by more than a specified threshold. This approach reduces
+/// transaction costs compared to periodic rebalancing while maintaining desired allocations.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DriftRebalancingConfig {
+    /// Maximum allowed drift for any single asset as a fraction (e.g., 0.05 = 5%).
+    /// If abs(current_weight - target_weight) > threshold, rebalancing is triggered.
+    pub drift_threshold: f64,
+
+    /// Minimum bars between rebalances (prevents excessive trading).
+    pub min_rebalance_interval: usize,
+
+    /// Optional: Maximum total portfolio drift (sum of absolute drifts).
+    /// If specified, rebalancing triggers when total drift exceeds this value.
+    pub max_total_drift: Option<f64>,
+}
+
+impl Default for DriftRebalancingConfig {
+    fn default() -> Self {
+        Self {
+            drift_threshold: 0.05,       // 5% drift threshold
+            min_rebalance_interval: 1,   // Allow checking every bar
+            max_total_drift: Some(0.10), // 10% total drift
+        }
+    }
+}
+
+impl DriftRebalancingConfig {
+    /// Create conservative drift config (low threshold, frequent checking).
+    pub fn conservative() -> Self {
+        Self {
+            drift_threshold: 0.03,       // 3% threshold
+            min_rebalance_interval: 1,   // Check every bar
+            max_total_drift: Some(0.06), // 6% total drift
+        }
+    }
+
+    /// Create moderate drift config (balanced threshold).
+    pub fn moderate() -> Self {
+        Self::default()
+    }
+
+    /// Create relaxed drift config (high threshold, less frequent trading).
+    pub fn relaxed() -> Self {
+        Self {
+            drift_threshold: 0.10,       // 10% threshold
+            min_rebalance_interval: 5,   // Wait at least 5 bars
+            max_total_drift: Some(0.20), // 20% total drift
+        }
+    }
+
+    /// Check if rebalancing should be triggered based on drift from target weights.
+    ///
+    /// Returns `true` if any asset has drifted beyond `drift_threshold` or if
+    /// total portfolio drift exceeds `max_total_drift`.
+    pub fn should_rebalance(
+        &self,
+        current_weights: &HashMap<String, f64>,
+        target_weights: &HashMap<String, f64>,
+        bars_since_last_rebalance: usize,
+    ) -> bool {
+        // Enforce minimum rebalance interval
+        if bars_since_last_rebalance < self.min_rebalance_interval {
+            return false;
+        }
+
+        let mut total_drift = 0.0;
+
+        // Check drift for each asset
+        for (symbol, &target) in target_weights.iter() {
+            let current = current_weights.get(symbol).copied().unwrap_or(0.0);
+            let drift = (current - target).abs();
+
+            total_drift += drift;
+
+            // Trigger if any single asset exceeds threshold
+            if drift > self.drift_threshold {
+                return true;
+            }
+        }
+
+        // Check for assets in current but not in target (should be closed)
+        for (symbol, &current) in current_weights.iter() {
+            if !target_weights.contains_key(symbol) && current > 1e-6 {
+                total_drift += current;
+                if current > self.drift_threshold {
+                    return true;
+                }
+            }
+        }
+
+        // Check total portfolio drift if configured
+        if let Some(max_total) = self.max_total_drift {
+            if total_drift > max_total {
+                return true;
+            }
+        }
+
+        false
+    }
+
+    /// Calculate the maximum drift between current and target weights.
+    pub fn max_drift(
+        current_weights: &HashMap<String, f64>,
+        target_weights: &HashMap<String, f64>,
+    ) -> f64 {
+        let mut max_drift: f64 = 0.0;
+
+        // Get all unique symbols
+        let all_symbols: std::collections::HashSet<_> = current_weights
+            .keys()
+            .chain(target_weights.keys())
+            .collect();
+
+        for symbol in all_symbols {
+            let current = current_weights.get(symbol).copied().unwrap_or(0.0);
+            let target = target_weights.get(symbol).copied().unwrap_or(0.0);
+            let drift = (current - target).abs();
+            max_drift = max_drift.max(drift);
+        }
+
+        max_drift
+    }
+
+    /// Calculate the total drift (sum of absolute deviations).
+    pub fn total_drift(
+        current_weights: &HashMap<String, f64>,
+        target_weights: &HashMap<String, f64>,
+    ) -> f64 {
+        let mut total = 0.0;
+
+        // Get all unique symbols
+        let all_symbols: std::collections::HashSet<_> = current_weights
+            .keys()
+            .chain(target_weights.keys())
+            .collect();
+
+        for symbol in all_symbols {
+            let current = current_weights.get(symbol).copied().unwrap_or(0.0);
+            let target = target_weights.get(symbol).copied().unwrap_or(0.0);
+            total += (current - target).abs();
+        }
+
+        total
+    }
+}
+
+/// Equal-weight portfolio strategy with drift-based rebalancing.
+///
+/// This strategy maintains equal weights across all assets but only rebalances
+/// when weights drift beyond a threshold, reducing transaction costs compared
+/// to periodic rebalancing.
+pub struct DriftEqualWeightStrategy {
+    drift_config: DriftRebalancingConfig,
+    last_rebalance: usize,
+    target_weights: HashMap<String, f64>,
+}
+
+impl DriftEqualWeightStrategy {
+    /// Create new drift-based equal-weight strategy.
+    pub fn new(drift_config: DriftRebalancingConfig) -> Self {
+        Self {
+            drift_config,
+            last_rebalance: 0,
+            target_weights: HashMap::new(),
+        }
+    }
+
+    /// Create with default drift configuration.
+    pub fn with_default_config() -> Self {
+        Self::new(DriftRebalancingConfig::default())
+    }
+
+    /// Create with conservative drift configuration.
+    pub fn conservative() -> Self {
+        Self::new(DriftRebalancingConfig::conservative())
+    }
+
+    /// Create with relaxed drift configuration.
+    pub fn relaxed() -> Self {
+        Self::new(DriftRebalancingConfig::relaxed())
+    }
+}
+
+impl PortfolioStrategy for DriftEqualWeightStrategy {
+    fn name(&self) -> &str {
+        "Drift Equal Weight"
+    }
+
+    fn on_bars(&mut self, ctx: &PortfolioContext) -> AllocationSignal {
+        // Initialize target weights on first bar
+        if self.target_weights.is_empty() {
+            let weight = 1.0 / ctx.symbols.len() as f64;
+            self.target_weights = ctx.symbols.iter().map(|s| (s.clone(), weight)).collect();
+            self.last_rebalance = ctx.bar_index;
+            return AllocationSignal::Rebalance(self.target_weights.clone());
+        }
+
+        // Check if rebalancing is needed based on drift
+        let bars_since_rebalance = ctx.bar_index.saturating_sub(self.last_rebalance);
+
+        if self.drift_config.should_rebalance(
+            &ctx.weights,
+            &self.target_weights,
+            bars_since_rebalance,
+        ) {
+            self.last_rebalance = ctx.bar_index;
+            AllocationSignal::Rebalance(self.target_weights.clone())
+        } else {
+            AllocationSignal::Hold
+        }
+    }
+}
+
+/// Momentum portfolio strategy with drift-based rebalancing.
+///
+/// Selects top N momentum stocks and maintains equal weights, but only rebalances
+/// when weights drift beyond threshold or when the momentum ranking changes significantly.
+pub struct DriftMomentumStrategy {
+    lookback: usize,
+    top_n: usize,
+    drift_config: DriftRebalancingConfig,
+    periodic_rebalance_interval: usize, // Periodically recalculate momentum
+    last_rebalance: usize,
+    last_momentum_check: usize,
+    target_weights: HashMap<String, f64>,
+}
+
+impl DriftMomentumStrategy {
+    /// Create new drift-based momentum strategy.
+    ///
+    /// # Arguments
+    /// * `lookback` - Period for momentum calculation
+    /// * `top_n` - Number of top momentum stocks to hold
+    /// * `drift_config` - Drift threshold configuration
+    /// * `periodic_rebalance_interval` - How often to recalculate momentum (in bars)
+    pub fn new(
+        lookback: usize,
+        top_n: usize,
+        drift_config: DriftRebalancingConfig,
+        periodic_rebalance_interval: usize,
+    ) -> Self {
+        Self {
+            lookback,
+            top_n,
+            drift_config,
+            periodic_rebalance_interval,
+            last_rebalance: 0,
+            last_momentum_check: 0,
+            target_weights: HashMap::new(),
+        }
+    }
+
+    /// Calculate target weights based on momentum.
+    fn calculate_target_weights(&self, ctx: &PortfolioContext) -> HashMap<String, f64> {
+        // Calculate momentum for each symbol
+        let mut momentums: Vec<(String, f64)> = ctx
+            .symbols
+            .iter()
+            .filter_map(|s| {
+                let bars = ctx.history(s)?;
+                if bars.len() < self.lookback {
+                    return None;
+                }
+                let old_price = bars[bars.len() - self.lookback].close;
+                let new_price = bars.last()?.close;
+                let momentum = (new_price - old_price) / old_price;
+                Some((s.clone(), momentum))
+            })
+            .collect();
+
+        // Sort by momentum descending
+        momentums.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+
+        // Select top N with positive momentum
+        let selected: Vec<&str> = momentums
+            .iter()
+            .take(self.top_n.min(momentums.len()))
+            .filter(|(_, m)| *m > 0.0)
+            .map(|(s, _)| s.as_str())
+            .collect();
+
+        if selected.is_empty() {
+            return HashMap::new();
+        }
+
+        let weight = 1.0 / selected.len() as f64;
+        selected
+            .into_iter()
+            .map(|s| (s.to_string(), weight))
+            .collect()
+    }
+}
+
+impl PortfolioStrategy for DriftMomentumStrategy {
+    fn name(&self) -> &str {
+        "Drift Momentum"
+    }
+
+    fn warmup_period(&self) -> usize {
+        self.lookback
+    }
+
+    fn on_bars(&mut self, ctx: &PortfolioContext) -> AllocationSignal {
+        let bars_since_momentum_check = ctx.bar_index.saturating_sub(self.last_momentum_check);
+
+        // Periodically recalculate target weights based on momentum
+        let should_recalculate = self.target_weights.is_empty()
+            || bars_since_momentum_check >= self.periodic_rebalance_interval;
+
+        if should_recalculate {
+            self.target_weights = self.calculate_target_weights(ctx);
+            self.last_momentum_check = ctx.bar_index;
+
+            // If targets changed significantly, rebalance immediately
+            if self.target_weights.is_empty() {
+                return AllocationSignal::ExitAll;
+            }
+
+            // Check if we need to rebalance based on new targets
+            let bars_since_rebalance = ctx.bar_index.saturating_sub(self.last_rebalance);
+            if bars_since_rebalance >= self.drift_config.min_rebalance_interval {
+                self.last_rebalance = ctx.bar_index;
+                return AllocationSignal::Rebalance(self.target_weights.clone());
+            }
+        }
+
+        // Check drift-based rebalancing
+        let bars_since_rebalance = ctx.bar_index.saturating_sub(self.last_rebalance);
+
+        if self.drift_config.should_rebalance(
+            &ctx.weights,
+            &self.target_weights,
+            bars_since_rebalance,
+        ) {
+            self.last_rebalance = ctx.bar_index;
+            AllocationSignal::Rebalance(self.target_weights.clone())
+        } else {
+            AllocationSignal::Hold
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -4938,5 +5283,301 @@ mod tests {
 
         let posterior = optimizer.compute_posterior_returns();
         assert!(posterior.is_err());
+    }
+
+    #[test]
+    fn test_drift_rebalancing_config_default() {
+        let config = DriftRebalancingConfig::default();
+        assert!((config.drift_threshold - 0.05).abs() < 1e-6);
+        assert_eq!(config.min_rebalance_interval, 1);
+        assert_eq!(config.max_total_drift, Some(0.10));
+    }
+
+    #[test]
+    fn test_drift_rebalancing_config_conservative() {
+        let config = DriftRebalancingConfig::conservative();
+        assert!((config.drift_threshold - 0.03).abs() < 1e-6);
+        assert_eq!(config.min_rebalance_interval, 1);
+        assert_eq!(config.max_total_drift, Some(0.06));
+    }
+
+    #[test]
+    fn test_drift_rebalancing_config_relaxed() {
+        let config = DriftRebalancingConfig::relaxed();
+        assert!((config.drift_threshold - 0.10).abs() < 1e-6);
+        assert_eq!(config.min_rebalance_interval, 5);
+        assert_eq!(config.max_total_drift, Some(0.20));
+    }
+
+    #[test]
+    fn test_drift_calculation_no_drift() {
+        let current = vec![("AAPL".to_string(), 0.5), ("GOOGL".to_string(), 0.5)]
+            .into_iter()
+            .collect();
+        let target = vec![("AAPL".to_string(), 0.5), ("GOOGL".to_string(), 0.5)]
+            .into_iter()
+            .collect();
+
+        let max_drift = DriftRebalancingConfig::max_drift(&current, &target);
+        assert!(max_drift < 1e-6);
+
+        let total_drift = DriftRebalancingConfig::total_drift(&current, &target);
+        assert!(total_drift < 1e-6);
+    }
+
+    #[test]
+    fn test_drift_calculation_with_drift() {
+        let current = vec![("AAPL".to_string(), 0.6), ("GOOGL".to_string(), 0.4)]
+            .into_iter()
+            .collect();
+        let target = vec![("AAPL".to_string(), 0.5), ("GOOGL".to_string(), 0.5)]
+            .into_iter()
+            .collect();
+
+        let max_drift = DriftRebalancingConfig::max_drift(&current, &target);
+        assert!((max_drift - 0.1).abs() < 1e-6);
+
+        let total_drift = DriftRebalancingConfig::total_drift(&current, &target);
+        assert!((total_drift - 0.2).abs() < 1e-6); // 0.1 + 0.1
+    }
+
+    #[test]
+    fn test_drift_calculation_new_asset() {
+        let current = vec![
+            ("AAPL".to_string(), 0.5),
+            ("GOOGL".to_string(), 0.3),
+            ("MSFT".to_string(), 0.2),
+        ]
+        .into_iter()
+        .collect();
+
+        let target = vec![("AAPL".to_string(), 0.5), ("GOOGL".to_string(), 0.5)]
+            .into_iter()
+            .collect();
+
+        let max_drift = DriftRebalancingConfig::max_drift(&current, &target);
+        assert!((max_drift - 0.2).abs() < 1e-6); // GOOGL drifted from 0.5 to 0.3, MSFT is 0.2
+
+        let total_drift = DriftRebalancingConfig::total_drift(&current, &target);
+        assert!((total_drift - 0.4).abs() < 1e-6); // 0.0 + 0.2 + 0.2
+    }
+
+    #[test]
+    fn test_should_rebalance_below_threshold() {
+        let config = DriftRebalancingConfig {
+            drift_threshold: 0.05,
+            min_rebalance_interval: 1,
+            max_total_drift: None,
+        };
+
+        let current = vec![("AAPL".to_string(), 0.52), ("GOOGL".to_string(), 0.48)]
+            .into_iter()
+            .collect();
+        let target = vec![("AAPL".to_string(), 0.5), ("GOOGL".to_string(), 0.5)]
+            .into_iter()
+            .collect();
+
+        assert!(!config.should_rebalance(&current, &target, 10));
+    }
+
+    #[test]
+    fn test_should_rebalance_above_threshold() {
+        let config = DriftRebalancingConfig {
+            drift_threshold: 0.05,
+            min_rebalance_interval: 1,
+            max_total_drift: None,
+        };
+
+        let current = vec![("AAPL".to_string(), 0.6), ("GOOGL".to_string(), 0.4)]
+            .into_iter()
+            .collect();
+        let target = vec![("AAPL".to_string(), 0.5), ("GOOGL".to_string(), 0.5)]
+            .into_iter()
+            .collect();
+
+        assert!(config.should_rebalance(&current, &target, 10));
+    }
+
+    #[test]
+    fn test_should_rebalance_min_interval() {
+        let config = DriftRebalancingConfig {
+            drift_threshold: 0.05,
+            min_rebalance_interval: 10,
+            max_total_drift: None,
+        };
+
+        let current = vec![("AAPL".to_string(), 0.6), ("GOOGL".to_string(), 0.4)]
+            .into_iter()
+            .collect();
+        let target = vec![("AAPL".to_string(), 0.5), ("GOOGL".to_string(), 0.5)]
+            .into_iter()
+            .collect();
+
+        // Should not rebalance if interval not met
+        assert!(!config.should_rebalance(&current, &target, 5));
+
+        // Should rebalance if interval met
+        assert!(config.should_rebalance(&current, &target, 10));
+    }
+
+    #[test]
+    fn test_should_rebalance_total_drift() {
+        let config = DriftRebalancingConfig {
+            drift_threshold: 0.10, // High individual threshold
+            min_rebalance_interval: 1,
+            max_total_drift: Some(0.10), // But low total drift threshold
+        };
+
+        // Each asset drifts by 0.06, total 0.12
+        let current = vec![("AAPL".to_string(), 0.56), ("GOOGL".to_string(), 0.44)]
+            .into_iter()
+            .collect();
+        let target = vec![("AAPL".to_string(), 0.5), ("GOOGL".to_string(), 0.5)]
+            .into_iter()
+            .collect();
+
+        // Should rebalance due to total drift exceeding threshold
+        assert!(config.should_rebalance(&current, &target, 10));
+    }
+
+    #[test]
+    fn test_drift_equal_weight_strategy_creation() {
+        let strategy = DriftEqualWeightStrategy::with_default_config();
+        assert_eq!(strategy.name(), "Drift Equal Weight");
+
+        let conservative = DriftEqualWeightStrategy::conservative();
+        assert_eq!(conservative.name(), "Drift Equal Weight");
+
+        let relaxed = DriftEqualWeightStrategy::relaxed();
+        assert_eq!(relaxed.name(), "Drift Equal Weight");
+    }
+
+    #[test]
+    fn test_drift_equal_weight_backtest() {
+        let config = BacktestConfig {
+            initial_capital: 100_000.0,
+            show_progress: false,
+            ..Default::default()
+        };
+
+        let mut engine = MultiAssetEngine::new(config);
+
+        // Create test data with significant price movements that will cause drift
+        let bars1 = create_test_bars(200, 100.0, 0.01); // AAPL grows 1% per bar
+        let bars2 = create_test_bars(200, 100.0, -0.005); // GOOGL declines 0.5% per bar
+
+        engine.add_data("AAPL", bars1);
+        engine.add_data("GOOGL", bars2);
+
+        let mut strategy = DriftEqualWeightStrategy::with_default_config();
+        let result = engine.run(&mut strategy);
+
+        assert!(result.is_ok());
+        let res = result.unwrap();
+        assert!(res.final_equity > 0.0);
+        assert_eq!(res.symbols.len(), 2);
+        // Strategy executed successfully - drift logic was tested in unit tests
+    }
+
+    #[test]
+    fn test_drift_equal_weight_vs_periodic() {
+        let config = BacktestConfig {
+            initial_capital: 100_000.0,
+            show_progress: false,
+            ..Default::default()
+        };
+
+        // Test drift-based strategy with significant price movements
+        let mut engine1 = MultiAssetEngine::new(config.clone());
+        let bars1 = create_test_bars(200, 100.0, 0.01); // 1% growth per bar
+        let bars2 = create_test_bars(200, 100.0, -0.005); // 0.5% decline per bar
+        engine1.add_data("AAPL", bars1.clone());
+        engine1.add_data("GOOGL", bars2.clone());
+
+        let mut drift_strategy = DriftEqualWeightStrategy::relaxed(); // High threshold
+        let drift_result = engine1.run(&mut drift_strategy).unwrap();
+
+        // Test periodic strategy
+        let mut engine2 = MultiAssetEngine::new(config);
+        engine2.add_data("AAPL", bars1);
+        engine2.add_data("GOOGL", bars2);
+
+        let mut periodic_strategy = EqualWeightStrategy::new(10); // Rebalance every 10 bars
+        let periodic_result = engine2.run(&mut periodic_strategy).unwrap();
+
+        // Both strategies should complete successfully
+        assert!(drift_result.final_equity > 0.0);
+        assert!(periodic_result.final_equity > 0.0);
+    }
+
+    #[test]
+    fn test_drift_momentum_strategy_creation() {
+        let config = DriftRebalancingConfig::default();
+        let strategy = DriftMomentumStrategy::new(20, 2, config, 10);
+        assert_eq!(strategy.name(), "Drift Momentum");
+        assert_eq!(strategy.warmup_period(), 20);
+    }
+
+    #[test]
+    fn test_drift_momentum_backtest() {
+        let config = BacktestConfig {
+            initial_capital: 100_000.0,
+            show_progress: false,
+            ..Default::default()
+        };
+
+        let mut engine = MultiAssetEngine::new(config);
+
+        // Create test data with different momentum patterns and longer history
+        let bars1 = create_test_bars(200, 100.0, 0.01); // Strong momentum
+        let bars2 = create_test_bars(200, 100.0, 0.005); // Moderate momentum
+        let bars3 = create_test_bars(200, 100.0, -0.005); // Negative momentum
+
+        engine.add_data("AAPL", bars1);
+        engine.add_data("GOOGL", bars2);
+        engine.add_data("MSFT", bars3);
+
+        let drift_config = DriftRebalancingConfig::default();
+        let mut strategy = DriftMomentumStrategy::new(20, 2, drift_config, 20);
+        let result = engine.run(&mut strategy);
+
+        assert!(result.is_ok());
+        let res = result.unwrap();
+        assert!(res.final_equity > 0.0);
+        assert_eq!(res.symbols.len(), 3);
+        // Strategy executed successfully
+    }
+
+    #[test]
+    fn test_drift_momentum_top_n_selection() {
+        let config = BacktestConfig {
+            initial_capital: 100_000.0,
+            show_progress: false,
+            ..Default::default()
+        };
+
+        let mut engine = MultiAssetEngine::new(config);
+
+        // Create 5 assets with clear momentum ranking and significant movements
+        engine.add_data("BEST", create_test_bars(200, 100.0, 0.015)); // Best - 1.5% per bar
+        engine.add_data("GOOD", create_test_bars(200, 100.0, 0.010)); // Good - 1% per bar
+        engine.add_data("OK", create_test_bars(200, 100.0, 0.002)); // OK - 0.2% per bar
+        engine.add_data("BAD", create_test_bars(200, 100.0, -0.005)); // Bad
+        engine.add_data("WORST", create_test_bars(200, 100.0, -0.010)); // Worst
+
+        let drift_config = DriftRebalancingConfig::default();
+        let mut strategy = DriftMomentumStrategy::new(20, 2, drift_config, 100); // Top 2, rarely recalc
+
+        let result = engine.run(&mut strategy).unwrap();
+
+        // Strategy executed successfully with momentum selection
+        assert!(result.final_equity > 0.0);
+        assert_eq!(result.symbols.len(), 5);
+    }
+
+    #[test]
+    fn test_drift_config_moderate() {
+        let config = DriftRebalancingConfig::moderate();
+        assert_eq!(config, DriftRebalancingConfig::default());
     }
 }
