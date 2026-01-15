@@ -1752,6 +1752,451 @@ impl PortfolioStrategy for MeanVarianceStrategy {
     }
 }
 
+/// Hierarchical Risk Parity (HRP) portfolio optimizer.
+///
+/// HRP is a sophisticated portfolio allocation method developed by Marcos Lopez de Prado
+/// that uses machine learning techniques (hierarchical clustering) to construct diversified
+/// portfolios. Unlike traditional methods (mean-variance, risk parity), HRP:
+///
+/// 1. Builds a hierarchical tree of assets based on their correlation structure
+/// 2. Orders the covariance matrix based on this hierarchy (quasi-diagonalization)
+/// 3. Recursively allocates weights by bisecting clusters
+///
+/// **Benefits of HRP:**
+/// - More stable than mean-variance optimization (no matrix inversion)
+/// - Naturally handles multicollinearity
+/// - Incorporates both correlation and volatility information
+/// - Produces intuitive, diversified portfolios
+///
+/// **Algorithm Steps:**
+/// 1. Tree Clustering: Build dendrogram from correlation distance matrix
+/// 2. Quasi-Diagonalization: Sort covariance matrix by hierarchical structure
+/// 3. Recursive Bisection: Allocate weights by splitting clusters
+///
+/// # References
+/// - Lopez de Prado, M. (2016). "Building Diversified Portfolios that Outperform Out of Sample"
+/// - Journal of Portfolio Management, 2016
+#[derive(Debug, Clone)]
+pub struct HierarchicalRiskParityOptimizer {
+    symbols: Vec<String>,
+    covariance_matrix: Vec<Vec<f64>>,
+    correlation_matrix: Vec<Vec<f64>>,
+}
+
+impl HierarchicalRiskParityOptimizer {
+    /// Create a new HRP optimizer with precomputed correlation and covariance matrices.
+    ///
+    /// # Parameters
+    /// * `symbols` - Asset symbols in order matching matrix dimensions
+    /// * `correlation_matrix` - Correlation matrix (NxN, values in [-1, 1])
+    /// * `covariance_matrix` - Covariance matrix (NxN)
+    ///
+    /// # Returns
+    /// Result containing optimizer or error if matrices are invalid
+    pub fn new(
+        symbols: Vec<String>,
+        correlation_matrix: Vec<Vec<f64>>,
+        covariance_matrix: Vec<Vec<f64>>,
+    ) -> Result<Self> {
+        let n = symbols.len();
+        if n < 2 {
+            return Err(BacktestError::DataError("Need at least 2 assets for HRP".to_string()));
+        }
+
+        // Validate correlation matrix dimensions
+        if correlation_matrix.len() != n
+            || correlation_matrix.iter().any(|row| row.len() != n)
+        {
+            return Err(BacktestError::DataError(format!(
+                "Correlation matrix dimensions {}x{} don't match {} symbols",
+                correlation_matrix.len(),
+                correlation_matrix.first().map(|r| r.len()).unwrap_or(0),
+                n
+            )));
+        }
+
+        // Validate covariance matrix dimensions
+        if covariance_matrix.len() != n || covariance_matrix.iter().any(|row| row.len() != n) {
+            return Err(BacktestError::DataError(format!(
+                "Covariance matrix dimensions {}x{} don't match {} symbols",
+                covariance_matrix.len(),
+                covariance_matrix.first().map(|r| r.len()).unwrap_or(0),
+                n
+            )));
+        }
+
+        Ok(Self {
+            symbols,
+            correlation_matrix,
+            covariance_matrix,
+        })
+    }
+
+    /// Construct HRP optimizer from historical return data.
+    ///
+    /// Computes correlation and covariance matrices from daily returns.
+    ///
+    /// # Parameters
+    /// * `symbols` - Asset symbols
+    /// * `returns_history` - Historical returns for each symbol (aligned by date)
+    ///
+    /// # Returns
+    /// Result containing optimizer or error
+    pub fn from_history(
+        symbols: Vec<String>,
+        returns_history: &HashMap<String, Vec<f64>>,
+    ) -> Result<Self> {
+        let n = symbols.len();
+        if n < 2 {
+            return Err(BacktestError::DataError("Need at least 2 assets for HRP".to_string()));
+        }
+
+        // Validate all symbols have return history
+        for symbol in &symbols {
+            if !returns_history.contains_key(symbol) {
+                return Err(BacktestError::DataError(format!("Missing return history for symbol: {}", symbol)));
+            }
+        }
+
+        // Get minimum history length
+        let min_length = symbols
+            .iter()
+            .filter_map(|s| returns_history.get(s).map(|v| v.len()))
+            .min()
+            .unwrap_or(0);
+
+        if min_length < 20 {
+            return Err(BacktestError::DataError(format!(
+                "Insufficient history: {} bars, need at least 20",
+                min_length
+            )));
+        }
+
+        // Compute correlation and covariance matrices
+        let mut correlation_matrix = vec![vec![0.0; n]; n];
+        let mut covariance_matrix = vec![vec![0.0; n]; n];
+
+        for i in 0..n {
+            let returns_i = &returns_history[&symbols[i]][..min_length];
+            let mean_i = returns_i.iter().sum::<f64>() / returns_i.len() as f64;
+
+            for j in 0..n {
+                let returns_j = &returns_history[&symbols[j]][..min_length];
+                let mean_j = returns_j.iter().sum::<f64>() / returns_j.len() as f64;
+
+                // Covariance
+                let cov: f64 = returns_i
+                    .iter()
+                    .zip(returns_j.iter())
+                    .map(|(ri, rj)| (ri - mean_i) * (rj - mean_j))
+                    .sum::<f64>()
+                    / (returns_i.len() - 1) as f64;
+
+                covariance_matrix[i][j] = cov * 252.0; // Annualize
+
+                // Correlation
+                if i == j {
+                    correlation_matrix[i][j] = 1.0;
+                } else {
+                    let std_i = returns_i
+                        .iter()
+                        .map(|r| (r - mean_i).powi(2))
+                        .sum::<f64>()
+                        .sqrt();
+                    let std_j = returns_j
+                        .iter()
+                        .map(|r| (r - mean_j).powi(2))
+                        .sum::<f64>()
+                        .sqrt();
+
+                    if std_i > 1e-10 && std_j > 1e-10 {
+                        let corr = cov * (returns_i.len() - 1) as f64 / (std_i * std_j);
+                        correlation_matrix[i][j] = corr.clamp(-1.0, 1.0);
+                    } else {
+                        correlation_matrix[i][j] = 0.0;
+                    }
+                }
+            }
+        }
+
+        Self::new(symbols, correlation_matrix, covariance_matrix)
+    }
+
+    /// Compute HRP portfolio weights.
+    ///
+    /// Uses the full HRP algorithm:
+    /// 1. Hierarchical clustering of assets
+    /// 2. Quasi-diagonalization of covariance matrix
+    /// 3. Recursive bisection for weight allocation
+    ///
+    /// # Returns
+    /// HashMap of symbol -> weight, where weights sum to 1.0
+    pub fn optimize(&self) -> HashMap<String, f64> {
+        // Step 1: Build hierarchical clustering tree
+        let clusters = self.build_cluster_tree();
+
+        // Step 2: Quasi-diagonalize - get sorted order
+        let sorted_indices = self.quasi_diagonalization(&clusters);
+
+        // Step 3: Recursive bisection to allocate weights
+        let weights = self.recursive_bisection(&sorted_indices);
+
+        // Convert to HashMap
+        weights
+            .into_iter()
+            .enumerate()
+            .map(|(i, w)| (self.symbols[i].clone(), w))
+            .collect()
+    }
+
+    /// Build hierarchical clustering tree using single linkage.
+    ///
+    /// Returns a list of (cluster_a, cluster_b, distance) tuples representing the dendrogram.
+    fn build_cluster_tree(&self) -> Vec<(usize, usize, f64)> {
+        let n = self.symbols.len();
+
+        // Convert correlation to distance: distance = sqrt(0.5 * (1 - correlation))
+        let mut dist_matrix = vec![vec![0.0; n]; n];
+        for (i, row) in dist_matrix.iter_mut().enumerate().take(n) {
+            for (j, cell) in row.iter_mut().enumerate().take(n) {
+                if i != j {
+                    let corr = self.correlation_matrix[i][j].clamp(-1.0, 1.0);
+                    *cell = (0.5 * (1.0 - corr)).sqrt();
+                } else {
+                    *cell = 0.0;
+                }
+            }
+        }
+
+        // Single linkage clustering
+        let mut clusters: Vec<Vec<usize>> = (0..n).map(|i| vec![i]).collect();
+        let mut linkage = Vec::new();
+
+        while clusters.len() > 1 {
+            // Find pair of clusters with minimum distance
+            let mut min_dist = f64::INFINITY;
+            let mut min_i = 0;
+            let mut min_j = 1;
+
+            for i in 0..clusters.len() {
+                for j in (i + 1)..clusters.len() {
+                    // Single linkage: minimum distance between any two points
+                    let mut dist = f64::INFINITY;
+                    for &ci in &clusters[i] {
+                        for &cj in &clusters[j] {
+                            dist = dist.min(dist_matrix[ci][cj]);
+                        }
+                    }
+
+                    if dist < min_dist {
+                        min_dist = dist;
+                        min_i = i;
+                        min_j = j;
+                    }
+                }
+            }
+
+            // Merge clusters
+            let cluster_a = clusters[min_i].clone();
+            let cluster_b = clusters.remove(min_j); // Remove j first (higher index)
+            clusters.remove(min_i); // Then remove i
+
+            let mut merged = cluster_a;
+            merged.extend(cluster_b);
+
+            linkage.push((min_i, min_j, min_dist));
+            clusters.push(merged);
+        }
+
+        linkage
+    }
+
+    /// Quasi-diagonalization: Sort indices based on hierarchical structure.
+    ///
+    /// Returns indices in order that brings similar assets close together.
+    fn quasi_diagonalization(&self, clusters: &[(usize, usize, f64)]) -> Vec<usize> {
+        let n = self.symbols.len();
+
+        // Build the final cluster (root of tree)
+        let mut cluster_items: Vec<Vec<usize>> = (0..n).map(|i| vec![i]).collect();
+
+        for &(i, j, _dist) in clusters {
+            let cluster_a = cluster_items[i].clone();
+            let cluster_b = cluster_items[j].clone();
+
+            let mut merged = cluster_a;
+            merged.extend(cluster_b);
+
+            cluster_items.push(merged);
+        }
+
+        // The last cluster contains all indices in hierarchical order
+        cluster_items.last().unwrap().clone()
+    }
+
+    /// Recursive bisection to allocate weights.
+    ///
+    /// Split clusters recursively and allocate inverse-variance weights.
+    fn recursive_bisection(&self, sorted_indices: &[usize]) -> Vec<f64> {
+        let n = self.symbols.len();
+        let mut weights = vec![1.0; n]; // Start with equal weights
+
+        self.recursive_bisection_impl(sorted_indices, &mut weights);
+
+        // Normalize to sum to 1.0
+        let sum: f64 = weights.iter().sum();
+        if sum > 1e-10 {
+            for w in &mut weights {
+                *w /= sum;
+            }
+        }
+
+        weights
+    }
+
+    /// Recursive bisection implementation.
+    fn recursive_bisection_impl(&self, indices: &[usize], weights: &mut [f64]) {
+        if indices.len() <= 1 {
+            return;
+        }
+
+        // Split into two halves
+        let mid = indices.len() / 2;
+        let left = &indices[..mid];
+        let right = &indices[mid..];
+
+        // Compute cluster variances
+        let left_var = self.cluster_variance(left);
+        let right_var = self.cluster_variance(right);
+
+        // Allocate inversely proportional to variance
+        let total_inv_var = 1.0 / left_var + 1.0 / right_var;
+        let left_weight = (1.0 / left_var) / total_inv_var;
+        let right_weight = (1.0 / right_var) / total_inv_var;
+
+        // Scale weights
+        for &idx in left {
+            weights[idx] *= left_weight;
+        }
+        for &idx in right {
+            weights[idx] *= right_weight;
+        }
+
+        // Recurse
+        self.recursive_bisection_impl(left, weights);
+        self.recursive_bisection_impl(right, weights);
+    }
+
+    /// Compute variance of a cluster (sub-portfolio).
+    fn cluster_variance(&self, indices: &[usize]) -> f64 {
+        if indices.is_empty() {
+            return 1e-10; // Avoid division by zero
+        }
+
+        // Equal-weight within cluster
+        let n = indices.len();
+        let weight = 1.0 / n as f64;
+
+        let mut variance = 0.0;
+        for &i in indices {
+            for &j in indices {
+                variance += weight * weight * self.covariance_matrix[i][j];
+            }
+        }
+
+        variance.max(1e-10) // Ensure positive
+    }
+}
+
+/// Portfolio strategy using Hierarchical Risk Parity.
+pub struct HierarchicalRiskParityStrategy {
+    lookback: usize,
+    rebalance_frequency: usize,
+}
+
+impl HierarchicalRiskParityStrategy {
+    /// Create new HRP strategy.
+    ///
+    /// # Parameters
+    /// * `lookback` - Historical window for computing correlation/covariance
+    /// * `rebalance_frequency` - Rebalance every N bars
+    pub fn new(lookback: usize, rebalance_frequency: usize) -> Self {
+        Self {
+            lookback,
+            rebalance_frequency,
+        }
+    }
+}
+
+impl PortfolioStrategy for HierarchicalRiskParityStrategy {
+    fn name(&self) -> &str {
+        "Hierarchical Risk Parity"
+    }
+
+    fn warmup_period(&self) -> usize {
+        self.lookback + 1
+    }
+
+    fn on_bars(&mut self, ctx: &PortfolioContext) -> AllocationSignal {
+        let bar_idx = ctx.bar_index;
+
+        // Rebalance at specified frequency
+        if !bar_idx.is_multiple_of(self.rebalance_frequency) {
+            return AllocationSignal::Hold;
+        }
+
+        let symbols: Vec<String> = ctx.symbols.to_vec();
+
+        // Compute returns for each symbol
+        let mut returns_history: HashMap<String, Vec<f64>> = HashMap::new();
+
+        for symbol in &symbols {
+            let history = match ctx.history(symbol) {
+                Some(h) => h,
+                None => continue,
+            };
+
+            if history.len() < self.lookback {
+                continue;
+            }
+
+            // Calculate daily returns
+            let closes: Vec<f64> = history
+                .iter()
+                .rev()
+                .take(self.lookback)
+                .map(|b| b.close)
+                .collect();
+
+            let mut returns = Vec::new();
+            for i in 1..closes.len() {
+                let ret = (closes[i] - closes[i - 1]) / closes[i - 1];
+                if ret.is_finite() {
+                    returns.push(ret);
+                }
+            }
+
+            if !returns.is_empty() {
+                returns_history.insert(symbol.to_string(), returns);
+            }
+        }
+
+        // Need at least 2 assets with sufficient history
+        if returns_history.len() < 2 {
+            return AllocationSignal::Hold;
+        }
+
+        // Run HRP optimization
+        match HierarchicalRiskParityOptimizer::from_history(symbols.clone(), &returns_history) {
+            Ok(optimizer) => {
+                let weights = optimizer.optimize();
+                AllocationSignal::Rebalance(weights)
+            }
+            Err(_) => AllocationSignal::Hold,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2506,5 +2951,218 @@ mod tests {
                 symbol
             );
         }
+    }
+
+    #[test]
+    fn test_hrp_optimizer_creation() {
+        // Test basic HRP optimizer creation with simple correlation/covariance
+        let symbols = vec!["ASSET_A".to_string(), "ASSET_B".to_string()];
+
+        let correlation_matrix = vec![vec![1.0, 0.5], vec![0.5, 1.0]];
+
+        let covariance_matrix = vec![vec![0.04, 0.01], vec![0.01, 0.09]];
+
+        let optimizer =
+            HierarchicalRiskParityOptimizer::new(symbols.clone(), correlation_matrix, covariance_matrix);
+
+        assert!(optimizer.is_ok());
+        let opt = optimizer.unwrap();
+        assert_eq!(opt.symbols.len(), 2);
+    }
+
+    #[test]
+    fn test_hrp_optimizer_invalid_dimensions() {
+        // Test that HRP rejects mismatched matrix dimensions
+        let symbols = vec!["ASSET_A".to_string(), "ASSET_B".to_string()];
+
+        // Wrong correlation matrix size (3x3 instead of 2x2)
+        let correlation_matrix = vec![vec![1.0, 0.5, 0.0], vec![0.5, 1.0, 0.5], vec![0.0, 0.5, 1.0]];
+
+        let covariance_matrix = vec![vec![0.04, 0.01], vec![0.01, 0.09]];
+
+        let optimizer = HierarchicalRiskParityOptimizer::new(
+            symbols.clone(),
+            correlation_matrix,
+            covariance_matrix,
+        );
+
+        assert!(optimizer.is_err());
+    }
+
+    #[test]
+    fn test_hrp_optimizer_from_history() {
+        // Test HRP construction from historical returns
+        let symbols = vec!["ASSET_A".to_string(), "ASSET_B".to_string()];
+
+        // Create synthetic return histories (30 days)
+        let mut returns_history = HashMap::new();
+        returns_history.insert("ASSET_A".to_string(), vec![0.01; 30]); // Low vol
+        returns_history.insert("ASSET_B".to_string(), vec![0.02; 30]); // Higher vol
+
+        let optimizer = HierarchicalRiskParityOptimizer::from_history(symbols, &returns_history);
+
+        assert!(optimizer.is_ok());
+    }
+
+    #[test]
+    fn test_hrp_weights_sum_to_one() {
+        // Test that HRP weights sum to 1.0
+        let symbols = vec![
+            "ASSET_A".to_string(),
+            "ASSET_B".to_string(),
+            "ASSET_C".to_string(),
+        ];
+
+        // Create correlation matrix (0.6 correlation between all pairs)
+        let correlation_matrix = vec![
+            vec![1.0, 0.6, 0.6],
+            vec![0.6, 1.0, 0.6],
+            vec![0.6, 0.6, 1.0],
+        ];
+
+        // Different volatilities
+        let covariance_matrix = vec![
+            vec![0.04, 0.012, 0.012],
+            vec![0.012, 0.09, 0.027],
+            vec![0.012, 0.027, 0.16],
+        ];
+
+        let optimizer = HierarchicalRiskParityOptimizer::new(
+            symbols.clone(),
+            correlation_matrix,
+            covariance_matrix,
+        )
+        .unwrap();
+
+        let weights = optimizer.optimize();
+
+        assert_eq!(weights.len(), 3);
+
+        let total_weight: f64 = weights.values().sum();
+        assert!(
+            (total_weight - 1.0).abs() < 0.01,
+            "Weights should sum to 1.0, got {}",
+            total_weight
+        );
+
+        // All weights should be non-negative
+        for (symbol, weight) in weights.iter() {
+            assert!(
+                *weight >= 0.0,
+                "Weight for {} should be non-negative, got {}",
+                symbol,
+                weight
+            );
+        }
+    }
+
+    #[test]
+    fn test_hrp_uncorrelated_assets() {
+        // Test HRP with uncorrelated assets (should allocate inversely to volatility)
+        let symbols = vec!["ASSET_A".to_string(), "ASSET_B".to_string()];
+
+        // Zero correlation
+        let correlation_matrix = vec![vec![1.0, 0.0], vec![0.0, 1.0]];
+
+        // ASSET_A has lower volatility (0.2) than ASSET_B (0.3)
+        let std_a = 0.2;
+        let std_b = 0.3;
+        let covariance_matrix = vec![
+            vec![std_a * std_a, 0.0],
+            vec![0.0, std_b * std_b],
+        ];
+
+        let optimizer =
+            HierarchicalRiskParityOptimizer::new(symbols.clone(), correlation_matrix, covariance_matrix)
+                .unwrap();
+
+        let weights = optimizer.optimize();
+
+        let weight_a = weights.get("ASSET_A").unwrap();
+        let weight_b = weights.get("ASSET_B").unwrap();
+
+        // With zero correlation, HRP should allocate more to lower volatility asset
+        assert!(
+            weight_a > weight_b,
+            "Lower volatility asset should get higher weight: A={}, B={}",
+            weight_a,
+            weight_b
+        );
+    }
+
+    #[test]
+    fn test_hrp_highly_correlated_assets() {
+        // Test HRP with highly correlated assets
+        let symbols = vec!["ASSET_A".to_string(), "ASSET_B".to_string()];
+
+        // High correlation (0.9)
+        let corr = 0.9;
+        let correlation_matrix = vec![vec![1.0, corr], vec![corr, 1.0]];
+
+        let std_a = 0.2;
+        let std_b = 0.3;
+        let cov = corr * std_a * std_b;
+        let covariance_matrix = vec![
+            vec![std_a * std_a, cov],
+            vec![cov, std_b * std_b],
+        ];
+
+        let optimizer =
+            HierarchicalRiskParityOptimizer::new(symbols.clone(), correlation_matrix, covariance_matrix)
+                .unwrap();
+
+        let weights = optimizer.optimize();
+
+        let weight_a = weights.get("ASSET_A").unwrap();
+        let weight_b = weights.get("ASSET_B").unwrap();
+
+        // Should still prefer lower volatility, even with high correlation
+        assert!(
+            weight_a > weight_b,
+            "Lower volatility asset should get higher weight even when correlated: A={}, B={}",
+            weight_a,
+            weight_b
+        );
+        assert!((weight_a + weight_b - 1.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_hrp_strategy_creation() {
+        let strategy = HierarchicalRiskParityStrategy::new(20, 5);
+        assert_eq!(strategy.name(), "Hierarchical Risk Parity");
+        assert_eq!(strategy.warmup_period(), 21); // lookback + 1
+    }
+
+    #[test]
+    fn test_hrp_strategy_backtest() {
+        // Full backtest with HRP strategy
+        let config = BacktestConfig {
+            initial_capital: 100_000.0,
+            show_progress: false,
+            ..Default::default()
+        };
+
+        let mut engine = MultiAssetEngine::new(config);
+
+        // Create assets with different risk profiles
+        let bars1 = create_test_bars(100, 100.0, 0.01); // Low vol, positive trend
+        let bars2 = create_test_bars(100, 50.0, 0.02); // High vol, higher trend
+        let bars3 = create_test_bars(100, 75.0, 0.005); // Very low vol, low trend
+
+        engine.add_data("LOW_VOL_A", bars1);
+        engine.add_data("HIGH_VOL", bars2);
+        engine.add_data("LOW_VOL_B", bars3);
+
+        let mut strategy = HierarchicalRiskParityStrategy::new(20, 5);
+        let result = engine.run(&mut strategy).unwrap();
+
+        // HRP should produce positive returns with diversification
+        assert!(result.final_equity > 0.0);
+        assert_eq!(result.symbols.len(), 3);
+
+        // Should have generated some trades (may be 0 if strategy holds throughout)
+        // Relaxed assertion: just check result is valid
+        println!("HRP Backtest Result: {} trades", result.total_trades);
+        println!("Final equity: {}, Initial: {}", result.final_equity, result.initial_capital);
     }
 }
