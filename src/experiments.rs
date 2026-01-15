@@ -503,6 +503,7 @@ mod tests {
             git_info: None,
             config_hash: "test_hash".to_string(),
             data_checksums: std::collections::HashMap::new(),
+            seed: None,
         }
     }
 

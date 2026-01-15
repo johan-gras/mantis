@@ -614,6 +614,7 @@ mod tests {
             git_info: None,
             config_hash: String::new(),
             data_checksums: std::collections::HashMap::new(),
+            seed: None,
         };
 
         assert!((CPCVMetric::Sharpe.extract(&result) - 1.5).abs() < 0.001);

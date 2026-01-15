@@ -884,6 +884,7 @@ mod tests {
             git_info: None,
             config_hash: String::new(),
             data_checksums: std::collections::HashMap::new(),
+            seed: None,
         }
     }
 

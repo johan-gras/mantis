@@ -1340,6 +1340,7 @@ mod tests {
             git_info: None,
             config_hash: String::new(),
             data_checksums: std::collections::HashMap::new(),
+            seed: None,
         }
     }
 
@@ -1666,6 +1667,7 @@ mod tests {
             git_info: None,
             config_hash: String::new(),
             data_checksums: std::collections::HashMap::new(),
+            seed: None,
         };
 
         // Test that daily returns are calculated from actual equity curve
@@ -1769,6 +1771,7 @@ mod tests {
             git_info: None,
             config_hash: String::new(),
             data_checksums: std::collections::HashMap::new(),
+            seed: None,
         };
 
         let metrics = PerformanceMetrics::from_result(&result);
@@ -1900,6 +1903,7 @@ mod tests {
             git_info: None,
             config_hash: String::new(),
             data_checksums: std::collections::HashMap::new(),
+            seed: None,
         };
 
         let returns = PerformanceMetrics::calculate_daily_returns(&result);
@@ -2422,6 +2426,7 @@ mod tests {
             git_info: None,
             config_hash: String::new(),
             data_checksums: std::collections::HashMap::new(),
+            seed: None,
         };
 
         let metrics = PerformanceMetrics::from_result(&result);
