@@ -161,13 +161,15 @@ impl PortfolioConstraints {
 
     /// Set max position size for a specific symbol.
     pub fn with_symbol_limit(mut self, symbol: impl Into<String>, limit: f64) -> Self {
-        self.symbol_limits.insert(symbol.into(), limit.clamp(0.0, 1.0));
+        self.symbol_limits
+            .insert(symbol.into(), limit.clamp(0.0, 1.0));
         self
     }
 
     /// Set max exposure for a sector.
     pub fn with_sector_limit(mut self, sector: impl Into<String>, limit: f64) -> Self {
-        self.sector_limits.insert(sector.into(), limit.clamp(0.0, 1.0));
+        self.sector_limits
+            .insert(sector.into(), limit.clamp(0.0, 1.0));
         self
     }
 
@@ -219,7 +221,9 @@ impl PortfolioConstraints {
             }
 
             // Check symbol-specific limit first
-            let max_weight = self.symbol_limits.get(symbol)
+            let max_weight = self
+                .symbol_limits
+                .get(symbol)
                 .copied()
                 .or(self.max_position_size);
 
@@ -1093,7 +1097,11 @@ impl MultiAssetEngine {
             let current_weights = self.calculate_current_weights(portfolio, prices, equity);
 
             // Validate the rebalance
-            constraints.validate_rebalance(&current_weights, target_weights, &self.symbol_sectors)?;
+            constraints.validate_rebalance(
+                &current_weights,
+                target_weights,
+                &self.symbol_sectors,
+            )?;
         }
 
         let allocations: HashMap<String, Allocation> = target_weights
@@ -2131,13 +2139,13 @@ impl HierarchicalRiskParityOptimizer {
     ) -> Result<Self> {
         let n = symbols.len();
         if n < 2 {
-            return Err(BacktestError::DataError("Need at least 2 assets for HRP".to_string()));
+            return Err(BacktestError::DataError(
+                "Need at least 2 assets for HRP".to_string(),
+            ));
         }
 
         // Validate correlation matrix dimensions
-        if correlation_matrix.len() != n
-            || correlation_matrix.iter().any(|row| row.len() != n)
-        {
+        if correlation_matrix.len() != n || correlation_matrix.iter().any(|row| row.len() != n) {
             return Err(BacktestError::DataError(format!(
                 "Correlation matrix dimensions {}x{} don't match {} symbols",
                 correlation_matrix.len(),
@@ -2179,13 +2187,18 @@ impl HierarchicalRiskParityOptimizer {
     ) -> Result<Self> {
         let n = symbols.len();
         if n < 2 {
-            return Err(BacktestError::DataError("Need at least 2 assets for HRP".to_string()));
+            return Err(BacktestError::DataError(
+                "Need at least 2 assets for HRP".to_string(),
+            ));
         }
 
         // Validate all symbols have return history
         for symbol in &symbols {
             if !returns_history.contains_key(symbol) {
-                return Err(BacktestError::DataError(format!("Missing return history for symbol: {}", symbol)));
+                return Err(BacktestError::DataError(format!(
+                    "Missing return history for symbol: {}",
+                    symbol
+                )));
             }
         }
 
@@ -3293,8 +3306,11 @@ mod tests {
 
         let covariance_matrix = vec![vec![0.04, 0.01], vec![0.01, 0.09]];
 
-        let optimizer =
-            HierarchicalRiskParityOptimizer::new(symbols.clone(), correlation_matrix, covariance_matrix);
+        let optimizer = HierarchicalRiskParityOptimizer::new(
+            symbols.clone(),
+            correlation_matrix,
+            covariance_matrix,
+        );
 
         assert!(optimizer.is_ok());
         let opt = optimizer.unwrap();
@@ -3307,7 +3323,11 @@ mod tests {
         let symbols = vec!["ASSET_A".to_string(), "ASSET_B".to_string()];
 
         // Wrong correlation matrix size (3x3 instead of 2x2)
-        let correlation_matrix = vec![vec![1.0, 0.5, 0.0], vec![0.5, 1.0, 0.5], vec![0.0, 0.5, 1.0]];
+        let correlation_matrix = vec![
+            vec![1.0, 0.5, 0.0],
+            vec![0.5, 1.0, 0.5],
+            vec![0.0, 0.5, 1.0],
+        ];
 
         let covariance_matrix = vec![vec![0.04, 0.01], vec![0.01, 0.09]];
 
@@ -3398,14 +3418,14 @@ mod tests {
         // ASSET_A has lower volatility (0.2) than ASSET_B (0.3)
         let std_a = 0.2;
         let std_b = 0.3;
-        let covariance_matrix = vec![
-            vec![std_a * std_a, 0.0],
-            vec![0.0, std_b * std_b],
-        ];
+        let covariance_matrix = vec![vec![std_a * std_a, 0.0], vec![0.0, std_b * std_b]];
 
-        let optimizer =
-            HierarchicalRiskParityOptimizer::new(symbols.clone(), correlation_matrix, covariance_matrix)
-                .unwrap();
+        let optimizer = HierarchicalRiskParityOptimizer::new(
+            symbols.clone(),
+            correlation_matrix,
+            covariance_matrix,
+        )
+        .unwrap();
 
         let weights = optimizer.optimize();
 
@@ -3433,14 +3453,14 @@ mod tests {
         let std_a = 0.2;
         let std_b = 0.3;
         let cov = corr * std_a * std_b;
-        let covariance_matrix = vec![
-            vec![std_a * std_a, cov],
-            vec![cov, std_b * std_b],
-        ];
+        let covariance_matrix = vec![vec![std_a * std_a, cov], vec![cov, std_b * std_b]];
 
-        let optimizer =
-            HierarchicalRiskParityOptimizer::new(symbols.clone(), correlation_matrix, covariance_matrix)
-                .unwrap();
+        let optimizer = HierarchicalRiskParityOptimizer::new(
+            symbols.clone(),
+            correlation_matrix,
+            covariance_matrix,
+        )
+        .unwrap();
 
         let weights = optimizer.optimize();
 
@@ -3494,7 +3514,10 @@ mod tests {
         // Should have generated some trades (may be 0 if strategy holds throughout)
         // Relaxed assertion: just check result is valid
         println!("HRP Backtest Result: {} trades", result.total_trades);
-        println!("Final equity: {}, Initial: {}", result.final_equity, result.initial_capital);
+        println!(
+            "Final equity: {}, Initial: {}",
+            result.final_equity, result.initial_capital
+        );
     }
 
     // Portfolio Constraints Tests
@@ -3623,7 +3646,9 @@ mod tests {
             sector_limits: HashMap::new(),
             ..Default::default()
         };
-        constraints.sector_limits.insert("Technology".to_string(), 0.50);
+        constraints
+            .sector_limits
+            .insert("Technology".to_string(), 0.50);
 
         let mut weights = HashMap::new();
         weights.insert("AAPL".to_string(), 0.30);
@@ -3638,13 +3663,16 @@ mod tests {
         let result = constraints.validate_weights(&weights, &sectors);
         assert!(result.is_err());
         let err_msg = result.unwrap_err().to_string();
-        assert!(err_msg.contains("Sector") || err_msg.contains("Technology"), "Error message: {}", err_msg);
+        assert!(
+            err_msg.contains("Sector") || err_msg.contains("Technology"),
+            "Error message: {}",
+            err_msg
+        );
     }
 
     #[test]
     fn test_validate_weights_symbol_limits() {
-        let constraints = PortfolioConstraints::default()
-            .with_symbol_limit("AAPL", 0.10);
+        let constraints = PortfolioConstraints::default().with_symbol_limit("AAPL", 0.10);
 
         let mut weights = HashMap::new();
         weights.insert("AAPL".to_string(), 0.15); // Exceeds symbol-specific limit
@@ -3688,7 +3716,7 @@ mod tests {
         proposed.insert("AAPL".to_string(), 0.50); // +20%
         proposed.insert("GOOGL".to_string(), 0.20); // -20%
         proposed.insert("MSFT".to_string(), 0.30); // No change
-        // Turnover = 0.20 > 0.10
+                                                   // Turnover = 0.20 > 0.10
 
         let result = constraints.validate_turnover(&current, &proposed);
         assert!(result.is_err());
@@ -3795,7 +3823,9 @@ mod tests {
             sector_limits: HashMap::new(),
             ..Default::default()
         };
-        constraints.sector_limits.insert("Technology".to_string(), 0.60);
+        constraints
+            .sector_limits
+            .insert("Technology".to_string(), 0.60);
 
         let mut engine = MultiAssetEngine::new(config).with_constraints(constraints);
 
