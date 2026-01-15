@@ -452,8 +452,8 @@ impl PerformanceMetrics {
     /// # Arguments
     /// * `result` - The backtest result to analyze
     /// * `n_trials` - Number of parameter combinations tested (for deflated Sharpe ratio)
-    ///                Set to 1 for single backtest, or to the number of parameter
-    ///                combinations tested during optimization.
+    ///   Set to 1 for single backtest, or to the number of parameter
+    ///   combinations tested during optimization.
     pub fn from_result_with_trials(result: &BacktestResult, n_trials: usize) -> Self {
         let _returns = Self::calculate_returns(&result.trades, result.initial_capital);
         let daily_returns = Self::calculate_daily_returns(result);
