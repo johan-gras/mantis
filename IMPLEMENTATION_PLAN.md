@@ -4,7 +4,7 @@
 >
 > Items marked `[NOT STARTED]` were previously claimed as partial but verified to have no implementation.
 >
-> **Recent Changes**: Transaction Cost Sensitivity analysis now complete with comprehensive testing framework (0x-20x cost multipliers, Sharpe/return degradation, breakeven analysis). Overfitting Detection fully implemented with OOS Sharpe threshold checking, parameter stability testing, and n_trials integration into deflated Sharpe ratio. Black-Litterman portfolio optimization complete with comprehensive investor views support. All core portfolio construction methods (equal weight, inverse volatility, risk parity, mean-variance, HRP, Black-Litterman) are now complete.
+> **Recent Changes**: Experiment Tracking now complete with SQLite-based storage, automatic backtest logging, hyperparameter/metrics capture, CLI commands for experiment management, and query/filter capabilities. Transaction Cost Sensitivity analysis now complete with comprehensive testing framework (0x-20x cost multipliers, Sharpe/return degradation, breakeven analysis). Overfitting Detection fully implemented with OOS Sharpe threshold checking, parameter stability testing, and n_trials integration into deflated Sharpe ratio. Black-Litterman portfolio optimization complete with comprehensive investor views support. All core portfolio construction methods (equal weight, inverse volatility, risk parity, mean-variance, HRP, Black-Litterman) are now complete.
 
 ## Current Status Summary
 
@@ -723,13 +723,18 @@ Items are organized by category and prioritized within each category. Priority r
   - Inline plotting and visualization
   - Rich output formatting (DataFrames, equity curves)
 
-### [MISSING] [HIGH] Experiment Tracking
-- Automatic backtest logging with unique ID
-- Hyperparameter capture
-- Metrics logging
-- Code version tracking (git SHA)
-- MLflow integration
-- Weights & Biases integration
+### [COMPLETE] [HIGH] Experiment Tracking
+- **IMPLEMENTED**:
+  - SQLite-based experiment storage (ExperimentStore in src/experiment.rs)
+  - Automatic backtest logging with unique ID capture (UUID for each run)
+  - Experiment metadata: hyperparameters, metrics, git SHA, config hash, data checksums
+  - CLI commands for experiment management: list, show, compare, tag, note, delete
+  - Query and filter capabilities: strategy name, Sharpe ratio, drawdown, date range
+  - Partial ID matching for convenience (match on first N characters)
+  - Colored formatted output for metrics with proper alignment
+- **MISSING**:
+  - MLflow integration (external dependency)
+  - Weights & Biases integration (external dependency)
 
 ### [MISSING] [MEDIUM] Strategy Debugging
 - Time-travel debugging (step through backtest)
@@ -900,8 +905,8 @@ Items are organized by category and prioritized within each category. Priority r
 1. ~~ONNX model inference integration~~ (PARTIAL - architecture complete)
 2. ~~Cross-sectional features~~ (COMPLETE)
 3. ~~CPCV implementation~~ (COMPLETE)
-4. Jupyter/Python bindings
-5. Experiment tracking (MLflow integration)
+4. ~~Experiment tracking~~ (COMPLETE - MLflow/W&B integration remaining)
+5. Jupyter/Python bindings
 
 ### Phase 3: Advanced Trading Features [HIGH]
 1. Live trading mode with broker integration
@@ -970,13 +975,13 @@ cargo doc --no-deps --open
 | Performance Analytics | 4 | 0 | 0 | 5 | 9 |
 | Production Operations | 0 | 0 | 0 | 7 | 7 |
 | Model Governance | 0 | 0 | 0 | 6 | 6 |
-| Research Workflow | 0 | 0 | 1 | 6 | 7 |
+| Research Workflow | 1 | 0 | 1 | 5 | 7 |
 | CLI & Configuration | 3 | 1 | 0 | 4 | 8 |
 | Execution Realism | 2 | 1 | 0 | 3 | 6 |
 | Reproducibility | 2 | 2 | 0 | 0 | 4 |
-| **TOTAL** | **45** | **10** | **4** | **66** | **127** |
+| **TOTAL** | **46** | **10** | **4** | **65** | **127** |
 
-**Estimated Completion: ~39%** (core backtesting solid; Cross-Sectional Features, CPCV, Overfitting Detection, and Transaction Cost Sensitivity now complete; all major portfolio construction methods complete including Black-Litterman; ONNX inference architecture complete but blocked by ort crate instability; live trading and Python bindings not started)
+**Estimated Completion: ~40%** (core backtesting solid; Experiment Tracking, Cross-Sectional Features, CPCV, Overfitting Detection, and Transaction Cost Sensitivity now complete; all major portfolio construction methods complete including Black-Litterman; ONNX inference architecture complete but blocked by ort crate instability; live trading and Python bindings not started)
 
 ---
 

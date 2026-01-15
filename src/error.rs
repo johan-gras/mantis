@@ -46,6 +46,9 @@ pub enum BacktestError {
 
     #[error("Portfolio constraint violation: {0}")]
     ConstraintViolation(String),
+
+    #[error("Database error: {0}")]
+    DatabaseError(String),
 }
 
 /// Result type alias for backtest operations.

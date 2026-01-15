@@ -103,6 +103,7 @@ pub mod cpcv;
 pub mod data;
 pub mod engine;
 pub mod error;
+pub mod experiments;
 pub mod export;
 pub mod features;
 pub mod metadata;

@@ -7,6 +7,7 @@ use mantis::data::{
 };
 use mantis::engine::{BacktestConfig, Engine};
 use mantis::error::Result;
+use mantis::experiments::{default_store_path, ensure_store_directory, ExperimentFilter, ExperimentStore, ExperimentRecord};
 use mantis::features::{FeatureConfig, FeatureExtractor, TimeSeriesSplitter};
 use mantis::portfolio::CostModel;
 use mantis::strategies::{
@@ -19,8 +20,10 @@ use mantis::walkforward::{
 };
 
 use clap::{Parser, Subcommand, ValueEnum};
+use colored::Colorize;
 use std::fs;
 use std::path::PathBuf;
+use tabled::{builder::Builder, settings::Style};
 use tracing::{info, Level};
 use tracing_subscriber::FmtSubscriber;
 
@@ -335,6 +338,10 @@ pub enum Commands {
         #[arg(short, long, value_enum, default_value = "auto")]
         format: DataFormatArg,
     },
+
+    /// Experiment tracking and management
+    #[command(subcommand)]
+    Experiments(ExperimentsCommands),
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, ValueEnum)]
@@ -467,6 +474,72 @@ impl ResampleIntervalArg {
             ResampleIntervalArg::OneMonth => ResampleInterval::Month,
         }
     }
+}
+
+#[derive(Subcommand)]
+pub enum ExperimentsCommands {
+    /// List all experiments with optional filters
+    List {
+        /// Filter by strategy name (partial match)
+        #[arg(long)]
+        strategy: Option<String>,
+
+        /// Filter by minimum Sharpe ratio
+        #[arg(long)]
+        min_sharpe: Option<f64>,
+
+        /// Filter by maximum drawdown percentage
+        #[arg(long)]
+        max_drawdown: Option<f64>,
+
+        /// Limit number of results
+        #[arg(short, long)]
+        limit: Option<usize>,
+
+        /// Sort by field (sharpe_ratio, total_return, timestamp, max_drawdown, num_trades)
+        #[arg(long, default_value = "timestamp")]
+        sort_by: String,
+
+        /// Sort descending
+        #[arg(long)]
+        desc: bool,
+    },
+
+    /// Show details for a specific experiment
+    Show {
+        /// Experiment ID
+        id: String,
+    },
+
+    /// Compare two experiments side-by-side
+    Compare {
+        /// First experiment ID
+        id1: String,
+        /// Second experiment ID
+        id2: String,
+    },
+
+    /// Add tags to an experiment
+    Tag {
+        /// Experiment ID
+        id: String,
+        /// Tags to add
+        tags: Vec<String>,
+    },
+
+    /// Add notes to an experiment
+    Note {
+        /// Experiment ID
+        id: String,
+        /// Note text
+        note: String,
+    },
+
+    /// Delete an experiment
+    Delete {
+        /// Experiment ID
+        id: String,
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -741,6 +814,27 @@ pub fn run() -> Result<()> {
             interval_seconds,
             format,
         } => run_quality_report(data, *interval_seconds, *format),
+
+        Commands::Experiments(experiments_cmd) => match experiments_cmd {
+            ExperimentsCommands::List {
+                strategy,
+                min_sharpe,
+                max_drawdown,
+                limit,
+                sort_by,
+                desc,
+            } => experiments_list(strategy, *min_sharpe, *max_drawdown, *limit, sort_by, *desc),
+
+            ExperimentsCommands::Show { id } => experiments_show(id),
+
+            ExperimentsCommands::Compare { id1, id2 } => experiments_compare(id1, id2),
+
+            ExperimentsCommands::Tag { id, tags } => experiments_tag(id, tags),
+
+            ExperimentsCommands::Note { id, note } => experiments_note(id, note),
+
+            ExperimentsCommands::Delete { id } => experiments_delete(id),
+        },
     }
 }
 
@@ -828,7 +922,16 @@ fn run_backtest(
         StrategyType::Macd => Box::new(MacdStrategy::new(fast_period, slow_period, 9)),
     };
 
+    let start_time = std::time::Instant::now();
     let result = engine.run(strategy.as_mut(), symbol)?;
+    let duration_ms = start_time.elapsed().as_millis() as i64;
+
+    // Automatically log experiment to store
+    if let Err(e) = log_experiment_to_store(&result, duration_ms) {
+        eprintln!("Warning: Failed to log experiment: {}", e);
+    } else {
+        println!("\nExperiment logged: {}", result.experiment_id.to_string().bright_cyan());
+    }
 
     match output {
         OutputFormat::Text => ResultFormatter::print_report(&result),
@@ -1751,6 +1854,366 @@ fn validate_data(data_path: &PathBuf) -> Result<()> {
     }
 
     println!("\nValidation: PASSED");
+    Ok(())
+}
+
+// Experiment management functions
+
+fn log_experiment_to_store(result: &mantis::BacktestResult, duration_ms: i64) -> Result<()> {
+    ensure_store_directory()?;
+    let store = ExperimentStore::new(default_store_path())?;
+    let record = ExperimentRecord::from_backtest_result(result, Some(duration_ms))?;
+    store.save(&record)?;
+    Ok(())
+}
+
+fn experiments_list(
+    strategy: &Option<String>,
+    min_sharpe: Option<f64>,
+    max_drawdown: Option<f64>,
+    limit: Option<usize>,
+    sort_by: &str,
+    desc: bool,
+) -> Result<()> {
+    let store = ExperimentStore::new(default_store_path())?;
+
+    let filter = ExperimentFilter {
+        strategy_name: strategy.clone(),
+        min_sharpe,
+        max_drawdown,
+        limit,
+        sort_by: Some(sort_by.to_string()),
+        sort_desc: desc,
+        ..Default::default()
+    };
+
+    let experiments = store.list(&filter)?;
+
+    if experiments.is_empty() {
+        println!("No experiments found matching filters.");
+        return Ok(());
+    }
+
+    println!("\n{}", format!("Found {} experiments", experiments.len()).bold());
+    println!("Store: {}\n", default_store_path().dimmed());
+
+    let mut builder = Builder::default();
+    builder.push_record(vec![
+        "ID".bold().to_string(),
+        "Timestamp".bold().to_string(),
+        "Strategy".bold().to_string(),
+        "Symbols".bold().to_string(),
+        "Return %".bold().to_string(),
+        "Sharpe".bold().to_string(),
+        "Max DD %".bold().to_string(),
+        "Trades".bold().to_string(),
+        "Win Rate %".bold().to_string(),
+    ]);
+
+    for exp in &experiments {
+        let id_short = exp.experiment_id.chars().take(8).collect::<String>();
+        let return_colored = if exp.total_return > 0.0 {
+            format!("{:>8.2}", exp.total_return).green()
+        } else {
+            format!("{:>8.2}", exp.total_return).red()
+        };
+
+        let sharpe_colored = if exp.sharpe_ratio > 1.0 {
+            format!("{:>6.2}", exp.sharpe_ratio).green()
+        } else if exp.sharpe_ratio > 0.0 {
+            format!("{:>6.2}", exp.sharpe_ratio).yellow()
+        } else {
+            format!("{:>6.2}", exp.sharpe_ratio).red()
+        };
+
+        let dd_colored = format!("{:>8.2}", exp.max_drawdown).red();
+
+        builder.push_record(vec![
+            id_short.bright_cyan().to_string(),
+            exp.timestamp.format("%Y-%m-%d %H:%M").to_string(),
+            exp.strategy_name.clone(),
+            exp.symbols.clone(),
+            return_colored.to_string(),
+            sharpe_colored.to_string(),
+            dd_colored.to_string(),
+            exp.num_trades.to_string(),
+            format!("{:.1}", exp.win_rate),
+        ]);
+    }
+
+    let mut table = builder.build();
+    table.with(Style::rounded());
+    println!("{}", table);
+
+    println!("\nUse 'mantis experiments show <id>' to view details");
+
+    Ok(())
+}
+
+fn experiments_show(id: &str) -> Result<()> {
+    let store = ExperimentStore::new(default_store_path())?;
+
+    let exp = store.get(id)?
+        .ok_or_else(|| mantis::BacktestError::ConfigError(format!("Experiment not found: {}", id)))?;
+
+    println!("\n{}", "Experiment Details".bold().underline());
+    println!();
+
+    println!("{}: {}", "ID".bold(), exp.experiment_id.bright_cyan());
+    println!("{}: {}", "Timestamp".bold(), exp.timestamp.format("%Y-%m-%d %H:%M:%S"));
+    if let Some(duration) = exp.duration_ms {
+        println!("{}: {}ms", "Duration".bold(), duration);
+    }
+    println!("{}: {}", "Strategy".bold(), exp.strategy_name.bright_yellow());
+    println!("{}: {}", "Symbols".bold(), exp.symbols);
+    println!();
+
+    println!("{}", "Git Information".bold().underline());
+    if let Some(commit) = &exp.git_commit {
+        println!("{}: {}", "Commit".bold(), commit.bright_blue());
+    }
+    if let Some(branch) = &exp.git_branch {
+        println!("{}: {}", "Branch".bold(), branch);
+    }
+    println!("{}: {}", "Dirty".bold(), if exp.git_dirty { "Yes".red() } else { "No".green() });
+    println!();
+
+    println!("{}", "Performance Metrics".bold().underline());
+
+    let return_colored = if exp.total_return > 0.0 {
+        format!("{:.2}%", exp.total_return).green()
+    } else {
+        format!("{:.2}%", exp.total_return).red()
+    };
+    println!("{}: {}", "Total Return".bold(), return_colored);
+
+    let sharpe_colored = if exp.sharpe_ratio > 1.0 {
+        format!("{:.3}", exp.sharpe_ratio).green()
+    } else if exp.sharpe_ratio > 0.0 {
+        format!("{:.3}", exp.sharpe_ratio).yellow()
+    } else {
+        format!("{:.3}", exp.sharpe_ratio).red()
+    };
+    println!("{}: {}", "Sharpe Ratio".bold(), sharpe_colored);
+    println!("{}: {:.3}", "Sortino Ratio".bold(), exp.sortino_ratio);
+    println!("{}: {:.3}", "Calmar Ratio".bold(), exp.calmar_ratio);
+    println!("{}: {}", "Max Drawdown".bold(), format!("{:.2}%", exp.max_drawdown).red());
+    println!();
+
+    println!("{}", "Trade Statistics".bold().underline());
+    println!("{}: {}", "Number of Trades".bold(), exp.num_trades);
+    println!("{}: {:.1}%", "Win Rate".bold(), exp.win_rate);
+    println!("{}: {:.2}", "Profit Factor".bold(), exp.profit_factor);
+    println!();
+
+    if let Some(tags) = &exp.tags {
+        println!("{}: {}", "Tags".bold(), tags.bright_magenta());
+    }
+
+    if let Some(notes) = &exp.notes {
+        println!("{}: {}", "Notes".bold(), notes);
+        println!();
+    }
+
+    println!("{}: {}", "Config Hash".bold(), exp.config_hash.dimmed());
+
+    Ok(())
+}
+
+fn experiments_compare(id1: &str, id2: &str) -> Result<()> {
+    let store = ExperimentStore::new(default_store_path())?;
+
+    let exp1 = store.get(id1)?
+        .ok_or_else(|| mantis::BacktestError::ConfigError(format!("Experiment not found: {}", id1)))?;
+    let exp2 = store.get(id2)?
+        .ok_or_else(|| mantis::BacktestError::ConfigError(format!("Experiment not found: {}", id2)))?;
+
+    println!("\n{}", "Experiment Comparison".bold().underline());
+    println!();
+
+    let mut builder = Builder::default();
+    builder.push_record(vec![
+        "Metric".bold().to_string(),
+        format!("Experiment 1 ({})", id1.chars().take(8).collect::<String>()).bold().to_string(),
+        format!("Experiment 2 ({})", id2.chars().take(8).collect::<String>()).bold().to_string(),
+        "Difference".bold().to_string(),
+    ]);
+
+    // Strategy
+    builder.push_record(vec![
+        "Strategy".to_string(),
+        exp1.strategy_name.clone(),
+        exp2.strategy_name.clone(),
+        "-".to_string(),
+    ]);
+
+    // Symbols
+    builder.push_record(vec![
+        "Symbols".to_string(),
+        exp1.symbols.clone(),
+        exp2.symbols.clone(),
+        "-".to_string(),
+    ]);
+
+    // Total Return
+    let return_diff = exp1.total_return - exp2.total_return;
+    let diff_colored = if return_diff > 0.0 {
+        format!("+{:.2}%", return_diff).green()
+    } else {
+        format!("{:.2}%", return_diff).red()
+    };
+    builder.push_record(vec![
+        "Total Return %".to_string(),
+        format!("{:.2}%", exp1.total_return),
+        format!("{:.2}%", exp2.total_return),
+        diff_colored.to_string(),
+    ]);
+
+    // Sharpe
+    let sharpe_diff = exp1.sharpe_ratio - exp2.sharpe_ratio;
+    let sharpe_diff_colored = if sharpe_diff > 0.0 {
+        format!("+{:.3}", sharpe_diff).green()
+    } else {
+        format!("{:.3}", sharpe_diff).red()
+    };
+    builder.push_record(vec![
+        "Sharpe Ratio".to_string(),
+        format!("{:.3}", exp1.sharpe_ratio),
+        format!("{:.3}", exp2.sharpe_ratio),
+        sharpe_diff_colored.to_string(),
+    ]);
+
+    // Sortino
+    let sortino_diff = exp1.sortino_ratio - exp2.sortino_ratio;
+    builder.push_record(vec![
+        "Sortino Ratio".to_string(),
+        format!("{:.3}", exp1.sortino_ratio),
+        format!("{:.3}", exp2.sortino_ratio),
+        format!("{:+.3}", sortino_diff),
+    ]);
+
+    // Calmar
+    let calmar_diff = exp1.calmar_ratio - exp2.calmar_ratio;
+    builder.push_record(vec![
+        "Calmar Ratio".to_string(),
+        format!("{:.3}", exp1.calmar_ratio),
+        format!("{:.3}", exp2.calmar_ratio),
+        format!("{:+.3}", calmar_diff),
+    ]);
+
+    // Max Drawdown
+    let dd_diff = exp1.max_drawdown - exp2.max_drawdown;
+    let dd_diff_colored = if dd_diff < 0.0 {
+        format!("{:.2}%", dd_diff).green()
+    } else {
+        format!("+{:.2}%", dd_diff).red()
+    };
+    builder.push_record(vec![
+        "Max Drawdown %".to_string(),
+        format!("{:.2}%", exp1.max_drawdown),
+        format!("{:.2}%", exp2.max_drawdown),
+        dd_diff_colored.to_string(),
+    ]);
+
+    // Trades
+    let trades_diff = exp1.num_trades - exp2.num_trades;
+    builder.push_record(vec![
+        "Number of Trades".to_string(),
+        exp1.num_trades.to_string(),
+        exp2.num_trades.to_string(),
+        format!("{:+}", trades_diff),
+    ]);
+
+    // Win Rate
+    let win_rate_diff = exp1.win_rate - exp2.win_rate;
+    builder.push_record(vec![
+        "Win Rate %".to_string(),
+        format!("{:.1}%", exp1.win_rate),
+        format!("{:.1}%", exp2.win_rate),
+        format!("{:+.1}%", win_rate_diff),
+    ]);
+
+    // Profit Factor
+    let pf_diff = exp1.profit_factor - exp2.profit_factor;
+    builder.push_record(vec![
+        "Profit Factor".to_string(),
+        format!("{:.2}", exp1.profit_factor),
+        format!("{:.2}", exp2.profit_factor),
+        format!("{:+.2}", pf_diff),
+    ]);
+
+    let mut table = builder.build();
+    table.with(Style::rounded());
+    println!("{}", table);
+    println!();
+
+    Ok(())
+}
+
+fn experiments_tag(id: &str, tags: &[String]) -> Result<()> {
+    let store = ExperimentStore::new(default_store_path())?;
+
+    // Verify experiment exists and get full ID
+    let exp = store.get(id)?
+        .ok_or_else(|| mantis::BacktestError::ConfigError(format!("Experiment not found: {}", id)))?;
+
+    store.add_tags(&exp.experiment_id, tags)?;
+
+    println!("{} Added tags to experiment {}: {}",
+        "Success:".green().bold(),
+        id.bright_cyan(),
+        tags.join(", ").bright_magenta()
+    );
+
+    Ok(())
+}
+
+fn experiments_note(id: &str, note: &str) -> Result<()> {
+    let store = ExperimentStore::new(default_store_path())?;
+
+    // Verify experiment exists and get full ID
+    let exp = store.get(id)?
+        .ok_or_else(|| mantis::BacktestError::ConfigError(format!("Experiment not found: {}", id)))?;
+
+    store.add_notes(&exp.experiment_id, note)?;
+
+    println!("{} Added note to experiment {}",
+        "Success:".green().bold(),
+        id.bright_cyan()
+    );
+
+    Ok(())
+}
+
+fn experiments_delete(id: &str) -> Result<()> {
+    let store = ExperimentStore::new(default_store_path())?;
+
+    // Verify experiment exists
+    let exp = store.get(id)?
+        .ok_or_else(|| mantis::BacktestError::ConfigError(format!("Experiment not found: {}", id)))?;
+
+    println!("Are you sure you want to delete this experiment?");
+    println!("  ID: {}", exp.experiment_id.bright_cyan());
+    println!("  Strategy: {}", exp.strategy_name);
+    println!("  Timestamp: {}", exp.timestamp.format("%Y-%m-%d %H:%M:%S"));
+    println!();
+    println!("Type 'yes' to confirm deletion:");
+
+    use std::io::{self, BufRead};
+    let stdin = io::stdin();
+    let mut line = String::new();
+    stdin.lock().read_line(&mut line)?;
+
+    if line.trim().to_lowercase() == "yes" {
+        store.delete(&exp.experiment_id)?;
+        println!("{} Deleted experiment {}",
+            "Success:".green().bold(),
+            id.bright_cyan()
+        );
+    } else {
+        println!("Deletion cancelled.");
+    }
+
     Ok(())
 }
 

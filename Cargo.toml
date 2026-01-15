@@ -31,6 +31,7 @@ clarabel = "0.11"  # Quadratic optimization for mean-variance portfolio
 # Reproducibility and versioning
 git2 = { version = "0.19", default-features = false }
 sha2 = "0.10"
+rusqlite = { version = "0.32", features = ["bundled"] }
 
 # Error handling
 thiserror = "1.0"
