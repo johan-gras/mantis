@@ -3,6 +3,8 @@
 > **Last Verified**: 2026-01-15 via code analysis
 >
 > Items marked `[NOT STARTED]` were previously claimed as partial but verified to have no implementation.
+>
+> **Recent Changes**: Mean-variance optimization (Markowitz) now implemented with MeanVarianceOptimizer class, supporting minimum variance, maximum Sharpe ratio, and target return portfolios. Uses Clarabel quadratic optimizer.
 
 ## Current Status Summary
 
@@ -367,10 +369,12 @@ Items are organized by category and prioritized within each category. Priority r
 - Rolling correlation between symbols
 - Correlation matrix estimation
 
-### [PARTIAL ~60%] [HIGH] Portfolio Construction Methods
-- **IMPLEMENTED**: Equal-weight allocation, momentum-based allocation, inverse volatility weighting, risk parity
+### [PARTIAL ~80%] [HIGH] Portfolio Construction Methods
+- **IMPLEMENTED**:
+  - Equal-weight allocation, momentum-based allocation
+  - Inverse volatility weighting, risk parity
+  - Mean-variance optimization (Markowitz) - minimum variance, maximum Sharpe ratio, target return portfolios
 - **MISSING**:
-  - Mean-variance optimization (Markowitz)
   - Hierarchical Risk Parity (HRP)
   - Black-Litterman model
   - Target volatility portfolios
@@ -940,7 +944,7 @@ cargo doc --no-deps --open
 | Reproducibility | 0 | 2 | 0 | 2 | 4 |
 | **TOTAL** | **39** | **13** | **4** | **71** | **127** |
 
-**Estimated Completion: ~37%** (core backtesting solid; Cross-Sectional Features and CPCV now complete; inverse volatility and risk parity portfolio strategies complete; ONNX inference architecture complete but blocked by ort crate instability; live trading and Python bindings not started)
+**Estimated Completion: ~38%** (core backtesting solid; Cross-Sectional Features and CPCV now complete; inverse volatility, risk parity, and mean-variance optimization portfolio strategies complete; ONNX inference architecture complete but blocked by ort crate instability; live trading and Python bindings not started)
 
 ---
 

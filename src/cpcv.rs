@@ -244,7 +244,8 @@ impl CPCVAnalyzer {
                     .filter(|b| {
                         b.timestamp >= train_start
                             && b.timestamp <= train_end
-                            && (b.timestamp < test_start - Duration::days(self.config.embargo_days as i64)
+                            && (b.timestamp
+                                < test_start - Duration::days(self.config.embargo_days as i64)
                                 || b.timestamp > embargo_end)
                     })
                     .count()
@@ -353,8 +354,8 @@ impl CPCVAnalyzer {
                 let train_bars: Vec<Bar> = bars
                     .iter()
                     .filter(|b| {
-                        let in_train_period = b.timestamp >= fold.train_start
-                            && b.timestamp <= fold.train_end;
+                        let in_train_period =
+                            b.timestamp >= fold.train_start && b.timestamp <= fold.train_end;
                         let before_test_embargo = b.timestamp
                             < fold.test_start - Duration::days(self.config.embargo_days as i64);
                         let after_test_embargo = b.timestamp > fold.embargo_end;

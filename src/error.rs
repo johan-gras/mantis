@@ -37,6 +37,12 @@ pub enum BacktestError {
 
     #[error("TOML parsing error: {0}")]
     TomlError(#[from] toml::de::Error),
+
+    #[error("Invalid input: {0}")]
+    InvalidInput(String),
+
+    #[error("Optimization error: {0}")]
+    OptimizationError(String),
 }
 
 /// Result type alias for backtest operations.

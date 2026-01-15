@@ -26,6 +26,7 @@ arrow = { version = "53", default-features = false }
 statrs = "0.16"
 rand = "0.8"
 uuid = { version = "1.7", features = ["serde", "v4"] }
+clarabel = "0.11"  # Quadratic optimization for mean-variance portfolio
 
 # Error handling
 thiserror = "1.0"

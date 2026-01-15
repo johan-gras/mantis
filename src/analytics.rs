@@ -737,11 +737,7 @@ impl PerformanceMetrics {
         let mean: f64 = returns.iter().sum::<f64>() / n;
 
         // Calculate variance
-        let variance: f64 = returns
-            .iter()
-            .map(|r| (r - mean).powi(2))
-            .sum::<f64>()
-            / n;
+        let variance: f64 = returns.iter().map(|r| (r - mean).powi(2)).sum::<f64>() / n;
 
         if variance == 0.0 {
             return 0.0;
@@ -750,11 +746,7 @@ impl PerformanceMetrics {
         let std_dev = variance.sqrt();
 
         // Calculate third moment
-        let third_moment: f64 = returns
-            .iter()
-            .map(|r| (r - mean).powi(3))
-            .sum::<f64>()
-            / n;
+        let third_moment: f64 = returns.iter().map(|r| (r - mean).powi(3)).sum::<f64>() / n;
 
         third_moment / std_dev.powi(3)
     }
@@ -773,22 +765,14 @@ impl PerformanceMetrics {
         let mean: f64 = returns.iter().sum::<f64>() / n;
 
         // Calculate variance
-        let variance: f64 = returns
-            .iter()
-            .map(|r| (r - mean).powi(2))
-            .sum::<f64>()
-            / n;
+        let variance: f64 = returns.iter().map(|r| (r - mean).powi(2)).sum::<f64>() / n;
 
         if variance == 0.0 {
             return 0.0;
         }
 
         // Calculate fourth moment
-        let fourth_moment: f64 = returns
-            .iter()
-            .map(|r| (r - mean).powi(4))
-            .sum::<f64>()
-            / n;
+        let fourth_moment: f64 = returns.iter().map(|r| (r - mean).powi(4)).sum::<f64>() / n;
 
         // Subtract 3 to get excess kurtosis (relative to normal distribution)
         (fourth_moment / variance.powi(2)) - 3.0
@@ -808,7 +792,10 @@ impl PerformanceMetrics {
 
         // 95th percentile (95% of returns are below this)
         let p95_idx = ((sorted.len() as f64) * 0.95) as usize;
-        let p95_gain = sorted.get(p95_idx.min(sorted.len() - 1)).copied().unwrap_or(0.0);
+        let p95_gain = sorted
+            .get(p95_idx.min(sorted.len() - 1))
+            .copied()
+            .unwrap_or(0.0);
 
         // 5th percentile (5% of returns are below this - the losses)
         let p05_idx = ((sorted.len() as f64) * 0.05) as usize;
@@ -867,9 +854,7 @@ impl PerformanceMetrics {
         let var_max_sr = 1.0 + (1.0 - euler_mascheroni) / n;
 
         // Deflated Sharpe Ratio
-        let dsr = (sharpe - expected_max_sr) / var_max_sr.sqrt();
-
-        dsr
+        (sharpe - expected_max_sr) / var_max_sr.sqrt()
     }
 
     /// Calculate Probabilistic Sharpe Ratio (PSR) - probability that SR > benchmark SR.
@@ -904,8 +889,7 @@ impl PerformanceMetrics {
 
         // Calculate the denominator: adjusted variance of SR estimate
         // Var[SR] = (1 - γ₃×SR + (γ₄-1)/4 × SR²) / (T-1)
-        let variance_adjustment =
-            1.0 - skewness * sharpe + (kurtosis - 1.0) / 4.0 * sharpe.powi(2);
+        let variance_adjustment = 1.0 - skewness * sharpe + (kurtosis - 1.0) / 4.0 * sharpe.powi(2);
 
         // Protect against negative variance (can happen with extreme skew/kurtosis)
         let variance_adjustment = variance_adjustment.max(0.01);
@@ -1018,10 +1002,7 @@ impl ResultFormatter {
 
         // Overfitting Detection
         println!("{}", "Overfitting Detection".bold().underline());
-        println!(
-            "  Deflated Sharpe: {:>12.2}",
-            metrics.deflated_sharpe_ratio
-        );
+        println!("  Deflated Sharpe: {:>12.2}", metrics.deflated_sharpe_ratio);
         println!(
             "  Prob. Sharpe:    {:>12.2}  ({})",
             metrics.probabilistic_sharpe_ratio,
@@ -1068,17 +1049,13 @@ impl ResultFormatter {
     fn format_psr_confidence(psr: f64) -> String {
         let pct = psr * 100.0;
         if psr >= 0.95 {
-            format!("{:.1}% - High confidence", pct)
-                .green()
-                .to_string()
+            format!("{:.1}% - High confidence", pct).green().to_string()
         } else if psr >= 0.75 {
             format!("{:.1}% - Moderate confidence", pct)
                 .yellow()
                 .to_string()
         } else if psr >= 0.50 {
-            format!("{:.1}% - Low confidence", pct)
-                .yellow()
-                .to_string()
+            format!("{:.1}% - Low confidence", pct).yellow().to_string()
         } else {
             format!("{:.1}% - Likely luck", pct).red().to_string()
         }
@@ -2259,11 +2236,7 @@ mod tests {
         let returns = vec![-0.02, -0.01, 0.0, 0.0, 0.01, 0.02];
         let kurt = PerformanceMetrics::kurtosis(&returns);
         // For small samples, kurtosis can vary, so we just check it's calculated
-        assert!(
-            kurt.is_finite(),
-            "Kurtosis should be finite: {}",
-            kurt
-        );
+        assert!(kurt.is_finite(), "Kurtosis should be finite: {}", kurt);
     }
 
     #[test]
@@ -2432,10 +2405,7 @@ mod tests {
             metrics.kurtosis.is_finite(),
             "Kurtosis should be calculated"
         );
-        assert!(
-            metrics.tail_ratio > 0.0,
-            "Tail ratio should be positive"
-        );
+        assert!(metrics.tail_ratio > 0.0, "Tail ratio should be positive");
     }
 
     #[test]
@@ -2459,12 +2429,18 @@ mod tests {
 
         let dsr = PerformanceMetrics::deflated_sharpe_ratio(sharpe, n_trials, n_observations);
 
-        assert!(dsr < sharpe, "DSR should be less than SR with multiple trials");
+        assert!(
+            dsr < sharpe,
+            "DSR should be less than SR with multiple trials"
+        );
         assert!(dsr.is_finite(), "DSR should be finite");
 
         // For 100 trials, expected max SR ≈ sqrt(2*ln(100)) ≈ 3.03
         // So a SR of 2.0 should deflate to a negative value
-        assert!(dsr < 0.0, "DSR should be negative for SR=2.0 with 100 trials");
+        assert!(
+            dsr < 0.0,
+            "DSR should be negative for SR=2.0 with 100 trials"
+        );
     }
 
     #[test]
@@ -2551,62 +2527,101 @@ mod tests {
     #[test]
     fn test_probabilistic_sharpe_ratio_with_skewness() {
         // Negative skewness should reduce PSR (use fewer observations to see effect)
-        let sharpe = 0.8;  // Lower Sharpe to avoid saturation
-        let n_observations = 30;  // Fewer observations to see skewness effect
+        let sharpe = 0.8; // Lower Sharpe to avoid saturation
+        let n_observations = 30; // Fewer observations to see skewness effect
         let benchmark_sr = 0.0;
 
         // PSR with zero skewness
-        let psr_zero_skew =
-            PerformanceMetrics::probabilistic_sharpe_ratio(sharpe, 0.0, 0.0, n_observations, benchmark_sr);
+        let psr_zero_skew = PerformanceMetrics::probabilistic_sharpe_ratio(
+            sharpe,
+            0.0,
+            0.0,
+            n_observations,
+            benchmark_sr,
+        );
 
         // PSR with negative skewness (bad tail behavior)
-        let psr_neg_skew =
-            PerformanceMetrics::probabilistic_sharpe_ratio(sharpe, -1.5, 0.0, n_observations, benchmark_sr);
+        let psr_neg_skew = PerformanceMetrics::probabilistic_sharpe_ratio(
+            sharpe,
+            -1.5,
+            0.0,
+            n_observations,
+            benchmark_sr,
+        );
 
-        assert!(psr_zero_skew > psr_neg_skew,
+        assert!(
+            psr_zero_skew > psr_neg_skew,
             "Negative skewness should reduce PSR: {} vs {}",
-            psr_zero_skew, psr_neg_skew);
+            psr_zero_skew,
+            psr_neg_skew
+        );
     }
 
     #[test]
     fn test_probabilistic_sharpe_ratio_with_kurtosis() {
         // High kurtosis (fat tails) should reduce PSR (use fewer observations to see effect)
-        let sharpe = 0.8;  // Lower Sharpe to avoid saturation
-        let n_observations = 30;  // Fewer observations to see kurtosis effect
+        let sharpe = 0.8; // Lower Sharpe to avoid saturation
+        let n_observations = 30; // Fewer observations to see kurtosis effect
         let benchmark_sr = 0.0;
 
         // PSR with normal kurtosis
-        let psr_normal_kurt =
-            PerformanceMetrics::probabilistic_sharpe_ratio(sharpe, 0.0, 0.0, n_observations, benchmark_sr);
+        let psr_normal_kurt = PerformanceMetrics::probabilistic_sharpe_ratio(
+            sharpe,
+            0.0,
+            0.0,
+            n_observations,
+            benchmark_sr,
+        );
 
         // PSR with high excess kurtosis (fat tails - more extreme events)
-        let psr_high_kurt =
-            PerformanceMetrics::probabilistic_sharpe_ratio(sharpe, 0.0, 8.0, n_observations, benchmark_sr);
+        let psr_high_kurt = PerformanceMetrics::probabilistic_sharpe_ratio(
+            sharpe,
+            0.0,
+            8.0,
+            n_observations,
+            benchmark_sr,
+        );
 
-        assert!(psr_normal_kurt > psr_high_kurt,
+        assert!(
+            psr_normal_kurt > psr_high_kurt,
             "High kurtosis should reduce PSR: {} vs {}",
-            psr_normal_kurt, psr_high_kurt);
+            psr_normal_kurt,
+            psr_high_kurt
+        );
     }
 
     #[test]
     fn test_probabilistic_sharpe_ratio_benchmark_comparison() {
         // PSR should measure probability of exceeding benchmark
-        let sharpe = 0.8;  // Use moderate SR to avoid saturation
+        let sharpe = 0.8; // Use moderate SR to avoid saturation
         let skewness = 0.0;
         let kurtosis = 0.0;
-        let n_observations = 50;  // Fewer observations to see benchmark effect
+        let n_observations = 50; // Fewer observations to see benchmark effect
 
         // PSR vs zero benchmark
-        let psr_vs_zero =
-            PerformanceMetrics::probabilistic_sharpe_ratio(sharpe, skewness, kurtosis, n_observations, 0.0);
+        let psr_vs_zero = PerformanceMetrics::probabilistic_sharpe_ratio(
+            sharpe,
+            skewness,
+            kurtosis,
+            n_observations,
+            0.0,
+        );
 
         // PSR vs higher benchmark (harder to beat)
-        let psr_vs_high =
-            PerformanceMetrics::probabilistic_sharpe_ratio(sharpe, skewness, kurtosis, n_observations, 0.5);
+        let psr_vs_high = PerformanceMetrics::probabilistic_sharpe_ratio(
+            sharpe,
+            skewness,
+            kurtosis,
+            n_observations,
+            0.5,
+        );
 
-        assert!(psr_vs_zero > psr_vs_high,
+        assert!(
+            psr_vs_zero > psr_vs_high,
             "PSR should be lower vs higher benchmark: {} vs {}",
-            psr_vs_zero, psr_vs_high);
+            psr_vs_zero,
+            psr_vs_high
+        );
     }
 
     #[test]
@@ -2620,8 +2635,7 @@ mod tests {
             "Deflated Sharpe Ratio should be calculated"
         );
         assert!(
-            metrics.probabilistic_sharpe_ratio >= 0.0
-                && metrics.probabilistic_sharpe_ratio <= 1.0,
+            metrics.probabilistic_sharpe_ratio >= 0.0 && metrics.probabilistic_sharpe_ratio <= 1.0,
             "PSR should be between 0 and 1: {}",
             metrics.probabilistic_sharpe_ratio
         );

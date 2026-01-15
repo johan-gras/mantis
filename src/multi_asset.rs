@@ -264,8 +264,7 @@ impl<'a> PortfolioContext<'a> {
 
         // Calculate mean and standard deviation across universe
         let mean = values.iter().sum::<f64>() / values.len() as f64;
-        let variance =
-            values.iter().map(|v| (v - mean).powi(2)).sum::<f64>() / values.len() as f64;
+        let variance = values.iter().map(|v| (v - mean).powi(2)).sum::<f64>() / values.len() as f64;
         let std_dev = variance.sqrt();
 
         if std_dev > 0.0 {
@@ -312,7 +311,7 @@ impl<'a> PortfolioContext<'a> {
         let mut momentums: Vec<f64> = Vec::new();
         for sym in self.symbols {
             if let Some(bars) = self.bars.get(sym) {
-                if bars.len() >= lookback + 1 {
+                if bars.len() > lookback {
                     let start = bars[bars.len() - lookback - 1].close;
                     let end = bars.last()?.close;
                     let momentum = (end - start) / start;
@@ -363,9 +362,11 @@ impl<'a> PortfolioContext<'a> {
                     if bars.len() < lb {
                         return None;
                     }
-                    let avg_vol =
-                        bars[bars.len() - lb..].iter().map(|b| b.volume).sum::<f64>()
-                            / lb as f64;
+                    let avg_vol = bars[bars.len() - lb..]
+                        .iter()
+                        .map(|b| b.volume)
+                        .sum::<f64>()
+                        / lb as f64;
                     Some(avg_vol)
                 },
                 lookback,
@@ -384,10 +385,7 @@ impl<'a> PortfolioContext<'a> {
                         return None;
                     }
                     let mean = returns.iter().sum::<f64>() / returns.len() as f64;
-                    let variance = returns
-                        .iter()
-                        .map(|r| (r - mean).powi(2))
-                        .sum::<f64>()
+                    let variance = returns.iter().map(|r| (r - mean).powi(2)).sum::<f64>()
                         / returns.len() as f64;
                     Some(variance.sqrt())
                 },
@@ -1038,11 +1036,8 @@ impl PortfolioStrategy for InverseVolatilityStrategy {
 
                 // Calculate volatility (standard deviation of returns)
                 let mean = returns.iter().sum::<f64>() / returns.len() as f64;
-                let variance = returns
-                    .iter()
-                    .map(|r| (r - mean).powi(2))
-                    .sum::<f64>()
-                    / returns.len() as f64;
+                let variance =
+                    returns.iter().map(|r| (r - mean).powi(2)).sum::<f64>() / returns.len() as f64;
                 let volatility = variance.sqrt();
 
                 Some((s.clone(), volatility))
@@ -1138,11 +1133,8 @@ impl PortfolioStrategy for RiskParityStrategy {
 
                 // Calculate volatility (annualized)
                 let mean = returns.iter().sum::<f64>() / returns.len() as f64;
-                let variance = returns
-                    .iter()
-                    .map(|r| (r - mean).powi(2))
-                    .sum::<f64>()
-                    / returns.len() as f64;
+                let variance =
+                    returns.iter().map(|r| (r - mean).powi(2)).sum::<f64>() / returns.len() as f64;
                 let daily_vol = variance.sqrt();
                 let annual_vol = daily_vol * 252.0_f64.sqrt();
 
@@ -1177,6 +1169,586 @@ impl PortfolioStrategy for RiskParityStrategy {
             .collect();
 
         AllocationSignal::Rebalance(weights)
+    }
+}
+
+/// Mean-variance portfolio optimizer using Markowitz framework.
+///
+/// Solves quadratic optimization problems to find optimal portfolio weights
+/// that minimize risk for a given return target or maximize Sharpe ratio.
+pub struct MeanVarianceOptimizer {
+    /// Expected returns for each asset (annualized).
+    expected_returns: Vec<f64>,
+    /// Covariance matrix (annualized).
+    covariance_matrix: Vec<Vec<f64>>,
+    /// Asset symbols in order.
+    symbols: Vec<String>,
+    /// Risk-free rate for Sharpe ratio calculation (annualized).
+    risk_free_rate: f64,
+}
+
+impl MeanVarianceOptimizer {
+    /// Create a new optimizer with expected returns and covariance matrix.
+    ///
+    /// # Arguments
+    /// * `symbols` - Asset symbols
+    /// * `expected_returns` - Annualized expected returns for each asset
+    /// * `covariance_matrix` - Annualized covariance matrix (NxN)
+    /// * `risk_free_rate` - Risk-free rate (annualized, default 0.0)
+    pub fn new(
+        symbols: Vec<String>,
+        expected_returns: Vec<f64>,
+        covariance_matrix: Vec<Vec<f64>>,
+        risk_free_rate: f64,
+    ) -> Result<Self> {
+        let n = symbols.len();
+        if expected_returns.len() != n {
+            return Err(BacktestError::InvalidInput(
+                "Expected returns length must match number of symbols".to_string(),
+            ));
+        }
+        if covariance_matrix.len() != n || covariance_matrix.iter().any(|row| row.len() != n) {
+            return Err(BacktestError::InvalidInput(
+                "Covariance matrix must be square and match number of symbols".to_string(),
+            ));
+        }
+
+        Ok(Self {
+            expected_returns,
+            covariance_matrix,
+            symbols,
+            risk_free_rate,
+        })
+    }
+
+    /// Create optimizer from historical data.
+    ///
+    /// # Arguments
+    /// * `bars` - Historical bars for each symbol
+    /// * `lookback` - Number of periods to use for estimation
+    /// * `risk_free_rate` - Risk-free rate (annualized)
+    pub fn from_history(
+        bars: &HashMap<String, Vec<Bar>>,
+        lookback: usize,
+        risk_free_rate: f64,
+    ) -> Result<Self> {
+        let symbols: Vec<String> = bars.keys().cloned().collect();
+        let n = symbols.len();
+
+        if n == 0 {
+            return Err(BacktestError::InvalidInput(
+                "Need at least one symbol".to_string(),
+            ));
+        }
+
+        // Calculate returns for each asset
+        let mut returns_matrix: Vec<Vec<f64>> = Vec::new();
+        for symbol in &symbols {
+            let asset_bars = bars.get(symbol).ok_or_else(|| {
+                BacktestError::InvalidInput(format!("Missing bars for symbol {}", symbol))
+            })?;
+
+            if asset_bars.len() < lookback + 1 {
+                return Err(BacktestError::InvalidInput(format!(
+                    "Insufficient data for symbol {}: need {} bars, have {}",
+                    symbol,
+                    lookback + 1,
+                    asset_bars.len()
+                )));
+            }
+
+            let returns: Vec<f64> = asset_bars[asset_bars.len() - lookback - 1..]
+                .windows(2)
+                .map(|w| (w[1].close - w[0].close) / w[0].close)
+                .collect();
+
+            returns_matrix.push(returns);
+        }
+
+        // Calculate expected returns (mean) and annualize
+        let expected_returns: Vec<f64> = returns_matrix
+            .iter()
+            .map(|returns| {
+                let mean = returns.iter().sum::<f64>() / returns.len() as f64;
+                mean * 252.0 // Annualize assuming daily data
+            })
+            .collect();
+
+        // Calculate covariance matrix and annualize
+        let mut covariance_matrix = vec![vec![0.0; n]; n];
+        for i in 0..n {
+            for j in 0..n {
+                let mean_i = returns_matrix[i].iter().sum::<f64>() / returns_matrix[i].len() as f64;
+                let mean_j = returns_matrix[j].iter().sum::<f64>() / returns_matrix[j].len() as f64;
+
+                let cov = returns_matrix[i]
+                    .iter()
+                    .zip(returns_matrix[j].iter())
+                    .map(|(ri, rj)| (ri - mean_i) * (rj - mean_j))
+                    .sum::<f64>()
+                    / returns_matrix[i].len() as f64;
+
+                covariance_matrix[i][j] = cov * 252.0; // Annualize assuming daily data
+            }
+        }
+
+        Self::new(symbols, expected_returns, covariance_matrix, risk_free_rate)
+    }
+
+    /// Find minimum variance portfolio (ignoring returns).
+    ///
+    /// Returns optimal weights that minimize portfolio variance subject to
+    /// weights summing to 1 and being non-negative (long-only constraint).
+    pub fn minimum_variance(&self) -> Result<HashMap<String, f64>> {
+        use clarabel::algebra::*;
+        use clarabel::solver::*;
+
+        let n = self.symbols.len();
+
+        // Build P matrix (covariance matrix in CscMatrix format)
+        // P must be positive semidefinite
+        let mut p_data = Vec::new();
+        let mut p_indices = Vec::new();
+        let mut p_indptr = vec![0];
+
+        for j in 0..n {
+            for i in 0..n {
+                let val = self.covariance_matrix[i][j];
+                if val.abs() > 1e-10 {
+                    p_data.push(val);
+                    p_indices.push(i);
+                }
+            }
+            p_indptr.push(p_data.len());
+        }
+
+        let p = CscMatrix::new(n, n, p_indptr, p_indices, p_data);
+
+        // q vector (linear term, zeros for minimum variance)
+        let q = vec![0.0; n];
+
+        // Constraints: [equality; inequality]
+        // Equality: sum(w) = 1 (row of ones)
+        // Inequality: w >= 0 (identity matrix, as -w <= 0)
+        let mut a_data = Vec::new();
+        let mut a_indices = Vec::new();
+        let mut a_indptr = vec![0];
+
+        // Column by column (CSC format)
+        for j in 0..n {
+            // Equality constraint: 1.0 (sum constraint)
+            a_data.push(1.0);
+            a_indices.push(0);
+
+            // Inequality constraint: -1.0 for non-negativity (-w_j <= 0)
+            a_data.push(-1.0);
+            a_indices.push(1 + j);
+
+            a_indptr.push(a_data.len());
+        }
+
+        let a = CscMatrix::new(1 + n, n, a_indptr, a_indices, a_data);
+
+        // Bounds: b = [1.0, 0, 0, ..., 0]
+        let mut b = vec![1.0]; // Equality: sum(w) = 1
+        b.extend(vec![0.0; n]); // Inequality: w >= 0
+
+        // Cones: [Zero cone for equality, Nonnegative cone for inequality]
+        let cones = [ZeroConeT(1), NonnegativeConeT(n)];
+
+        // Solve
+        let settings = DefaultSettingsBuilder::default()
+            .max_iter(100)
+            .verbose(false)
+            .build()
+            .map_err(|e| {
+                BacktestError::OptimizationError(format!("Failed to build settings: {}", e))
+            })?;
+
+        let mut solver = DefaultSolver::new(&p, &q, &a, &b, &cones, settings).map_err(|e| {
+            BacktestError::OptimizationError(format!("Failed to create solver: {:?}", e))
+        })?;
+
+        solver.solve();
+
+        if !matches!(solver.solution.status, SolverStatus::Solved) {
+            return Err(BacktestError::OptimizationError(format!(
+                "Optimization failed with status: {:?}",
+                solver.solution.status
+            )));
+        }
+
+        // Extract weights
+        let weights: HashMap<String, f64> = self
+            .symbols
+            .iter()
+            .zip(solver.solution.x.iter())
+            .map(|(s, &w)| (s.clone(), w.max(0.0))) // Ensure non-negative due to numerical precision
+            .collect();
+
+        Ok(weights)
+    }
+
+    /// Find maximum Sharpe ratio portfolio.
+    ///
+    /// Returns optimal weights that maximize (return - risk_free_rate) / volatility
+    /// subject to weights summing to 1 and being non-negative.
+    pub fn maximum_sharpe_ratio(&self) -> Result<HashMap<String, f64>> {
+        // Maximum Sharpe ratio can be found by solving:
+        // minimize w'Σw subject to (μ - rf)'w = 1, w >= 0
+        // Then normalize weights to sum to 1
+
+        use clarabel::algebra::*;
+        use clarabel::solver::*;
+
+        let n = self.symbols.len();
+
+        // Excess returns (μ - rf)
+        let excess_returns: Vec<f64> = self
+            .expected_returns
+            .iter()
+            .map(|&r| r - self.risk_free_rate)
+            .collect();
+
+        // Check if all excess returns are non-positive
+        if excess_returns.iter().all(|&r| r <= 0.0) {
+            // Return minimum variance portfolio as fallback
+            return self.minimum_variance();
+        }
+
+        // Build P matrix (covariance matrix)
+        let mut p_data = Vec::new();
+        let mut p_indices = Vec::new();
+        let mut p_indptr = vec![0];
+
+        for j in 0..n {
+            for i in 0..n {
+                let val = self.covariance_matrix[i][j];
+                if val.abs() > 1e-10 {
+                    p_data.push(val);
+                    p_indices.push(i);
+                }
+            }
+            p_indptr.push(p_data.len());
+        }
+
+        let p = CscMatrix::new(n, n, p_indptr, p_indices, p_data);
+        let q = vec![0.0; n];
+
+        // Constraints: (μ - rf)'w = 1, w >= 0
+        let mut a_data = Vec::new();
+        let mut a_indices = Vec::new();
+        let mut a_indptr = vec![0];
+
+        for (j, &excess_ret) in excess_returns.iter().enumerate() {
+            // Equality: excess return
+            a_data.push(excess_ret);
+            a_indices.push(0);
+
+            // Inequality: non-negativity
+            a_data.push(-1.0);
+            a_indices.push(1 + j);
+
+            a_indptr.push(a_data.len());
+        }
+
+        let a = CscMatrix::new(1 + n, n, a_indptr, a_indices, a_data);
+
+        let mut b = vec![1.0]; // Excess return = 1
+        b.extend(vec![0.0; n]); // w >= 0
+
+        let cones = [ZeroConeT(1), NonnegativeConeT(n)];
+
+        let settings = DefaultSettingsBuilder::default()
+            .max_iter(100)
+            .verbose(false)
+            .build()
+            .map_err(|e| {
+                BacktestError::OptimizationError(format!("Failed to build settings: {}", e))
+            })?;
+
+        let mut solver = DefaultSolver::new(&p, &q, &a, &b, &cones, settings).map_err(|e| {
+            BacktestError::OptimizationError(format!("Failed to create solver: {:?}", e))
+        })?;
+
+        solver.solve();
+
+        if !matches!(solver.solution.status, SolverStatus::Solved) {
+            return Err(BacktestError::OptimizationError(format!(
+                "Max Sharpe optimization failed: {:?}",
+                solver.solution.status
+            )));
+        }
+
+        // Normalize weights to sum to 1
+        let weight_sum: f64 = solver.solution.x.iter().sum();
+        let weights: HashMap<String, f64> = self
+            .symbols
+            .iter()
+            .zip(solver.solution.x.iter())
+            .map(|(s, &w)| (s.clone(), (w / weight_sum).max(0.0)))
+            .collect();
+
+        Ok(weights)
+    }
+
+    /// Find portfolio with target return.
+    ///
+    /// Returns optimal weights that minimize variance subject to
+    /// achieving a target expected return and weights summing to 1.
+    ///
+    /// # Arguments
+    /// * `target_return` - Target expected return (annualized)
+    pub fn target_return(&self, target_return: f64) -> Result<HashMap<String, f64>> {
+        use clarabel::algebra::*;
+        use clarabel::solver::*;
+
+        let n = self.symbols.len();
+
+        // Build P matrix (covariance matrix)
+        let mut p_data = Vec::new();
+        let mut p_indices = Vec::new();
+        let mut p_indptr = vec![0];
+
+        for j in 0..n {
+            for i in 0..n {
+                let val = self.covariance_matrix[i][j];
+                if val.abs() > 1e-10 {
+                    p_data.push(val);
+                    p_indices.push(i);
+                }
+            }
+            p_indptr.push(p_data.len());
+        }
+
+        let p = CscMatrix::new(n, n, p_indptr, p_indices, p_data);
+        let q = vec![0.0; n];
+
+        // Constraints: sum(w) = 1, μ'w = target_return, w >= 0
+        let mut a_data = Vec::new();
+        let mut a_indices = Vec::new();
+        let mut a_indptr = vec![0];
+
+        for j in 0..n {
+            // Equality 1: sum constraint
+            a_data.push(1.0);
+            a_indices.push(0);
+
+            // Equality 2: return constraint
+            a_data.push(self.expected_returns[j]);
+            a_indices.push(1);
+
+            // Inequality: non-negativity
+            a_data.push(-1.0);
+            a_indices.push(2 + j);
+
+            a_indptr.push(a_data.len());
+        }
+
+        let a = CscMatrix::new(2 + n, n, a_indptr, a_indices, a_data);
+
+        let mut b = vec![1.0, target_return]; // Equality constraints
+        b.extend(vec![0.0; n]); // Inequality: w >= 0
+
+        let cones = [ZeroConeT(2), NonnegativeConeT(n)];
+
+        let settings = DefaultSettingsBuilder::default()
+            .max_iter(100)
+            .verbose(false)
+            .build()
+            .map_err(|e| {
+                BacktestError::OptimizationError(format!("Failed to build settings: {}", e))
+            })?;
+
+        let mut solver = DefaultSolver::new(&p, &q, &a, &b, &cones, settings).map_err(|e| {
+            BacktestError::OptimizationError(format!("Failed to create solver: {:?}", e))
+        })?;
+
+        solver.solve();
+
+        if !matches!(solver.solution.status, SolverStatus::Solved) {
+            return Err(BacktestError::OptimizationError(format!(
+                "Target return optimization failed: {:?}",
+                solver.solution.status
+            )));
+        }
+
+        let weights: HashMap<String, f64> = self
+            .symbols
+            .iter()
+            .zip(solver.solution.x.iter())
+            .map(|(s, &w)| (s.clone(), w.max(0.0)))
+            .collect();
+
+        Ok(weights)
+    }
+
+    /// Calculate portfolio expected return given weights.
+    pub fn portfolio_return(&self, weights: &HashMap<String, f64>) -> f64 {
+        self.symbols
+            .iter()
+            .enumerate()
+            .map(|(i, s)| {
+                let w = weights.get(s).copied().unwrap_or(0.0);
+                w * self.expected_returns[i]
+            })
+            .sum()
+    }
+
+    /// Calculate portfolio variance given weights.
+    pub fn portfolio_variance(&self, weights: &HashMap<String, f64>) -> f64 {
+        let n = self.symbols.len();
+        let mut variance = 0.0;
+
+        for i in 0..n {
+            let wi = weights.get(&self.symbols[i]).copied().unwrap_or(0.0);
+            for j in 0..n {
+                let wj = weights.get(&self.symbols[j]).copied().unwrap_or(0.0);
+                variance += wi * wj * self.covariance_matrix[i][j];
+            }
+        }
+
+        variance
+    }
+
+    /// Calculate portfolio volatility (standard deviation) given weights.
+    pub fn portfolio_volatility(&self, weights: &HashMap<String, f64>) -> f64 {
+        self.portfolio_variance(weights).sqrt()
+    }
+}
+
+/// Mean-variance optimized portfolio strategy.
+///
+/// Uses Markowitz mean-variance optimization to construct portfolios that
+/// maximize Sharpe ratio or target specific return levels.
+pub struct MeanVarianceStrategy {
+    /// Lookback period for estimating returns and covariance.
+    lookback: usize,
+    /// Rebalancing frequency in bars.
+    rebalance_frequency: usize,
+    /// Last rebalance bar index.
+    last_rebalance: usize,
+    /// Optimization objective.
+    objective: MeanVarianceObjective,
+    /// Risk-free rate (annualized).
+    risk_free_rate: f64,
+}
+
+/// Objective for mean-variance optimization.
+#[derive(Debug, Clone)]
+pub enum MeanVarianceObjective {
+    /// Minimize variance (ignoring returns).
+    MinimumVariance,
+    /// Maximize Sharpe ratio.
+    MaximumSharpe,
+    /// Target specific expected return (annualized).
+    TargetReturn(f64),
+}
+
+impl MeanVarianceStrategy {
+    /// Create a new mean-variance strategy.
+    ///
+    /// # Arguments
+    /// * `lookback` - Lookback period for estimating parameters
+    /// * `rebalance_frequency` - Rebalancing frequency in bars
+    /// * `objective` - Optimization objective
+    /// * `risk_free_rate` - Risk-free rate (annualized)
+    pub fn new(
+        lookback: usize,
+        rebalance_frequency: usize,
+        objective: MeanVarianceObjective,
+        risk_free_rate: f64,
+    ) -> Self {
+        Self {
+            lookback,
+            rebalance_frequency,
+            last_rebalance: 0,
+            objective,
+            risk_free_rate,
+        }
+    }
+
+    /// Create minimum variance strategy.
+    pub fn minimum_variance(lookback: usize, rebalance_frequency: usize) -> Self {
+        Self::new(
+            lookback,
+            rebalance_frequency,
+            MeanVarianceObjective::MinimumVariance,
+            0.0,
+        )
+    }
+
+    /// Create maximum Sharpe ratio strategy.
+    pub fn maximum_sharpe(
+        lookback: usize,
+        rebalance_frequency: usize,
+        risk_free_rate: f64,
+    ) -> Self {
+        Self::new(
+            lookback,
+            rebalance_frequency,
+            MeanVarianceObjective::MaximumSharpe,
+            risk_free_rate,
+        )
+    }
+
+    /// Create target return strategy.
+    pub fn target_return(lookback: usize, rebalance_frequency: usize, target_return: f64) -> Self {
+        Self::new(
+            lookback,
+            rebalance_frequency,
+            MeanVarianceObjective::TargetReturn(target_return),
+            0.0,
+        )
+    }
+}
+
+impl PortfolioStrategy for MeanVarianceStrategy {
+    fn name(&self) -> &str {
+        match self.objective {
+            MeanVarianceObjective::MinimumVariance => "Mean-Variance (Min Variance)",
+            MeanVarianceObjective::MaximumSharpe => "Mean-Variance (Max Sharpe)",
+            MeanVarianceObjective::TargetReturn(_) => "Mean-Variance (Target Return)",
+        }
+    }
+
+    fn warmup_period(&self) -> usize {
+        self.lookback + 1
+    }
+
+    fn on_bars(&mut self, ctx: &PortfolioContext) -> AllocationSignal {
+        // Check if it's time to rebalance
+        if ctx.bar_index < self.last_rebalance + self.rebalance_frequency {
+            return AllocationSignal::Hold;
+        }
+
+        self.last_rebalance = ctx.bar_index;
+
+        // Build optimizer from historical data
+        let optimizer =
+            match MeanVarianceOptimizer::from_history(ctx.bars, self.lookback, self.risk_free_rate)
+            {
+                Ok(opt) => opt,
+                Err(e) => {
+                    tracing::warn!("Failed to create optimizer: {}", e);
+                    return AllocationSignal::Hold;
+                }
+            };
+
+        // Optimize based on objective
+        let weights = match &self.objective {
+            MeanVarianceObjective::MinimumVariance => optimizer.minimum_variance(),
+            MeanVarianceObjective::MaximumSharpe => optimizer.maximum_sharpe_ratio(),
+            MeanVarianceObjective::TargetReturn(target) => optimizer.target_return(*target),
+        };
+
+        match weights {
+            Ok(w) => AllocationSignal::Rebalance(w),
+            Err(e) => {
+                tracing::warn!("Optimization failed: {}", e);
+                AllocationSignal::Hold
+            }
+        }
     }
 }
 
@@ -1251,7 +1823,7 @@ mod tests {
         // Create assets with different volatilities
         // High volatility asset
         let bars1 = create_test_bars(100, 100.0, 0.02); // 2% daily
-        // Low volatility asset
+                                                        // Low volatility asset
         let bars2 = create_test_bars(100, 50.0, 0.005); // 0.5% daily
 
         engine.add_data("HIGH_VOL", bars1);
@@ -1429,7 +2001,10 @@ mod tests {
         );
 
         // Rank should be ordered: A > B > C > D
-        assert!(rank_a > rank_d, "Strong momentum should rank higher than weak");
+        assert!(
+            rank_a > rank_d,
+            "Strong momentum should rank higher than weak"
+        );
     }
 
     #[test]
@@ -1671,5 +2246,265 @@ mod tests {
             rel_mom.is_none(),
             "Should return None with insufficient data"
         );
+    }
+
+    #[test]
+    fn test_mean_variance_optimizer_creation() {
+        let symbols = vec!["AAPL".to_string(), "GOOGL".to_string()];
+        let expected_returns = vec![0.10, 0.12];
+        let covariance_matrix = vec![vec![0.04, 0.01], vec![0.01, 0.09]];
+
+        let optimizer =
+            MeanVarianceOptimizer::new(symbols, expected_returns, covariance_matrix, 0.02);
+
+        assert!(optimizer.is_ok());
+    }
+
+    #[test]
+    fn test_mean_variance_optimizer_invalid_dimensions() {
+        let symbols = vec!["AAPL".to_string(), "GOOGL".to_string()];
+        let expected_returns = vec![0.10]; // Wrong size
+        let covariance_matrix = vec![vec![0.04, 0.01], vec![0.01, 0.09]];
+
+        let optimizer =
+            MeanVarianceOptimizer::new(symbols, expected_returns, covariance_matrix, 0.02);
+
+        assert!(optimizer.is_err());
+    }
+
+    #[test]
+    fn test_mean_variance_optimizer_from_history() {
+        // Create historical data for two assets
+        let bars1 = create_test_bars(100, 100.0, 0.001); // Low growth
+        let bars2 = create_test_bars(100, 100.0, 0.002); // Higher growth
+
+        let mut bars = HashMap::new();
+        bars.insert("AAPL".to_string(), bars1);
+        bars.insert("GOOGL".to_string(), bars2);
+
+        let optimizer = MeanVarianceOptimizer::from_history(&bars, 50, 0.02);
+
+        assert!(optimizer.is_ok());
+        let opt = optimizer.unwrap();
+        assert_eq!(opt.symbols.len(), 2);
+        assert_eq!(opt.expected_returns.len(), 2);
+        assert_eq!(opt.covariance_matrix.len(), 2);
+    }
+
+    #[test]
+    fn test_mean_variance_minimum_variance() {
+        // Create a simple 2-asset case
+        let symbols = vec!["LOW_VOL".to_string(), "HIGH_VOL".to_string()];
+        let expected_returns = vec![0.08, 0.12]; // High vol has higher return
+        let covariance_matrix = vec![
+            vec![0.01, 0.00], // Low vol asset with 10% vol
+            vec![0.00, 0.04], // High vol asset with 20% vol
+        ];
+
+        let optimizer =
+            MeanVarianceOptimizer::new(symbols.clone(), expected_returns, covariance_matrix, 0.02)
+                .unwrap();
+
+        let weights = optimizer.minimum_variance().unwrap();
+
+        // Should heavily favor the low volatility asset
+        let low_vol_weight = weights.get("LOW_VOL").copied().unwrap_or(0.0);
+        let high_vol_weight = weights.get("HIGH_VOL").copied().unwrap_or(0.0);
+
+        assert!(
+            low_vol_weight > high_vol_weight,
+            "Minimum variance should prefer low volatility asset"
+        );
+        assert!(
+            (low_vol_weight + high_vol_weight - 1.0).abs() < 0.01,
+            "Weights should sum to 1"
+        );
+        assert!(low_vol_weight >= 0.0 && low_vol_weight <= 1.0);
+        assert!(high_vol_weight >= 0.0 && high_vol_weight <= 1.0);
+    }
+
+    #[test]
+    fn test_mean_variance_maximum_sharpe() {
+        // Create a 2-asset case with different Sharpe ratios
+        let symbols = vec!["LOW_SHARPE".to_string(), "HIGH_SHARPE".to_string()];
+        let expected_returns = vec![0.06, 0.15]; // Second has much higher return
+        let covariance_matrix = vec![
+            vec![0.04, 0.00], // 20% vol, 6% return -> Sharpe ~0.2 (rf=2%)
+            vec![0.00, 0.09], // 30% vol, 15% return -> Sharpe ~0.43 (rf=2%)
+        ];
+
+        let optimizer =
+            MeanVarianceOptimizer::new(symbols.clone(), expected_returns, covariance_matrix, 0.02)
+                .unwrap();
+
+        let weights = optimizer.maximum_sharpe_ratio().unwrap();
+
+        // Should favor the higher Sharpe ratio asset
+        let low_sharpe_weight = weights.get("LOW_SHARPE").copied().unwrap_or(0.0);
+        let high_sharpe_weight = weights.get("HIGH_SHARPE").copied().unwrap_or(0.0);
+
+        assert!(
+            high_sharpe_weight > low_sharpe_weight,
+            "Max Sharpe should prefer higher Sharpe ratio asset"
+        );
+        assert!(
+            (low_sharpe_weight + high_sharpe_weight - 1.0).abs() < 0.01,
+            "Weights should sum to 1"
+        );
+    }
+
+    #[test]
+    fn test_mean_variance_target_return() {
+        let symbols = vec!["ASSET_A".to_string(), "ASSET_B".to_string()];
+        let expected_returns = vec![0.08, 0.15];
+        let covariance_matrix = vec![vec![0.04, 0.01], vec![0.01, 0.09]];
+
+        let optimizer =
+            MeanVarianceOptimizer::new(symbols.clone(), expected_returns, covariance_matrix, 0.02)
+                .unwrap();
+
+        // Target return between the two assets
+        let target_return = 0.11;
+        let weights = optimizer.target_return(target_return).unwrap();
+
+        // Calculate actual portfolio return
+        let portfolio_return = optimizer.portfolio_return(&weights);
+
+        assert!(
+            (portfolio_return - target_return).abs() < 0.01,
+            "Portfolio return should match target"
+        );
+
+        let total_weight: f64 = weights.values().sum();
+        assert!((total_weight - 1.0).abs() < 0.01, "Weights should sum to 1");
+    }
+
+    #[test]
+    fn test_portfolio_metrics() {
+        let symbols = vec!["AAPL".to_string(), "GOOGL".to_string()];
+        let expected_returns = vec![0.10, 0.12];
+        let covariance_matrix = vec![vec![0.04, 0.01], vec![0.01, 0.09]];
+
+        let optimizer =
+            MeanVarianceOptimizer::new(symbols.clone(), expected_returns, covariance_matrix, 0.02)
+                .unwrap();
+
+        let mut weights = HashMap::new();
+        weights.insert("AAPL".to_string(), 0.6);
+        weights.insert("GOOGL".to_string(), 0.4);
+
+        let portfolio_return = optimizer.portfolio_return(&weights);
+        let portfolio_variance = optimizer.portfolio_variance(&weights);
+        let portfolio_volatility = optimizer.portfolio_volatility(&weights);
+
+        // Expected return = 0.6 * 0.10 + 0.4 * 0.12 = 0.108
+        assert!((portfolio_return - 0.108).abs() < 0.001);
+
+        // Variance should be positive
+        assert!(portfolio_variance > 0.0);
+
+        // Volatility should be sqrt(variance)
+        assert!((portfolio_volatility - portfolio_variance.sqrt()).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_mean_variance_strategy_creation() {
+        let strategy = MeanVarianceStrategy::minimum_variance(60, 20);
+        assert_eq!(strategy.name(), "Mean-Variance (Min Variance)");
+        assert_eq!(strategy.warmup_period(), 61);
+
+        let strategy2 = MeanVarianceStrategy::maximum_sharpe(60, 20, 0.02);
+        assert_eq!(strategy2.name(), "Mean-Variance (Max Sharpe)");
+
+        let strategy3 = MeanVarianceStrategy::target_return(60, 20, 0.10);
+        assert_eq!(strategy3.name(), "Mean-Variance (Target Return)");
+    }
+
+    #[test]
+    fn test_mean_variance_optimizer_with_correlated_assets() {
+        // Test with positively correlated assets
+        let symbols = vec!["ASSET_A".to_string(), "ASSET_B".to_string()];
+        let expected_returns = vec![0.10, 0.12];
+
+        // High positive correlation (0.8)
+        let std_a = 0.2; // 20% vol
+        let std_b = 0.25; // 25% vol
+        let corr = 0.8;
+        let cov = corr * std_a * std_b; // 0.04
+
+        let covariance_matrix = vec![vec![std_a * std_a, cov], vec![cov, std_b * std_b]];
+
+        let optimizer =
+            MeanVarianceOptimizer::new(symbols.clone(), expected_returns, covariance_matrix, 0.02)
+                .unwrap();
+
+        let weights = optimizer.minimum_variance().unwrap();
+
+        // With high correlation, diversification benefits are limited
+        let weight_a = weights.get("ASSET_A").copied().unwrap_or(0.0);
+        let weight_b = weights.get("ASSET_B").copied().unwrap_or(0.0);
+
+        // Should still prefer lower volatility asset
+        assert!(
+            weight_a > weight_b,
+            "Should prefer lower volatility when highly correlated"
+        );
+        assert!((weight_a + weight_b - 1.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_mean_variance_all_negative_excess_returns() {
+        // Test when all assets have negative excess returns
+        let symbols = vec!["ASSET_A".to_string(), "ASSET_B".to_string()];
+        let expected_returns = vec![0.01, 0.02]; // Both below risk-free rate
+        let covariance_matrix = vec![vec![0.04, 0.01], vec![0.01, 0.09]];
+
+        let optimizer =
+            MeanVarianceOptimizer::new(symbols.clone(), expected_returns, covariance_matrix, 0.05)
+                .unwrap(); // Risk-free rate = 5%
+
+        // Should fallback to minimum variance
+        let weights = optimizer.maximum_sharpe_ratio().unwrap();
+
+        let total_weight: f64 = weights.values().sum();
+        assert!(
+            (total_weight - 1.0).abs() < 0.01,
+            "Weights should sum to 1 even with negative excess returns"
+        );
+    }
+
+    #[test]
+    fn test_mean_variance_three_assets() {
+        // Test with three assets to ensure it works with more complex portfolios
+        let symbols = vec![
+            "ASSET_A".to_string(),
+            "ASSET_B".to_string(),
+            "ASSET_C".to_string(),
+        ];
+        let expected_returns = vec![0.08, 0.12, 0.10];
+        let covariance_matrix = vec![
+            vec![0.04, 0.01, 0.00],
+            vec![0.01, 0.09, 0.02],
+            vec![0.00, 0.02, 0.06],
+        ];
+
+        let optimizer =
+            MeanVarianceOptimizer::new(symbols.clone(), expected_returns, covariance_matrix, 0.02)
+                .unwrap();
+
+        let weights = optimizer.maximum_sharpe_ratio().unwrap();
+
+        assert_eq!(weights.len(), 3);
+        let total_weight: f64 = weights.values().sum();
+        assert!((total_weight - 1.0).abs() < 0.01, "Weights should sum to 1");
+
+        // All weights should be non-negative
+        for (symbol, weight) in weights.iter() {
+            assert!(
+                *weight >= 0.0,
+                "Weight for {} should be non-negative",
+                symbol
+            );
+        }
     }
 }
