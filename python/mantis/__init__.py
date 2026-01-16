@@ -251,6 +251,21 @@ class BacktestResult:
         """Whether benchmark comparison metrics are available."""
         return self._rust.has_benchmark
 
+    @property
+    def volatility(self) -> float:
+        """Annualized volatility (standard deviation of returns). E.g., 0.156 = 15.6%."""
+        return self._rust.volatility
+
+    @property
+    def max_drawdown_duration(self) -> int:
+        """Maximum drawdown duration in days (longest time from peak to recovery)."""
+        return self._rust.max_drawdown_duration
+
+    @property
+    def avg_trade_duration(self) -> float:
+        """Average trade holding period in days."""
+        return self._rust.avg_trade_duration
+
     def metrics(self) -> Dict[str, Any]:
         return self._rust.metrics()
 
@@ -707,6 +722,319 @@ class BacktestResult:
                 </table>
             </div>
             """
+
+    def plot_drawdown(
+        self,
+        save: Optional[str] = None,
+        title: Optional[str] = None,
+        height: Optional[int] = None,
+        theme: Optional[str] = None,
+    ) -> Any:
+        """
+        Display a dedicated drawdown visualization.
+
+        Shows the drawdown from peak equity over time, highlighting
+        periods where the strategy was underwater.
+
+        Args:
+            save: Save the plot to a file. Supports .html, .png, .pdf, .svg.
+            title: Custom title for the plot.
+            height: Custom height in pixels (Plotly only).
+            theme: Color theme - "light" or "dark" (Plotly only).
+
+        Returns:
+            Plotly Figure object in Jupyter with plotly, ASCII string otherwise.
+
+        Example:
+            >>> results = mt.backtest(data, signal)
+            >>> results.plot_drawdown()  # Interactive drawdown chart
+        """
+        if _has_plotly():
+            fig = self._plot_drawdown_plotly(title=title, height=height, theme=theme)
+            if save:
+                return self._save_plot(fig, save)
+            return fig
+        else:
+            # ASCII fallback - show drawdown as sparkline
+            equity = self.equity_curve
+            peak = np.maximum.accumulate(equity)
+            drawdown = (equity - peak) / peak * 100
+            min_dd = min(drawdown)
+            return f"Drawdown: [{min(drawdown):.1f}% to 0%] Max: {self.max_drawdown*100:.1f}%"
+
+    def _plot_drawdown_plotly(
+        self,
+        title: Optional[str] = None,
+        height: Optional[int] = None,
+        theme: Optional[str] = None,
+    ) -> Any:
+        """Create a dedicated Plotly drawdown figure."""
+        import plotly.graph_objects as go
+        import datetime
+
+        equity = self.equity_curve
+        timestamps = self.equity_timestamps
+        dates = [datetime.datetime.fromtimestamp(ts) for ts in timestamps]
+
+        # Calculate drawdown
+        peak = np.maximum.accumulate(equity)
+        drawdown = (equity - peak) / peak * 100  # as percentage
+
+        # Theme colors
+        if theme == "dark":
+            bg_color = '#1e1e1e'
+            paper_color = '#1e1e1e'
+            text_color = '#e0e0e0'
+            grid_color = '#404040'
+            dd_color = '#ff6b6b'
+            fill_color = 'rgba(255, 107, 107, 0.3)'
+        else:
+            bg_color = 'white'
+            paper_color = 'white'
+            text_color = '#333333'
+            grid_color = '#e0e0e0'
+            dd_color = '#E94F37'
+            fill_color = 'rgba(233, 79, 55, 0.3)'
+
+        plot_title = title or f"Drawdown: {', '.join(self.symbols)}"
+        fig_height = height or 400
+
+        fig = go.Figure()
+        fig.add_trace(
+            go.Scatter(
+                x=dates,
+                y=drawdown,
+                mode='lines',
+                name='Drawdown',
+                line=dict(color=dd_color, width=1.5),
+                fill='tozeroy',
+                fillcolor=fill_color,
+                hovertemplate='%{x}<br>Drawdown: %{y:.1f}%<extra></extra>'
+            )
+        )
+
+        fig.update_layout(
+            title=dict(text=plot_title, x=0.5, xanchor='center'),
+            showlegend=False,
+            height=fig_height,
+            margin=dict(l=60, r=40, t=60, b=40),
+            hovermode='x unified',
+            yaxis_title="Drawdown (%)",
+            plot_bgcolor=bg_color,
+            paper_bgcolor=paper_color,
+            font=dict(color=text_color),
+        )
+        fig.update_yaxes(gridcolor=grid_color)
+        fig.update_xaxes(gridcolor=grid_color)
+
+        # Add annotation with max drawdown
+        fig.add_annotation(
+            text=f"Max Drawdown: {self.max_drawdown*100:.1f}% | Duration: {self.max_drawdown_duration} days",
+            xref="paper", yref="paper",
+            x=0.5, y=1.05,
+            showarrow=False,
+            font=dict(size=11, color=text_color if theme != "dark" else '#aaaaaa')
+        )
+
+        return fig
+
+    def plot_returns(
+        self,
+        period: str = "monthly",
+        save: Optional[str] = None,
+        title: Optional[str] = None,
+        height: Optional[int] = None,
+        theme: Optional[str] = None,
+    ) -> Any:
+        """
+        Display a returns heatmap visualization.
+
+        Shows returns aggregated by month/year as a heatmap, making it
+        easy to identify seasonal patterns and performance trends.
+
+        Args:
+            period: Aggregation period - "monthly" (default) or "daily".
+            save: Save the plot to a file. Supports .html, .png, .pdf, .svg.
+            title: Custom title for the plot.
+            height: Custom height in pixels (Plotly only).
+            theme: Color theme - "light" or "dark" (Plotly only).
+
+        Returns:
+            Plotly Figure object in Jupyter with plotly, ASCII string otherwise.
+
+        Example:
+            >>> results = mt.backtest(data, signal)
+            >>> results.plot_returns()  # Monthly returns heatmap
+        """
+        if _has_plotly():
+            fig = self._plot_returns_plotly(
+                period=period, title=title, height=height, theme=theme
+            )
+            if save:
+                return self._save_plot(fig, save)
+            return fig
+        else:
+            # ASCII fallback
+            return f"Returns plot requires plotly. Install with: pip install plotly"
+
+    def _plot_returns_plotly(
+        self,
+        period: str = "monthly",
+        title: Optional[str] = None,
+        height: Optional[int] = None,
+        theme: Optional[str] = None,
+    ) -> Any:
+        """Create a returns heatmap Plotly figure."""
+        import plotly.graph_objects as go
+        import datetime
+        from collections import defaultdict
+
+        equity = self.equity_curve
+        timestamps = self.equity_timestamps
+
+        # Calculate returns
+        returns = []
+        for i in range(1, len(equity)):
+            ret = (equity[i] - equity[i-1]) / equity[i-1] if equity[i-1] > 0 else 0
+            returns.append((timestamps[i], ret))
+
+        # Aggregate by month/year
+        if period == "monthly":
+            monthly_returns = defaultdict(float)
+            for ts, ret in returns:
+                dt = datetime.datetime.fromtimestamp(ts)
+                key = (dt.year, dt.month)
+                monthly_returns[key] += ret
+
+            # Build heatmap data
+            if not monthly_returns:
+                return go.Figure()
+
+            years = sorted(set(k[0] for k in monthly_returns.keys()))
+            months = list(range(1, 13))
+            month_names = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+                          'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+
+            z_matrix = []
+            for year in years:
+                row = []
+                for month in months:
+                    key = (year, month)
+                    if key in monthly_returns:
+                        row.append(monthly_returns[key] * 100)  # Convert to percentage
+                    else:
+                        row.append(None)
+                z_matrix.append(row)
+
+            # Theme colors
+            if theme == "dark":
+                bg_color = '#1e1e1e'
+                paper_color = '#1e1e1e'
+                text_color = '#e0e0e0'
+            else:
+                bg_color = 'white'
+                paper_color = 'white'
+                text_color = '#333333'
+
+            plot_title = title or f"Monthly Returns: {', '.join(self.symbols)}"
+            fig_height = height or max(300, len(years) * 40 + 100)
+
+            fig = go.Figure(data=go.Heatmap(
+                z=z_matrix,
+                x=month_names,
+                y=[str(y) for y in years],
+                colorscale='RdYlGn',
+                zmid=0,
+                colorbar=dict(title='Return %'),
+                hovertemplate='%{y} %{x}<br>Return: %{z:.1f}%<extra></extra>'
+            ))
+
+            fig.update_layout(
+                title=dict(text=plot_title, x=0.5, xanchor='center'),
+                height=fig_height,
+                margin=dict(l=60, r=40, t=60, b=40),
+                xaxis_title="Month",
+                yaxis_title="Year",
+                plot_bgcolor=bg_color,
+                paper_bgcolor=paper_color,
+                font=dict(color=text_color),
+            )
+
+            return fig
+        else:
+            # Daily returns distribution
+            daily_rets = [r * 100 for _, r in returns]
+
+            if theme == "dark":
+                bg_color = '#1e1e1e'
+                paper_color = '#1e1e1e'
+                text_color = '#e0e0e0'
+                bar_color = '#4ecdc4'
+            else:
+                bg_color = 'white'
+                paper_color = 'white'
+                text_color = '#333333'
+                bar_color = '#2E86AB'
+
+            plot_title = title or f"Daily Returns Distribution: {', '.join(self.symbols)}"
+            fig_height = height or 400
+
+            fig = go.Figure(data=go.Histogram(
+                x=daily_rets,
+                nbinsx=50,
+                name='Daily Returns',
+                marker_color=bar_color,
+                hovertemplate='Return: %{x:.2f}%<br>Count: %{y}<extra></extra>'
+            ))
+
+            fig.update_layout(
+                title=dict(text=plot_title, x=0.5, xanchor='center'),
+                height=fig_height,
+                margin=dict(l=60, r=40, t=60, b=40),
+                xaxis_title="Return (%)",
+                yaxis_title="Frequency",
+                plot_bgcolor=bg_color,
+                paper_bgcolor=paper_color,
+                font=dict(color=text_color),
+            )
+
+            return fig
+
+    def plot_trades(
+        self,
+        save: Optional[str] = None,
+        title: Optional[str] = None,
+        height: Optional[int] = None,
+        theme: Optional[str] = None,
+    ) -> Any:
+        """
+        Display a trade analysis visualization.
+
+        Shows trade entry/exit points on the equity curve with
+        P&L information for each trade.
+
+        Args:
+            save: Save the plot to a file. Supports .html, .png, .pdf, .svg.
+            title: Custom title for the plot.
+            height: Custom height in pixels (Plotly only).
+            theme: Color theme - "light" or "dark" (Plotly only).
+
+        Returns:
+            Plotly Figure object in Jupyter with plotly, ASCII string otherwise.
+
+        Example:
+            >>> results = mt.backtest(data, signal)
+            >>> results.plot_trades()  # Equity curve with trade markers
+        """
+        # This is essentially plot() with trades=True
+        return self.plot(
+            trades=True,
+            show_drawdown=False,
+            save=save,
+            title=title or f"Trades: {', '.join(self.symbols)}",
+            height=height,
+            theme=theme,
+        )
 
     def rolling_sharpe(
         self,

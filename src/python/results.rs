@@ -248,6 +248,44 @@ impl PyBacktestResult {
         self.benchmark_metrics.is_some()
     }
 
+    /// Get the annualized volatility of the strategy.
+    ///
+    /// Volatility is the annualized standard deviation of returns,
+    /// measuring the dispersion of returns around the mean.
+    /// Higher volatility indicates higher risk.
+    ///
+    /// Returns a decimal (e.g., 0.156 = 15.6% annualized volatility).
+    #[getter]
+    fn volatility(&self) -> f64 {
+        let metrics = PerformanceMetrics::from_result(&self.rust_result);
+        metrics.volatility_annual / 100.0 // Convert from percentage to decimal
+    }
+
+    /// Get the maximum drawdown duration in days.
+    ///
+    /// This is the longest period spent in a drawdown (from peak to
+    /// recovery to a new peak). Long drawdown durations can be
+    /// psychologically challenging for traders.
+    ///
+    /// Returns the duration in calendar days.
+    #[getter]
+    fn max_drawdown_duration(&self) -> i64 {
+        let metrics = PerformanceMetrics::from_result(&self.rust_result);
+        metrics.max_drawdown_duration_days
+    }
+
+    /// Get the average trade duration in days.
+    ///
+    /// This is the average holding period for closed trades,
+    /// indicating the typical time a position is held.
+    ///
+    /// Returns the duration in calendar days.
+    #[getter]
+    fn avg_trade_duration(&self) -> f64 {
+        let metrics = PerformanceMetrics::from_result(&self.rust_result);
+        metrics.avg_holding_period_days
+    }
+
     /// Get all metrics as a dictionary.
     fn metrics<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
         let dict = PyDict::new_bound(py);
@@ -271,6 +309,10 @@ impl PyBacktestResult {
         let perf_metrics = PerformanceMetrics::from_result(&self.rust_result);
         dict.set_item("deflated_sharpe", perf_metrics.deflated_sharpe_ratio)?;
         dict.set_item("psr", perf_metrics.probabilistic_sharpe_ratio)?;
+        // Add new metrics per spec
+        dict.set_item("volatility", perf_metrics.volatility_annual / 100.0)?;
+        dict.set_item("max_drawdown_duration", perf_metrics.max_drawdown_duration_days)?;
+        dict.set_item("avg_trade_duration", perf_metrics.avg_holding_period_days)?;
         // Add benchmark metrics if available
         if let Some(ref bm) = self.benchmark_metrics {
             dict.set_item("alpha", bm.alpha)?;

@@ -884,6 +884,30 @@ These features are implemented in the Rust core but NOT exposed in the Python AP
 
 ---
 
+### 29. Python API Additional Metrics and Plot Methods [COMPLETE]
+**Status:** COMPLETE
+**Priority:** P2
+
+**Implementation details:**
+- Added `volatility` property to PyBacktestResult - annualized volatility as decimal
+- Added `max_drawdown_duration` property - duration in days
+- Added `avg_trade_duration` property - average holding period in days
+- Added `plot_drawdown()` method - dedicated drawdown visualization with Plotly
+- Added `plot_returns()` method - monthly returns heatmap or daily returns histogram
+- Added `plot_trades()` method - equity curve with trade markers
+- Updated `metrics()` dict to include all new metrics
+- Updated Python type stubs (__init__.pyi) with all new properties and methods
+
+**Files modified:**
+- `src/python/results.rs`
+- `python/mantis/__init__.py`
+- `python/mantis/__init__.pyi`
+
+**Effort:** Small
+**Dependencies:** None
+
+---
+
 ## Summary Table
 
 | ID | Item | Status | Priority | Effort | Dependencies |
@@ -921,6 +945,7 @@ These features are implemented in the Rust core but NOT exposed in the Python AP
 | 26 | Rolling Metrics Python API | **COMPLETE** | P2 | Small | None |
 | 27 | Limit Order Python API | **COMPLETE** | P3 | Medium | None |
 | 28 | Volume Participation Python API | **COMPLETE** | P3 | Small | None |
+| 29 | Python API Additional Metrics and Plot Methods | **COMPLETE** | P2 | Small | None |
 
 ---
 
@@ -980,6 +1005,7 @@ These features are implemented in the Rust core but NOT exposed in the Python AP
 | ALL TESTS | **PASSING**: 571 lib tests (0 failures) |
 | Python Bindings Build | **VERIFIED**: `cargo check --features python` compiles successfully (API drift fix 2026-01-16) |
 | **Limit Order Python API** | **COMPLETE**: `order_type` param ("market"/"limit"), `limit_offset` as fraction of close; Rust BacktestConfig fields; `signal_to_order()` limit order creation; Backtest fluent API methods; PyBacktestConfig; type stubs updated; 571 tests pass |
+| **Python API Additional Metrics and Plot Methods** | **COMPLETE**: `volatility` property (annualized volatility as decimal); `max_drawdown_duration` property (duration in days); `avg_trade_duration` property (average holding period in days); `plot_drawdown()` method (dedicated drawdown visualization with Plotly); `plot_returns()` method (monthly returns heatmap or daily returns histogram); `plot_trades()` method (equity curve with trade markers); `metrics()` dict includes all new metrics; type stubs updated; Files: src/python/results.rs, python/mantis/__init__.py, python/mantis/__init__.pyi |
 
 ---
 

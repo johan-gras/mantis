@@ -216,6 +216,32 @@ class BacktestResult:
     def has_benchmark(self) -> bool:
         """Whether benchmark comparison metrics are available."""
         ...
+    @property
+    def volatility(self) -> float:
+        """
+        Annualized volatility (standard deviation of returns).
+
+        Returns a decimal value (e.g., 0.156 = 15.6% annualized volatility).
+        Higher values indicate more risk/variability in returns.
+        """
+        ...
+    @property
+    def max_drawdown_duration(self) -> int:
+        """
+        Maximum drawdown duration in days.
+
+        The longest period from peak equity to recovery to a new peak.
+        Long drawdown durations can be psychologically challenging.
+        """
+        ...
+    @property
+    def avg_trade_duration(self) -> float:
+        """
+        Average trade holding period in days.
+
+        The mean duration that positions are held before being closed.
+        """
+        ...
     def metrics(self) -> Dict[str, Any]: ...
     def summary(self) -> str: ...
     def warnings(self) -> List[str]: ...
@@ -258,6 +284,91 @@ class BacktestResult:
             >>> results.plot(save="report.html")  # Save to HTML file
             >>> results.plot(trades=True, theme="dark")  # Show trades with dark theme
             >>> print(results.plot())  # ASCII sparkline in terminal
+        """
+        ...
+    def plot_drawdown(
+        self,
+        save: Optional[str] = None,
+        title: Optional[str] = None,
+        height: Optional[int] = None,
+        theme: Optional[str] = None,
+    ) -> Any:
+        """
+        Display a dedicated drawdown visualization.
+
+        Shows the drawdown from peak equity over time, highlighting
+        periods where the strategy was underwater.
+
+        Args:
+            save: Save the plot to a file. Supports .html, .png, .pdf, .svg.
+            title: Custom title for the plot.
+            height: Custom height in pixels (Plotly only).
+            theme: Color theme - "light" or "dark" (Plotly only).
+
+        Returns:
+            Plotly Figure object in Jupyter with plotly, ASCII string otherwise.
+
+        Example:
+            >>> results = mt.backtest(data, signal)
+            >>> results.plot_drawdown()  # Interactive drawdown chart
+            >>> results.plot_drawdown(save="drawdown.html")  # Save to file
+        """
+        ...
+    def plot_returns(
+        self,
+        period: str = "monthly",
+        save: Optional[str] = None,
+        title: Optional[str] = None,
+        height: Optional[int] = None,
+        theme: Optional[str] = None,
+    ) -> Any:
+        """
+        Display a returns heatmap visualization.
+
+        Shows returns aggregated by month/year as a heatmap, making it
+        easy to identify seasonal patterns and performance trends.
+
+        Args:
+            period: Aggregation period - "monthly" (default) or "daily".
+            save: Save the plot to a file. Supports .html, .png, .pdf, .svg.
+            title: Custom title for the plot.
+            height: Custom height in pixels (Plotly only).
+            theme: Color theme - "light" or "dark" (Plotly only).
+
+        Returns:
+            Plotly Figure object in Jupyter with plotly, ASCII string otherwise.
+
+        Example:
+            >>> results = mt.backtest(data, signal)
+            >>> results.plot_returns()  # Monthly returns heatmap
+            >>> results.plot_returns(period="daily")  # Daily returns histogram
+        """
+        ...
+    def plot_trades(
+        self,
+        save: Optional[str] = None,
+        title: Optional[str] = None,
+        height: Optional[int] = None,
+        theme: Optional[str] = None,
+    ) -> Any:
+        """
+        Display a trade analysis visualization.
+
+        Shows trade entry/exit points on the equity curve with
+        P&L information for each trade.
+
+        Args:
+            save: Save the plot to a file. Supports .html, .png, .pdf, .svg.
+            title: Custom title for the plot.
+            height: Custom height in pixels (Plotly only).
+            theme: Color theme - "light" or "dark" (Plotly only).
+
+        Returns:
+            Plotly Figure object in Jupyter with plotly, ASCII string otherwise.
+
+        Example:
+            >>> results = mt.backtest(data, signal)
+            >>> results.plot_trades()  # Equity curve with trade markers
         """
         ...
     def rolling_sharpe(
