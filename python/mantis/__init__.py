@@ -1750,12 +1750,14 @@ class CompareResult:
         import datetime
 
         # Create figure with subplots: equity curves and metrics table
+        # Use specs to allow table trace in the second row
         fig = make_subplots(
             rows=2,
             cols=1,
             row_heights=[0.7, 0.3],
             subplot_titles=("Equity Curves", "Performance Metrics"),
             vertical_spacing=0.15,
+            specs=[[{"type": "xy"}], [{"type": "table"}]],
         )
 
         # Color palette for different strategies
