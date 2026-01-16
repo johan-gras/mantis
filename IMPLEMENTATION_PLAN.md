@@ -263,7 +263,7 @@ The following spec items have been identified as not fully implemented:
 - Note: .pyi type stub file exists at `python/mantis/__init__.pyi`
 
 **Execution Realism (`specs/execution-realism.md`):**
-- Volume participation partial fills don't carry over to next bar as spec suggests
+- Volume participation partial fills DO carry over to next bar (implemented in `src/engine.rs:748-750`)
 - Square-root slippage model (`slippage="sqrt"`) is now implemented in Python API
 - Slippage cap at 10% is now implemented (excess slippage capped with warning)
 
