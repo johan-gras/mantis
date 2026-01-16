@@ -367,23 +367,152 @@ impl OnnxModel {
 
     /// Perform batch inference on multiple feature vectors.
     ///
+    /// This method performs true batched inference by combining all inputs
+    /// into a single tensor with shape `[batch_size, input_size]` and running
+    /// a single forward pass. This is significantly faster than calling
+    /// `predict()` in a loop (typically 10-100x faster for large batches).
+    ///
     /// # Arguments
     ///
-    /// * `batch_features` - Slice of feature vectors
+    /// * `batch_features` - Slice of feature vectors (all must have same length)
     ///
     /// # Returns
     ///
-    /// Vector of predictions
+    /// Vector of predictions, one per input feature vector
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use mantis::onnx::{OnnxModel, ModelConfig};
+    /// # let mut model = OnnxModel::from_file("model.onnx", ModelConfig::default()).unwrap();
+    /// let batch = vec![
+    ///     vec![0.1, 0.2, 0.3],
+    ///     vec![0.4, 0.5, 0.6],
+    ///     vec![0.7, 0.8, 0.9],
+    /// ];
+    /// let predictions = model.predict_batch(&batch).unwrap();
+    /// assert_eq!(predictions.len(), 3);
+    /// ```
     pub fn predict_batch(&mut self, batch_features: &[Vec<f64>]) -> Result<Vec<f32>> {
         if batch_features.is_empty() {
             return Ok(Vec::new());
         }
 
-        let mut predictions = Vec::with_capacity(batch_features.len());
+        let batch_size = batch_features.len();
+        let start = Instant::now();
+
+        // Validate all inputs have the correct size
+        for (i, features) in batch_features.iter().enumerate() {
+            if features.len() != self.config.input_size {
+                return Err(anyhow::anyhow!(
+                    "Input size mismatch at index {}: expected {}, got {}",
+                    i,
+                    self.config.input_size,
+                    features.len()
+                ));
+            }
+        }
+
+        // Flatten all features into a single contiguous vector for the batch tensor
+        // Shape will be [batch_size, input_size]
+        let mut flat_input: Vec<f32> = Vec::with_capacity(batch_size * self.config.input_size);
 
         for features in batch_features {
-            let pred = self.predict(features)?;
-            predictions.push(pred);
+            // Convert f64 to f32 and optionally normalize
+            for (i, &val) in features.iter().enumerate() {
+                let mut v = val as f32;
+
+                // Apply normalization if configured
+                if self.config.normalize_inputs {
+                    if let (Some(means), Some(stds)) =
+                        (&self.config.feature_means, &self.config.feature_stds)
+                    {
+                        v = (v - means[i]) / stds[i];
+                    }
+                }
+                flat_input.push(v);
+            }
+        }
+
+        // Run batched inference
+        let result = self.run_batch_inference_internal(&flat_input, batch_size);
+
+        let duration = start.elapsed();
+        let duration_us = duration.as_micros() as u64;
+
+        match result {
+            Ok(outputs) => {
+                // Record stats (average per sample)
+                self.stats.record_success(duration_us / batch_size as u64);
+
+                if self.config.log_latency {
+                    debug!(
+                        "Batch inference ({} samples) completed in {}μs ({:.3}ms, {:.1}μs/sample)",
+                        batch_size,
+                        duration_us,
+                        duration.as_secs_f64() * 1000.0,
+                        duration_us as f64 / batch_size as f64
+                    );
+                }
+
+                Ok(outputs)
+            }
+            Err(e) => {
+                // On batch failure, fall back to sequential inference
+                warn!(
+                    "Batch inference failed, falling back to sequential: {}",
+                    e
+                );
+
+                let mut predictions = Vec::with_capacity(batch_size);
+                for features in batch_features {
+                    let pred = self.predict(features)?;
+                    predictions.push(pred);
+                }
+                Ok(predictions)
+            }
+        }
+    }
+
+    /// Internal batched inference method.
+    fn run_batch_inference_internal(
+        &mut self,
+        flat_input: &[f32],
+        batch_size: usize,
+    ) -> Result<Vec<f32>> {
+        // Create input tensor with shape [batch_size, input_size]
+        let shape = vec![batch_size, self.config.input_size];
+        let data = flat_input.to_vec();
+
+        let input_tensor = ort::value::Tensor::<f32>::from_array((shape, data))?;
+
+        // Run inference
+        let outputs = self.session.run(ort::inputs![input_tensor])?;
+
+        // Extract output tensor
+        // Output shape is typically [batch_size, output_size] or [batch_size] for single-output models
+        let (_shape, data) = outputs[0]
+            .try_extract_tensor::<f32>()
+            .context("Failed to extract batch output tensor")?;
+
+        // Collect predictions - take first value from each sample's output
+        // If output_size is 1, each element is already a prediction
+        // If output_size > 1, we take the first element (or could be argmax for classification)
+        let predictions: Vec<f32> = if self.config.output_size == 1 {
+            data.to_vec()
+        } else {
+            // For multi-output models, reshape and take first element of each
+            data.chunks(self.config.output_size)
+                .map(|chunk| chunk.first().copied().unwrap_or(self.config.fallback_value))
+                .collect()
+        };
+
+        if predictions.len() != batch_size {
+            return Err(anyhow::anyhow!(
+                "Output size mismatch: expected {} predictions, got {}",
+                batch_size,
+                predictions.len()
+            ));
         }
 
         Ok(predictions)

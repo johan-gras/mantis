@@ -139,20 +139,28 @@ Mantis is a high-performance Rust CLI backtest engine for quantitative trading w
 
 ---
 
-### 2.4 ONNX Integration Gaps
+### 2.4 ONNX Integration Gaps - PARTIALLY RESOLVED
 
-**Location:** `src/onnx.rs` (522 lines), `src/python/onnx.rs` (560 lines)
-**Core functionality:** Working - model loading, single inference, Python bindings, stats tracking
+**Location:** `src/onnx.rs` (620+ lines), `src/python/onnx.rs` (560 lines)
+**Core functionality:** Working - model loading, single inference, **true batch inference**, Python bindings, stats tracking
 **Tests:** 5 unit tests ALL PASSING
 
-**Gaps identified:**
-- [ ] No load-time model validation - Only validates at first inference (line 316-321)
-- [ ] Batch inference is SEQUENTIAL, not true batching (lines 384-386 use loop) - **10-100x slower than true batching**
-- [ ] CUDA support logs warning but isn't functional (lines 272-278)
-- [ ] No ONNX benchmarks to verify < 1ms/bar target
-- [ ] No ONNX integration tests
+**Resolved (2026-01-16):**
+- [x] Batch inference now uses true batching (single tensor `[batch_size, input_size]`)
+- [x] `predict_batch()` creates a combined tensor and runs single forward pass
+- [x] Fallback to sequential inference if batch fails
+- [x] Proper latency logging for batched inference (per-sample stats)
 
-**Impact:** Cannot verify performance claims; sequential batching may be slow for large batches
+**Remaining gaps:**
+- [ ] No load-time model validation - Only validates at first inference
+- [ ] CUDA support logs warning but isn't functional
+- [ ] No ONNX benchmarks to verify < 1ms/bar target (requires sample ONNX model)
+- [ ] No ONNX integration tests (requires sample ONNX model)
+
+**Performance:** True batch inference is typically 10-100x faster than sequential for large batches due to:
+- Single memory copy instead of N copies
+- Batched GPU/CPU operations
+- Reduced ONNX runtime overhead
 
 ---
 
@@ -546,7 +554,7 @@ The following are **100% implemented** per specifications:
 | No ONNX benchmarks | Can't verify <1ms/bar target | Medium |
 | ~~No legal disclaimers~~ | ~~Regulatory risk~~ | ~~Low~~ RESOLVED |
 | ~~Monte Carlo bootstrap method~~ | ~~Differs from spec (trade vs block)~~ | ~~Medium~~ RESOLVED (2026-01-16) |
-| ONNX batch inference sequential | 10-100x slower than true batching | Medium |
+| ~~ONNX batch inference sequential~~ | ~~10-100x slower than true batching~~ | ~~Medium~~ RESOLVED (2026-01-16) |
 
 ---
 
