@@ -648,3 +648,358 @@ class Backtest:
     def run(self) -> BacktestResult:
         """Execute the backtest with the configured parameters."""
         ...
+
+
+# =============================================================================
+# Sensitivity Analysis
+# =============================================================================
+
+class ParameterRange:
+    """
+    A range of parameter values for sensitivity analysis.
+
+    Use the factory functions to create ranges:
+    - linear_range(start, end, steps): Evenly spaced values
+    - log_range(start, end, steps): Logarithmically spaced values
+    - discrete_range(values): Explicit list of values
+    - centered_range(center, variation, steps): Range around a center value
+    """
+
+    def values(self) -> NDArray[np.float64]:
+        """Get all values in this range as a numpy array."""
+        ...
+    def __len__(self) -> int: ...
+
+
+class Cliff:
+    """Detected cliff (sharp performance drop) in parameter space."""
+
+    parameter: str
+    value_before: float
+    value_after: float
+    metric_before: float
+    metric_after: float
+    drop_pct: float
+
+
+class Plateau:
+    """Detected plateau (stable performance region) in parameter space."""
+
+    parameter: str
+    start_value: float
+    end_value: float
+    avg_metric: float
+    std_metric: float
+
+
+class HeatmapData:
+    """2D heatmap data for parameter sensitivity visualization."""
+
+    x_param: str
+    y_param: str
+
+    def x_values(self) -> NDArray[np.float64]:
+        """Get X-axis values."""
+        ...
+    def y_values(self) -> NDArray[np.float64]:
+        """Get Y-axis values."""
+        ...
+    def values(self) -> NDArray[np.float64]:
+        """Get 2D grid of metric values (NaN for missing)."""
+        ...
+    def to_csv(self) -> str:
+        """Export to CSV format."""
+        ...
+    def best(self) -> Optional[tuple]:
+        """Find best value: (x_value, y_value, metric_value)."""
+        ...
+
+
+class SensitivitySummary:
+    """Summary statistics from sensitivity analysis."""
+
+    num_combinations: int
+    metric: str
+    mean_metric: float
+    std_metric: float
+    min_metric: float
+    max_metric: float
+    stability_score: float
+    num_cliffs: int
+    num_plateaus: int
+    is_fragile: bool
+
+
+class SensitivityResult:
+    """Results from parameter sensitivity analysis."""
+
+    strategy_name: str
+    symbol: str
+    num_combinations: int
+
+    def best_params(self) -> Optional[Dict[str, float]]:
+        """Get the best performing parameter set."""
+        ...
+    def stability_score(self) -> float:
+        """Get the overall stability score (0-1, higher is more stable)."""
+        ...
+    def parameter_stability(self, param_name: str) -> Optional[float]:
+        """Get stability score for a specific parameter."""
+        ...
+    def is_fragile(self, threshold: float = 0.5) -> bool:
+        """Check if the strategy is fragile (high sensitivity to parameters)."""
+        ...
+    def heatmap(self, x_param: str, y_param: str) -> Optional[HeatmapData]:
+        """Get 2D heatmap data for two parameters."""
+        ...
+    def parameter_importance(self) -> List[tuple]:
+        """Get parameter importance ranking as (name, importance) tuples."""
+        ...
+    def cliffs(self) -> List[Cliff]:
+        """Get detected cliffs (sharp performance drops)."""
+        ...
+    def plateaus(self) -> List[Plateau]:
+        """Get detected plateaus (stable performance regions)."""
+        ...
+    def summary(self) -> SensitivitySummary:
+        """Get summary statistics."""
+        ...
+    def to_csv(self) -> str:
+        """Export results to CSV format."""
+        ...
+    def plot_heatmap(self, x_param: str, y_param: str) -> Any:
+        """
+        Display a heatmap visualization for two parameters.
+
+        In Jupyter notebooks with plotly installed, returns an interactive
+        Plotly heatmap. Otherwise returns CSV representation.
+        """
+        ...
+
+
+class CostScenario:
+    """Results for a single cost multiplier level."""
+
+    multiplier: float
+    total_return: float
+    sharpe: float
+    max_drawdown: float
+    total_trades: int
+    total_costs: float
+    avg_cost_per_trade: float
+
+    def is_zero_cost(self) -> bool:
+        """Whether this is the zero-cost baseline."""
+        ...
+    def is_baseline(self) -> bool:
+        """Whether this is the baseline (1x) scenario."""
+        ...
+
+
+class CostSensitivityResult:
+    """Results from cost sensitivity analysis."""
+
+    symbol: str
+    strategy_name: str
+
+    def scenarios(self) -> List[CostScenario]:
+        """Get all scenarios."""
+        ...
+    def scenario_at(self, multiplier: float) -> Optional[CostScenario]:
+        """Get scenario at specific multiplier."""
+        ...
+    def baseline(self) -> Optional[CostScenario]:
+        """Get baseline (1x) scenario."""
+        ...
+    def zero_cost(self) -> Optional[CostScenario]:
+        """Get zero-cost scenario (theoretical upper bound)."""
+        ...
+    def sharpe_degradation_at(self, multiplier: float) -> Optional[float]:
+        """Calculate Sharpe ratio degradation percentage at given multiplier."""
+        ...
+    def return_degradation_at(self, multiplier: float) -> Optional[float]:
+        """Calculate return degradation percentage at given multiplier."""
+        ...
+    def is_robust(self, threshold_sharpe: float = 0.5) -> bool:
+        """Check if strategy passes robustness threshold at 5x costs."""
+        ...
+    def cost_elasticity(self) -> Optional[float]:
+        """Calculate cost elasticity (% change in return per % change in costs)."""
+        ...
+    def breakeven_multiplier(self) -> Optional[float]:
+        """Calculate breakeven cost multiplier (where returns become zero/negative)."""
+        ...
+    def report(self) -> str:
+        """Generate formatted summary report."""
+        ...
+    def plot(self) -> Any:
+        """
+        Display a visualization of cost sensitivity.
+
+        In Jupyter with plotly, returns interactive figure. Otherwise returns text report.
+        """
+        ...
+
+
+def linear_range(start: float, end: float, steps: int) -> ParameterRange:
+    """
+    Create a linear parameter range.
+
+    Generates evenly spaced values from start to end.
+
+    Args:
+        start: Starting value
+        end: Ending value
+        steps: Number of values to generate
+
+    Example:
+        >>> fast_range = mt.linear_range(5.0, 20.0, 4)
+        >>> # Generates: [5.0, 10.0, 15.0, 20.0]
+    """
+    ...
+
+
+def log_range(start: float, end: float, steps: int) -> ParameterRange:
+    """
+    Create a logarithmic parameter range.
+
+    Generates logarithmically spaced values from start to end.
+    Useful for parameters spanning multiple orders of magnitude.
+
+    Args:
+        start: Starting value (must be > 0)
+        end: Ending value (must be > 0)
+        steps: Number of values to generate
+
+    Example:
+        >>> rate_range = mt.log_range(0.001, 0.1, 3)
+        >>> # Generates: [0.001, 0.01, 0.1]
+    """
+    ...
+
+
+def discrete_range(values: List[float]) -> ParameterRange:
+    """
+    Create a discrete parameter range from explicit values.
+
+    Args:
+        values: List of parameter values to test
+
+    Example:
+        >>> periods = mt.discrete_range([5, 10, 20, 50])
+    """
+    ...
+
+
+def centered_range(center: float, variation: float, steps: int) -> ParameterRange:
+    """
+    Create a centered parameter range around a base value.
+
+    Args:
+        center: Center value
+        variation: Plus/minus variation amount
+        steps: Number of values to generate
+
+    Example:
+        >>> threshold_range = mt.centered_range(0.5, 0.1, 5)
+        >>> # Generates: [0.4, 0.45, 0.5, 0.55, 0.6]
+    """
+    ...
+
+
+def sensitivity(
+    data: Union[Dict[str, Any], str, _DataFrame],
+    strategy: str,
+    params: Dict[str, ParameterRange],
+    metric: str = "sharpe",
+    commission: float = 0.001,
+    slippage: float = 0.001,
+    cash: float = 100_000.0,
+    parallel: bool = True,
+) -> SensitivityResult:
+    """
+    Run parameter sensitivity analysis on a built-in strategy.
+
+    Tests how strategy performance varies across different parameter values.
+    This helps identify:
+    - Fragile strategies that only work with specific parameters
+    - Robust strategies that perform well across parameter ranges
+    - Cliffs where performance drops sharply
+    - Plateaus where performance is stable
+
+    Args:
+        data: Data dictionary from load() or path to CSV/Parquet file
+        strategy: Name of built-in strategy ("sma-crossover", "momentum",
+                  "mean-reversion", "rsi", "macd", "breakout")
+        params: Dictionary mapping parameter names to ParameterRange objects
+        metric: Metric to analyze ("sharpe", "sortino", "return", "calmar",
+                "profit_factor", "win_rate", "max_drawdown")
+        commission: Commission rate (default 0.001 = 0.1%)
+        slippage: Slippage rate (default 0.001 = 0.1%)
+        cash: Initial capital (default 100,000)
+        parallel: Run parameter combinations in parallel (default True)
+
+    Returns:
+        SensitivityResult with analysis results.
+
+    Example:
+        >>> data = mt.load_sample("AAPL")
+        >>> result = mt.sensitivity(
+        ...     data,
+        ...     strategy="sma-crossover",
+        ...     params={
+        ...         "fast_period": mt.linear_range(5, 20, 4),
+        ...         "slow_period": mt.linear_range(20, 60, 5),
+        ...     },
+        ...     metric="sharpe"
+        ... )
+        >>> print(result.stability_score())
+        0.72
+        >>> print(result.best_params())
+        {'fast_period': 10.0, 'slow_period': 40.0}
+    """
+    ...
+
+
+def cost_sensitivity(
+    data: Union[Dict[str, Any], str, _DataFrame],
+    signal: Optional[NDArray[np.float64]] = None,
+    strategy: Optional[str] = None,
+    strategy_params: Optional[Dict[str, Any]] = None,
+    multipliers: Optional[List[float]] = None,
+    commission: float = 0.001,
+    slippage: float = 0.001,
+    cash: float = 100_000.0,
+    include_zero_cost: bool = True,
+) -> CostSensitivityResult:
+    """
+    Run cost sensitivity analysis to test strategy robustness to transaction costs.
+
+    Tests the same strategy at multiple cost levels (e.g., 1x, 2x, 5x, 10x) to see
+    how performance degrades. A robust strategy should maintain acceptable returns
+    even with significantly higher costs.
+
+    Args:
+        data: Data dictionary from load() or path to CSV/Parquet file
+        signal: Signal array (1=long, -1=short, 0=flat), or None for built-in strategy
+        strategy: Name of built-in strategy if signal is None
+        strategy_params: Parameters for built-in strategy
+        multipliers: List of cost multipliers to test (default [0.0, 1.0, 2.0, 5.0, 10.0])
+        commission: Base commission rate (default 0.001 = 0.1%)
+        slippage: Base slippage rate (default 0.001 = 0.1%)
+        cash: Initial capital (default 100,000)
+        include_zero_cost: Include zero-cost scenario (default True)
+
+    Returns:
+        CostSensitivityResult with analysis results.
+
+    Example:
+        >>> data = mt.load_sample("AAPL")
+        >>> signal = (data['close'] > data['close'].mean()).astype(int)
+        >>> result = mt.cost_sensitivity(data, signal)
+        >>> print(result.sharpe_degradation_at(5.0))
+        45.2
+        >>> print(result.is_robust())
+        True
+    """
+    ...

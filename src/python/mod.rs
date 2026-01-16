@@ -7,6 +7,7 @@
 mod backtest;
 mod data;
 mod results;
+mod sensitivity;
 mod types;
 
 use pyo3::prelude::*;
@@ -33,12 +34,30 @@ fn _mantis(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(backtest::signal_check, m)?)?;
     m.add_function(wrap_pyfunction!(backtest::validate, m)?)?;
 
+    // Register sensitivity analysis functions
+    m.add_function(wrap_pyfunction!(sensitivity::sensitivity, m)?)?;
+    m.add_function(wrap_pyfunction!(sensitivity::cost_sensitivity, m)?)?;
+    m.add_function(wrap_pyfunction!(sensitivity::linear_range, m)?)?;
+    m.add_function(wrap_pyfunction!(sensitivity::log_range, m)?)?;
+    m.add_function(wrap_pyfunction!(sensitivity::discrete_range, m)?)?;
+    m.add_function(wrap_pyfunction!(sensitivity::centered_range, m)?)?;
+
     // Register classes
     m.add_class::<results::PyBacktestResult>()?;
     m.add_class::<results::PyValidationResult>()?;
     m.add_class::<results::PyFoldDetail>()?;
     m.add_class::<types::PyBar>()?;
     m.add_class::<backtest::PyBacktestConfig>()?;
+
+    // Register sensitivity analysis classes
+    m.add_class::<sensitivity::PyParameterRange>()?;
+    m.add_class::<sensitivity::PySensitivityResult>()?;
+    m.add_class::<sensitivity::PySensitivitySummary>()?;
+    m.add_class::<sensitivity::PyHeatmapData>()?;
+    m.add_class::<sensitivity::PyCliff>()?;
+    m.add_class::<sensitivity::PyPlateau>()?;
+    m.add_class::<sensitivity::PyCostSensitivityResult>()?;
+    m.add_class::<sensitivity::PyCostScenario>()?;
 
     Ok(())
 }

@@ -182,6 +182,11 @@ pub use sensitivity::{
     SensitivityConfig, SensitivityMetric, SensitivitySummary,
 };
 
+// Cost sensitivity analysis
+pub use cost_sensitivity::{
+    run_cost_sensitivity_analysis, CostScenario, CostSensitivityAnalysis, CostSensitivityConfig,
+};
+
 // Export utilities
 pub use export::export_walkforward_html;
 

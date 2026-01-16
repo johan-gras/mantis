@@ -416,7 +416,7 @@ pub fn signal_check(
 }
 
 /// Helper: extract bars from data object (dict, path string, pandas DataFrame, or polars DataFrame).
-fn extract_bars(py: Python<'_>, data: &PyObject) -> PyResult<Vec<Bar>> {
+pub fn extract_bars(py: Python<'_>, data: &PyObject) -> PyResult<Vec<Bar>> {
     // Try as dictionary first
     if let Ok(dict) = data.downcast_bound::<PyDict>(py) {
         // Check if it has 'bars' key

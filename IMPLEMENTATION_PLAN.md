@@ -554,17 +554,49 @@ mantis portfolio -d ./data/stocks/ -p "*.csv" --strategy risk-parity --rebalance
 **Dependencies:** None
 **Effort:** Small (completed)
 
-#### 18f. Python Sensitivity Analysis Bindings [NOT STARTED]
-**Status:** NOT STARTED
+#### 18f. Python Sensitivity Analysis Bindings [COMPLETE]
+**Status:** COMPLETE
 
-**Description:** The Rust sensitivity and cost_sensitivity modules are fully implemented but not exposed to Python.
+**Implementation details:**
+- Created `src/python/sensitivity.rs` module (~1050 lines) with PyO3 bindings
+- Parameter range functions: `linear_range()`, `log_range()`, `discrete_range()`, `centered_range()`
+- `mt.sensitivity()` - Run parameter sensitivity analysis on built-in strategies
+  - Supports all 6 built-in strategies: sma-crossover, momentum, mean-reversion, rsi, macd, breakout
+  - Configurable metric: sharpe, sortino, return, calmar, profit_factor, win_rate, max_drawdown
+  - Returns `SensitivityResult` with stability scores, cliffs, plateaus, heatmaps
+- `mt.cost_sensitivity()` - Test strategy robustness to transaction costs
+  - Accepts signal arrays or built-in strategies
+  - Configurable cost multipliers (default: 0x, 1x, 2x, 5x, 10x)
+  - Returns `CostSensitivityResult` with degradation metrics, robustness check
+- Python wrapper classes with Plotly visualization support in Jupyter
+- Type stubs in `python/mantis/__init__.pyi` for IDE autocomplete
+- All functions exported from `python/mantis/__init__.py`
 
-**Required:**
-- Add mt.sensitivity() Python binding (src/sensitivity.rs has full implementation)
-- Add mt.cost_sensitivity() Python binding (src/cost_sensitivity.rs has full implementation)
+**Python API:**
+```python
+# Parameter sensitivity
+result = mt.sensitivity(
+    data,
+    strategy="sma-crossover",
+    params={
+        "fast_period": mt.linear_range(5, 20, 4),
+        "slow_period": mt.linear_range(20, 60, 5),
+    },
+    metric="sharpe"
+)
+print(result.stability_score())  # 0.72
+print(result.best_params())  # {'fast_period': 10.0, 'slow_period': 40.0}
+result.plot_heatmap("fast_period", "slow_period")  # Interactive Plotly in Jupyter
+
+# Cost sensitivity
+result = mt.cost_sensitivity(data, signal)
+print(result.sharpe_degradation_at(5.0))  # 45.2%
+print(result.is_robust())  # True
+result.plot()  # Interactive Plotly in Jupyter
+```
 
 **Dependencies:** None
-**Effort:** Medium (2-3 days)
+**Effort:** Medium (completed)
 
 ---
 
@@ -594,7 +626,7 @@ mantis portfolio -d ./data/stocks/ -p "*.csv" --strategy risk-parity --rebalance
 | 18c | mt.Backtest fluent API | **COMPLETE** | P3 | Medium | None |
 | 18d | Interactive Plotly charts | **COMPLETE** | P2 | Medium | None |
 | 18e | max_position/fill_price params | **COMPLETE** | P3 | Small | None |
-| 18f | Sensitivity analysis bindings | NOT STARTED | P3 | Medium | None |
+| 18f | Sensitivity analysis bindings | **COMPLETE** | P3 | Medium | None |
 
 ---
 
@@ -644,6 +676,7 @@ mantis portfolio -d ./data/stocks/ -p "*.csv" --strategy risk-parity --rebalance
 | **Python Bindings Advanced Metrics** | **COMPLETE**: ValidationResult.report() method for HTML export; BacktestResult.deflated_sharpe and .psr properties; metrics() dict includes deflated_sharpe and psr |
 | **Interactive Plotly Charts** | **COMPLETE**: plotly>=5.0.0 as optional dependency (`pip install mantis-bt[jupyter]`); results.plot() auto-detects Jupyter via IPython; returns interactive Plotly Figure with equity curve and drawdown subplots in Jupyter, ASCII sparkline fallback otherwise; validation.plot() also supports Plotly with IS vs OOS bar charts; _repr_html_() for rich Jupyter display; show_drawdown parameter; Files: pyproject.toml, python/mantis/__init__.py, python/mantis/__init__.pyi |
 | **Documentation Site** | **COMPLETE**: mkdocs.yml with material theme, dark/light mode, search; docs/ with quickstart.md, cookbook/ (6 recipe pages), concepts/ (4 pages), api/ (5 reference pages), playground.md; Custom CSS for styling; Full coverage of Quick Start, Cookbook, API Reference, Concepts |
+| **Python Sensitivity Analysis Bindings** | **COMPLETE**: src/python/sensitivity.rs (~1050 lines); mt.sensitivity() for parameter sensitivity on built-in strategies with stability scores, cliffs, plateaus, heatmaps; mt.cost_sensitivity() for cost robustness testing; parameter range functions (linear_range, log_range, discrete_range, centered_range); Plotly visualization in Jupyter; type stubs for IDE autocomplete |
 | Codebase Cleanliness | **VERIFIED**: No TODOs/FIXMEs in codebase |
 | ALL TESTS | **PASSING**: 558+ lib tests (0 failures) |
 

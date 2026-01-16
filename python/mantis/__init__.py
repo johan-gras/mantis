@@ -42,6 +42,21 @@ from mantis._mantis import (
     FoldDetail,
     Bar,
     BacktestConfig,
+    # Sensitivity analysis
+    sensitivity as _sensitivity_raw,
+    cost_sensitivity as _cost_sensitivity_raw,
+    linear_range,
+    log_range,
+    discrete_range,
+    centered_range,
+    ParameterRange,
+    SensitivityResult as _SensitivityResult,
+    SensitivitySummary,
+    HeatmapData,
+    Cliff,
+    Plateau,
+    CostSensitivityResult as _CostSensitivityResult,
+    CostScenario,
 )
 
 
@@ -674,6 +689,21 @@ __all__ = [
     "Backtest",
     "compare",
     "sweep",
+    # Sensitivity analysis
+    "sensitivity",
+    "cost_sensitivity",
+    "linear_range",
+    "log_range",
+    "discrete_range",
+    "centered_range",
+    "ParameterRange",
+    "SensitivityResult",
+    "SensitivitySummary",
+    "HeatmapData",
+    "Cliff",
+    "Plateau",
+    "CostSensitivityResult",
+    "CostScenario",
 ]
 
 
@@ -993,3 +1023,414 @@ class Backtest:
             strategy_params=self._strategy_params,
             **self._config,
         )
+
+
+# =============================================================================
+# Sensitivity Analysis Wrapper Classes
+# =============================================================================
+
+class SensitivityResult:
+    """
+    Wrapper around the Rust SensitivityResult that adds Plotly visualization support.
+
+    In Jupyter notebooks with plotly installed, heatmap plotting returns an interactive
+    Plotly figure. In other environments, it falls back to ASCII visualization.
+    """
+
+    def __init__(self, rust_result: _SensitivityResult):
+        self._rust = rust_result
+
+    @property
+    def strategy_name(self) -> str:
+        return self._rust.strategy_name
+
+    @property
+    def symbol(self) -> str:
+        return self._rust.symbol
+
+    @property
+    def num_combinations(self) -> int:
+        return self._rust.num_combinations
+
+    def best_params(self) -> Optional[Dict[str, float]]:
+        """Get the best performing parameter set."""
+        return self._rust.best_params()
+
+    def stability_score(self) -> float:
+        """Get the overall stability score (0-1, higher is more stable)."""
+        return self._rust.stability_score()
+
+    def parameter_stability(self, param_name: str) -> Optional[float]:
+        """Get stability score for a specific parameter."""
+        return self._rust.parameter_stability(param_name)
+
+    def is_fragile(self, threshold: float = 0.5) -> bool:
+        """Check if the strategy is fragile (high sensitivity to parameters)."""
+        return self._rust.is_fragile(threshold)
+
+    def heatmap(self, x_param: str, y_param: str) -> Optional[HeatmapData]:
+        """Get 2D heatmap data for two parameters."""
+        return self._rust.heatmap(x_param, y_param)
+
+    def parameter_importance(self) -> List[tuple]:
+        """Get parameter importance ranking."""
+        return self._rust.parameter_importance()
+
+    def cliffs(self) -> List[Cliff]:
+        """Get detected cliffs (sharp performance drops)."""
+        return self._rust.cliffs()
+
+    def plateaus(self) -> List[Plateau]:
+        """Get detected plateaus (stable performance regions)."""
+        return self._rust.plateaus()
+
+    def summary(self) -> SensitivitySummary:
+        """Get summary statistics."""
+        return self._rust.summary()
+
+    def to_csv(self) -> str:
+        """Export results to CSV format."""
+        return self._rust.to_csv()
+
+    def plot_heatmap(self, x_param: str, y_param: str) -> Any:
+        """
+        Display a heatmap visualization for two parameters.
+
+        In Jupyter notebooks with plotly installed, returns an interactive
+        Plotly heatmap. Otherwise returns ASCII representation.
+
+        Args:
+            x_param: Parameter name for X axis.
+            y_param: Parameter name for Y axis.
+
+        Returns:
+            Plotly Figure object in Jupyter with plotly, string otherwise.
+        """
+        heatmap = self.heatmap(x_param, y_param)
+        if heatmap is None:
+            raise ValueError(f"Parameters '{x_param}' and/or '{y_param}' not found.")
+
+        if _is_jupyter() and _has_plotly():
+            return self._plot_heatmap_plotly(heatmap, x_param, y_param)
+        else:
+            return heatmap.to_csv()
+
+    def _plot_heatmap_plotly(self, heatmap: HeatmapData, x_param: str, y_param: str) -> Any:
+        """Create an interactive Plotly heatmap."""
+        import plotly.graph_objects as go
+
+        x_vals = list(heatmap.x_values())
+        y_vals = list(heatmap.y_values())
+        z_vals = heatmap.values()
+
+        fig = go.Figure(data=go.Heatmap(
+            z=z_vals,
+            x=x_vals,
+            y=y_vals,
+            colorscale='RdYlGn',
+            hovertemplate=f'{x_param}: %{{x}}<br>{y_param}: %{{y}}<br>Metric: %{{z:.3f}}<extra></extra>'
+        ))
+
+        fig.update_layout(
+            title=dict(
+                text=f"Parameter Sensitivity: {self.strategy_name}",
+                x=0.5,
+                xanchor='center'
+            ),
+            xaxis_title=x_param,
+            yaxis_title=y_param,
+            height=500,
+            margin=dict(l=60, r=40, t=60, b=60)
+        )
+
+        return fig
+
+    def __repr__(self) -> str:
+        return repr(self._rust)
+
+    def __str__(self) -> str:
+        return str(self._rust)
+
+
+class CostSensitivityResult:
+    """
+    Wrapper around the Rust CostSensitivityResult that adds Plotly visualization support.
+
+    In Jupyter notebooks with plotly installed, plot() returns an interactive
+    Plotly figure. In other environments, it falls back to text report.
+    """
+
+    def __init__(self, rust_result: _CostSensitivityResult):
+        self._rust = rust_result
+
+    @property
+    def symbol(self) -> str:
+        return self._rust.symbol
+
+    @property
+    def strategy_name(self) -> str:
+        return self._rust.strategy_name
+
+    def scenarios(self) -> List[CostScenario]:
+        """Get all scenarios."""
+        return self._rust.scenarios()
+
+    def scenario_at(self, multiplier: float) -> Optional[CostScenario]:
+        """Get scenario at specific multiplier."""
+        return self._rust.scenario_at(multiplier)
+
+    def baseline(self) -> Optional[CostScenario]:
+        """Get baseline (1x) scenario."""
+        return self._rust.baseline()
+
+    def zero_cost(self) -> Optional[CostScenario]:
+        """Get zero-cost scenario (theoretical upper bound)."""
+        return self._rust.zero_cost()
+
+    def sharpe_degradation_at(self, multiplier: float) -> Optional[float]:
+        """Calculate Sharpe ratio degradation percentage at given multiplier."""
+        return self._rust.sharpe_degradation_at(multiplier)
+
+    def return_degradation_at(self, multiplier: float) -> Optional[float]:
+        """Calculate return degradation percentage at given multiplier."""
+        return self._rust.return_degradation_at(multiplier)
+
+    def is_robust(self, threshold_sharpe: float = 0.5) -> bool:
+        """Check if strategy passes robustness threshold at 5x costs."""
+        return self._rust.is_robust(threshold_sharpe)
+
+    def cost_elasticity(self) -> Optional[float]:
+        """Calculate cost elasticity (% change in return per % change in costs)."""
+        return self._rust.cost_elasticity()
+
+    def breakeven_multiplier(self) -> Optional[float]:
+        """Calculate breakeven cost multiplier (where returns become zero/negative)."""
+        return self._rust.breakeven_multiplier()
+
+    def report(self) -> str:
+        """Generate formatted summary report."""
+        return self._rust.report()
+
+    def plot(self) -> Any:
+        """
+        Display a visualization of cost sensitivity.
+
+        In Jupyter notebooks with plotly installed, returns an interactive
+        Plotly figure showing Sharpe and returns at different cost levels.
+        Otherwise returns a text report.
+
+        Returns:
+            Plotly Figure object in Jupyter with plotly, string otherwise.
+        """
+        if _is_jupyter() and _has_plotly():
+            return self._plot_plotly()
+        else:
+            return self.report()
+
+    def _plot_plotly(self) -> Any:
+        """Create an interactive Plotly figure for cost sensitivity."""
+        import plotly.graph_objects as go
+        from plotly.subplots import make_subplots
+
+        scenarios = self.scenarios()
+        multipliers = [s.multiplier for s in scenarios]
+        sharpes = [s.sharpe for s in scenarios]
+        returns = [s.total_return for s in scenarios]
+
+        fig = make_subplots(
+            rows=1, cols=2,
+            subplot_titles=('Sharpe Ratio vs Cost Multiplier', 'Return vs Cost Multiplier')
+        )
+
+        # Sharpe ratio plot
+        fig.add_trace(
+            go.Scatter(
+                x=multipliers,
+                y=sharpes,
+                mode='lines+markers',
+                name='Sharpe',
+                line=dict(color='#2E86AB', width=2),
+                marker=dict(size=8),
+                hovertemplate='%{x}x costs<br>Sharpe: %{y:.2f}<extra></extra>'
+            ),
+            row=1, col=1
+        )
+
+        # Return plot
+        fig.add_trace(
+            go.Scatter(
+                x=multipliers,
+                y=returns,
+                mode='lines+markers',
+                name='Return',
+                line=dict(color='#28A745', width=2),
+                marker=dict(size=8),
+                hovertemplate='%{x}x costs<br>Return: %{y:.1f}%<extra></extra>'
+            ),
+            row=1, col=2
+        )
+
+        # Add robustness threshold line
+        fig.add_hline(y=0.5, line_dash="dash", line_color="gray",
+                     annotation_text="Robustness threshold", row=1, col=1)
+        fig.add_hline(y=0, line_dash="dash", line_color="gray",
+                     annotation_text="Breakeven", row=1, col=2)
+
+        robust = self.is_robust()
+        verdict_color = '#28A745' if robust else '#DC3545'
+        verdict_text = 'ROBUST' if robust else 'FRAGILE'
+
+        fig.update_layout(
+            title=dict(
+                text=f"Cost Sensitivity: {self.strategy_name} ({self.symbol}) - {verdict_text}",
+                x=0.5,
+                xanchor='center',
+                font=dict(color=verdict_color)
+            ),
+            showlegend=False,
+            height=400,
+            margin=dict(l=60, r=40, t=60, b=40)
+        )
+
+        fig.update_xaxes(title_text="Cost Multiplier", row=1, col=1)
+        fig.update_xaxes(title_text="Cost Multiplier", row=1, col=2)
+        fig.update_yaxes(title_text="Sharpe Ratio", row=1, col=1)
+        fig.update_yaxes(title_text="Return (%)", row=1, col=2)
+
+        return fig
+
+    def _repr_html_(self) -> str:
+        """Rich HTML display for Jupyter notebooks."""
+        if _is_jupyter() and _has_plotly():
+            fig = self._plot_plotly()
+            return fig.to_html(include_plotlyjs='cdn', full_html=False)
+        else:
+            robust = self.is_robust()
+            verdict_color = 'green' if robust else 'red'
+            verdict_text = 'ROBUST' if robust else 'FRAGILE'
+            return f"""
+            <div style="font-family: monospace; padding: 10px;">
+                <h3>Cost Sensitivity: {self.strategy_name} ({self.symbol})</h3>
+                <p><strong>Verdict:</strong> <span style="color: {verdict_color}; font-weight: bold;">{verdict_text}</span></p>
+                <table>
+                    <tr><th>Multiplier</th><th>Return</th><th>Sharpe</th></tr>
+                    {''.join(f"<tr><td>{s.multiplier}x</td><td>{s.total_return:.1f}%</td><td>{s.sharpe:.2f}</td></tr>" for s in self.scenarios())}
+                </table>
+            </div>
+            """
+
+    def __repr__(self) -> str:
+        return repr(self._rust)
+
+    def __str__(self) -> str:
+        return str(self._rust)
+
+
+# =============================================================================
+# Sensitivity Analysis Wrapper Functions
+# =============================================================================
+
+def sensitivity(
+    data: Any,
+    strategy: str,
+    params: Dict[str, ParameterRange],
+    metric: str = "sharpe",
+    commission: float = 0.001,
+    slippage: float = 0.001,
+    cash: float = 100_000.0,
+    parallel: bool = True,
+) -> SensitivityResult:
+    """
+    Run parameter sensitivity analysis on a built-in strategy.
+
+    Tests how strategy performance varies across different parameter values.
+    This helps identify:
+    - Fragile strategies that only work with specific parameters
+    - Robust strategies that perform well across parameter ranges
+    - Cliffs where performance drops sharply
+    - Plateaus where performance is stable
+
+    Args:
+        data: Data dictionary from load() or path to CSV/Parquet file
+        strategy: Name of built-in strategy ("sma-crossover", "momentum",
+                  "mean-reversion", "rsi", "macd", "breakout")
+        params: Dictionary mapping parameter names to ParameterRange objects
+        metric: Metric to analyze ("sharpe", "sortino", "return", "calmar",
+                "profit_factor", "win_rate", "max_drawdown")
+        commission: Commission rate (default 0.001 = 0.1%)
+        slippage: Slippage rate (default 0.001 = 0.1%)
+        cash: Initial capital (default 100,000)
+        parallel: Run parameter combinations in parallel (default True)
+
+    Returns:
+        SensitivityResult with analysis results.
+
+    Example:
+        >>> data = mt.load_sample("AAPL")
+        >>> result = mt.sensitivity(
+        ...     data,
+        ...     strategy="sma-crossover",
+        ...     params={
+        ...         "fast_period": mt.linear_range(5, 20, 4),
+        ...         "slow_period": mt.linear_range(20, 60, 5),
+        ...     },
+        ...     metric="sharpe"
+        ... )
+        >>> print(result.stability_score())
+        0.72
+        >>> print(result.best_params())
+        {'fast_period': 10.0, 'slow_period': 40.0}
+    """
+    rust_result = _sensitivity_raw(
+        data, strategy, params, metric,
+        commission, slippage, cash, parallel
+    )
+    return SensitivityResult(rust_result)
+
+
+def cost_sensitivity(
+    data: Any,
+    signal: Optional[np.ndarray] = None,
+    strategy: Optional[str] = None,
+    strategy_params: Optional[Dict[str, Any]] = None,
+    multipliers: Optional[List[float]] = None,
+    commission: float = 0.001,
+    slippage: float = 0.001,
+    cash: float = 100_000.0,
+    include_zero_cost: bool = True,
+) -> CostSensitivityResult:
+    """
+    Run cost sensitivity analysis to test strategy robustness to transaction costs.
+
+    Tests the same strategy at multiple cost levels (e.g., 1x, 2x, 5x, 10x) to see
+    how performance degrades. A robust strategy should maintain acceptable returns
+    even with significantly higher costs.
+
+    Args:
+        data: Data dictionary from load() or path to CSV/Parquet file
+        signal: Signal array (1=long, -1=short, 0=flat), or None for built-in strategy
+        strategy: Name of built-in strategy if signal is None
+        strategy_params: Parameters for built-in strategy
+        multipliers: List of cost multipliers to test (default [0.0, 1.0, 2.0, 5.0, 10.0])
+        commission: Base commission rate (default 0.001 = 0.1%)
+        slippage: Base slippage rate (default 0.001 = 0.1%)
+        cash: Initial capital (default 100,000)
+        include_zero_cost: Include zero-cost scenario (default True)
+
+    Returns:
+        CostSensitivityResult with analysis results.
+
+    Example:
+        >>> data = mt.load_sample("AAPL")
+        >>> signal = (data['close'] > data['close'].mean()).astype(int)
+        >>> result = mt.cost_sensitivity(data, signal)
+        >>> print(result.sharpe_degradation_at(5.0))
+        45.2
+        >>> print(result.is_robust())
+        True
+    """
+    rust_result = _cost_sensitivity_raw(
+        data, signal, strategy, strategy_params,
+        multipliers, commission, slippage, cash, include_zero_cost
+    )
+    return CostSensitivityResult(rust_result)
