@@ -474,6 +474,46 @@ Fixed Rust compiler errors in Python bindings where type inference failed on `Ok
 
 ---
 
+## API Gap Fixes (2026-01-16)
+
+### Python API Improvements
+
+The following Python API improvements were implemented:
+
+**BacktestResult enhancements:**
+- `monte_carlo()` method now exposed on `BacktestResult` for Monte Carlo analysis
+- Returns `MonteCarloResult` with confidence intervals, VaR, CVaR, and robustness metrics
+
+**Validation API enhancements:**
+- `trials` parameter added to `validate()` for Deflated Sharpe Ratio calculation
+- `ValidationResult` now includes:
+  - `deflated_sharpe` property - deflated Sharpe ratio value
+  - `trials` property - number of trials used in deflation
+  - `to_dict()` method - convert result to dictionary
+  - `to_dataframe()` method - convert result to pandas DataFrame
+  - `warnings()` method - list of warning messages for suspicious metrics
+
+**New exports:**
+- `MonteCarloResult` class is now exported from `mantis` module
+
+### Modules Marked for Deprecation
+
+The following modules have deprecation notices added and are marked for removal (outside focused spec scope):
+
+| Module | Contents | Reason |
+|--------|----------|--------|
+| `multi_asset.rs` | Black-Litterman, HRP, Mean-Variance, Risk Parity | Use dedicated portfolio optimization tools |
+| `options.rs` | Black-Scholes, Binomial, Greeks | Outside core backtesting thesis |
+| `regime.rs` | HMM, trend/volatility/volume detection | Users should compute externally |
+| `streaming.rs` | Streaming indicators | Not needed for research backtesting |
+| `features.rs` | Feature extraction library | Users compute features in pandas/polars |
+| `experiments.rs` | SQLite experiment tracking | Use MLflow, W&B, or similar external tools |
+| `export.rs` | NPY/Markdown exports | CSV, JSON, Parquet formats sufficient |
+
+These modules remain functional but will be removed in a future version to maintain focus on the core backtesting functionality defined in the specs.
+
+---
+
 ## Completed Items - GitHub Pages Deployment (2026-01-16)
 
 ### Item 39: GitHub Pages Deployment
