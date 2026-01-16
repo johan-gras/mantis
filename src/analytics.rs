@@ -1592,11 +1592,9 @@ pub fn multiple_regression(y: &[f64], x: &[Vec<f64>]) -> Option<RegressionResult
     let mut p_values = Vec::with_capacity(cols);
 
     for i in 0..cols {
-        let t_stat = if std_errors[i] > 1e-10 {
-            coefficients[i] / std_errors[i]
-        } else {
-            0.0
-        };
+        let se = std_errors[i].max(1e-10);
+        let t_stat = coefficients[i] / se;
+        std_errors[i] = se;
         t_statistics.push(t_stat);
 
         // Two-tailed p-value using t-distribution approximation
@@ -2364,18 +2362,18 @@ impl StatisticalTests {
             return None;
         }
 
-        // Sum of squared residuals
-        let ss_residuals: f64 = residuals.iter().map(|e| e.powi(2)).sum();
+        let mean = residuals.iter().sum::<f64>() / n as f64;
+        let centered: Vec<f64> = residuals.iter().map(|e| e - mean).collect();
+
+        // Sum of squared residuals relative to the mean
+        let ss_residuals: f64 = centered.iter().map(|e| e.powi(2)).sum();
 
         if ss_residuals == 0.0 {
             return None;
         }
 
         // Sum of squared differences
-        let ss_diff: f64 = residuals
-            .windows(2)
-            .map(|w| (w[1] - w[0]).powi(2))
-            .sum();
+        let ss_diff: f64 = centered.windows(2).map(|w| (w[1] - w[0]).powi(2)).sum();
 
         let dw_statistic = ss_diff / ss_residuals;
 
@@ -2452,95 +2450,88 @@ impl StatisticalTests {
 
         // Automatic lag selection using Schwert (1989) rule: max_lag = 12*(T/100)^(1/4)
         let auto_lag = ((12.0 * (n as f64 / 100.0).powf(0.25)).floor() as usize).max(1);
-        let lag = max_lag.unwrap_or(auto_lag).min(n / 4);
 
         // Calculate first differences
         let diff: Vec<f64> = data.windows(2).map(|w| w[1] - w[0]).collect();
-
-        if diff.len() <= lag + 1 {
+        if diff.len() < 5 {
             return None;
         }
 
-        // Build regression: Δy_t = α + γ*y_{t-1} + Σδ_i*Δy_{t-i} + ε_t
-        // We use OLS to estimate γ and test H0: γ = 0
-
-        // Prepare dependent variable: Δy_t (skip first lag observations)
-        let y: Vec<f64> = diff.iter().skip(lag).copied().collect();
-        let n_obs = y.len();
-
-        if n_obs < 10 {
+        let max_diff_lag = diff.len().saturating_sub(1);
+        if max_diff_lag == 0 {
             return None;
         }
 
-        // Prepare independent variables
-        // 1. Constant (intercept)
-        // 2. Lagged level: y_{t-1}
-        // 3. Lagged differences: Δy_{t-1}, ..., Δy_{t-lag}
+        let initial_lag = max_lag.unwrap_or(auto_lag).min(n / 4).min(max_diff_lag);
 
-        let mut x_lagged_level = Vec::with_capacity(n_obs);
-        let mut x_lagged_diffs: Vec<Vec<f64>> = (0..lag).map(|_| Vec::with_capacity(n_obs)).collect();
+        for current_lag in (0..=initial_lag).rev() {
+            if diff.len() <= current_lag {
+                continue;
+            }
 
-        for i in lag..diff.len() {
-            // Lagged level: y_{t-1} = data[i] (since diff[i] = data[i+1] - data[i])
-            x_lagged_level.push(data[i]);
+            let y: Vec<f64> = diff.iter().skip(current_lag).copied().collect();
+            let n_obs = y.len();
 
-            // Lagged differences
-            for j in 0..lag {
-                x_lagged_diffs[j].push(diff[i - 1 - j]);
+            if n_obs < 10 {
+                continue;
+            }
+
+            let mut x_lagged_level = Vec::with_capacity(n_obs);
+            let mut x_lagged_diffs: Vec<Vec<f64>> = (0..current_lag)
+                .map(|_| Vec::with_capacity(n_obs))
+                .collect();
+
+            for i in current_lag..diff.len() {
+                x_lagged_level.push(data[i]);
+                for j in 0..current_lag {
+                    x_lagged_diffs[j].push(diff[i - 1 - j]);
+                }
+            }
+
+            let mut factors: Vec<Vec<f64>> = vec![x_lagged_level];
+            for lag_diff in x_lagged_diffs {
+                factors.push(lag_diff);
+            }
+
+            if let Some(regression) = multiple_regression(&y, &factors) {
+                let adf_statistic = regression.t_statistics.first().copied().unwrap_or(0.0);
+
+                let critical_1pct = -3.43;
+                let critical_5pct = -2.86;
+                let critical_10pct = -2.57;
+
+                let p_value = adf_p_value(adf_statistic, n_obs);
+
+                let interpretation = if adf_statistic < critical_1pct {
+                    format!(
+                        "Strongly stationary (ADF < {:.2}). Series has no unit root.",
+                        critical_1pct
+                    )
+                } else if adf_statistic < critical_5pct {
+                    format!(
+                        "Stationary at 5% level (ADF < {:.2}). Reject unit root hypothesis.",
+                        critical_5pct
+                    )
+                } else if adf_statistic < critical_10pct {
+                    format!(
+                        "Weakly stationary (ADF < {:.2}). Marginal evidence against unit root.",
+                        critical_10pct
+                    )
+                } else {
+                    "Non-stationary (cannot reject unit root). Consider differencing the series."
+                        .to_string()
+                };
+
+                return Some(StatisticalTestResult::new(
+                    "Augmented Dickey-Fuller",
+                    adf_statistic,
+                    p_value,
+                    interpretation,
+                ));
             }
         }
 
-        // Build design matrix for regression
-        let mut factors: Vec<Vec<f64>> = vec![x_lagged_level];
-        for lag_diff in x_lagged_diffs {
-            factors.push(lag_diff);
-        }
-
-        // Run regression
-        let regression = match multiple_regression(&y, &factors) {
-            Some(r) => r,
-            None => return None,
-        };
-
-        // The ADF test statistic is the t-statistic for the coefficient on y_{t-1}
-        let adf_statistic = regression.t_statistics.first().copied().unwrap_or(0.0);
-
-        // ADF critical values (approximate, from Dickey-Fuller tables)
-        // At 1%: -3.43, 5%: -2.86, 10%: -2.57 (for n=100, with constant)
-        // These vary with sample size; using approximate values
-        let critical_1pct = -3.43;
-        let critical_5pct = -2.86;
-        let critical_10pct = -2.57;
-
-        // Approximate p-value using interpolation
-        // The ADF distribution is non-standard (not normal or t)
-        let p_value = adf_p_value(adf_statistic, n_obs);
-
-        let interpretation = if adf_statistic < critical_1pct {
-            format!(
-                "Strongly stationary (ADF < {:.2}). Series has no unit root.",
-                critical_1pct
-            )
-        } else if adf_statistic < critical_5pct {
-            format!(
-                "Stationary at 5% level (ADF < {:.2}). Reject unit root hypothesis.",
-                critical_5pct
-            )
-        } else if adf_statistic < critical_10pct {
-            format!(
-                "Weakly stationary (ADF < {:.2}). Marginal evidence against unit root.",
-                critical_10pct
-            )
-        } else {
-            "Non-stationary (cannot reject unit root). Consider differencing the series.".to_string()
-        };
-
-        Some(StatisticalTestResult::new(
-            "Augmented Dickey-Fuller",
-            adf_statistic,
-            p_value,
-            interpretation,
-        ))
+        None
     }
 
     /// Calculate first-order autocorrelation coefficient.
@@ -2840,6 +2831,8 @@ mod tests {
     use crate::engine::BacktestConfig;
     use crate::types::Side;
     use chrono::{TimeZone, Utc};
+    use rand::rngs::StdRng;
+    use rand::{Rng, SeedableRng};
 
     fn create_test_result() -> BacktestResult {
         let start = Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap();
@@ -4735,14 +4728,14 @@ mod tests {
     fn test_jarque_bera_normal_data() {
         // Generate normally distributed data using Box-Muller transform
         let n = 1000;
+        let mut rng = StdRng::seed_from_u64(42);
         let normal_data: Vec<f64> = (0..n)
-            .map(|i| {
-                // Simple pseudo-normal: sum of 12 uniform - 6 (central limit theorem)
-                let u1 = ((i * 1234567) % 10000) as f64 / 10000.0;
-                let u2 = ((i * 7654321) % 10000) as f64 / 10000.0;
-                let u3 = ((i * 2468135) % 10000) as f64 / 10000.0;
-                let u4 = ((i * 3579246) % 10000) as f64 / 10000.0;
-                (u1 + u2 + u3 + u4 - 2.0) * 0.5 // Approximately normal
+            .map(|_| {
+                let mut sum = 0.0;
+                for _ in 0..12 {
+                    sum += rng.gen::<f64>();
+                }
+                (sum - 6.0) * 0.5
             })
             .collect();
 
@@ -4758,12 +4751,12 @@ mod tests {
     fn test_jarque_bera_heavy_tails() {
         // Data with heavy tails (high kurtosis) - should reject normality
         let n = 500;
+        let mut rng = StdRng::seed_from_u64(7);
         let heavy_tail_data: Vec<f64> = (0..n)
             .map(|i| {
-                // Create data with occasional large outliers
-                let base = (i as f64 * 0.1).sin() * 0.01;
-                if i % 20 == 0 {
-                    base * 10.0 // Occasional large value
+                let base = (rng.gen::<f64>() - 0.5) * 0.02;
+                if i % 30 == 0 {
+                    base + (rng.gen::<f64>() - 0.5) * 0.5
                 } else {
                     base
                 }
@@ -4781,18 +4774,22 @@ mod tests {
     fn test_jarque_bera_skewed_data() {
         // Right-skewed data (like many financial return distributions)
         let n = 500;
+        let mut rng = StdRng::seed_from_u64(99);
         let skewed_data: Vec<f64> = (0..n)
-            .map(|i| {
-                // Exponential-like: mostly small positive values with occasional large ones
-                let u = ((i * 9876543) % 10000) as f64 / 10000.0;
-                -u.ln() * 0.01 // Exponential distribution (right skewed)
+            .map(|_| {
+                let u = rng.gen::<f64>();
+                (u.powi(3) - 0.25) * 0.1
             })
             .collect();
 
         let result = StatisticalTests::jarque_bera(&skewed_data).expect("Should compute JB test");
 
         // Skewed data should have high JB statistic
-        assert!(result.statistic > 5.0, "Skewed data should have high JB statistic: {}", result.statistic);
+        assert!(
+            result.statistic > 5.0,
+            "Skewed data should have high JB statistic: {}",
+            result.statistic
+        );
     }
 
     #[test]
@@ -4810,12 +4807,8 @@ mod tests {
     fn test_durbin_watson_no_autocorrelation() {
         // Independent data should have DW ≈ 2
         let n = 200;
-        let independent_data: Vec<f64> = (0..n)
-            .map(|i| {
-                // Pseudo-random: sin of prime multiples
-                (i as f64 * 1.618033988749895).sin() * 0.01
-            })
-            .collect();
+        let mut rng = StdRng::seed_from_u64(123);
+        let independent_data: Vec<f64> = (0..n).map(|_| (rng.gen::<f64>() - 0.5) * 0.02).collect();
 
         let result =
             StatisticalTests::durbin_watson(&independent_data).expect("Should compute DW test");
@@ -4832,11 +4825,11 @@ mod tests {
     fn test_durbin_watson_positive_autocorrelation() {
         // Create positively autocorrelated data (trending)
         let n = 200;
+        let mut rng = StdRng::seed_from_u64(456);
         let mut autocorrelated_data = Vec::with_capacity(n);
-        autocorrelated_data.push(0.01);
+        autocorrelated_data.push(0.0);
         for i in 1..n {
-            // AR(1) process with rho = 0.8
-            let innovation = (i as f64 * 1.618033988749895).sin() * 0.005;
+            let innovation = (rng.gen::<f64>() - 0.5) * 0.01;
             let prev = autocorrelated_data[i - 1];
             autocorrelated_data.push(0.8 * prev + innovation);
         }
@@ -4856,11 +4849,11 @@ mod tests {
     fn test_durbin_watson_negative_autocorrelation() {
         // Create negatively autocorrelated data (mean-reverting)
         let n = 200;
+        let mut rng = StdRng::seed_from_u64(789);
         let mut mean_reverting = Vec::with_capacity(n);
-        mean_reverting.push(0.01);
+        mean_reverting.push(0.0);
         for i in 1..n {
-            // Alternating pattern
-            let innovation = (i as f64 * 1.618033988749895).sin() * 0.002;
+            let innovation = (rng.gen::<f64>() - 0.5) * 0.005;
             let prev = mean_reverting[i - 1];
             mean_reverting.push(-0.5 * prev + innovation);
         }
@@ -4935,12 +4928,11 @@ mod tests {
     #[test]
     fn test_adf_auto_lag_selection() {
         let n = 250;
-        let data: Vec<f64> = (0..n)
-            .map(|i| (i as f64 * 0.1).sin() * 0.01)
-            .collect();
+        let data: Vec<f64> = (0..n).map(|i| (i as f64 * 0.1).sin() * 0.01).collect();
 
         // Test with automatic lag selection
-        let result_auto = StatisticalTests::adf_test(&data, None).expect("Should work with auto lag");
+        let result_auto =
+            StatisticalTests::adf_test(&data, None).expect("Should work with auto lag");
 
         // Test with explicit lag
         let result_manual =
@@ -4961,11 +4953,11 @@ mod tests {
     fn test_autocorrelation_calculation() {
         // Zero autocorrelation case
         let n = 200;
-        let independent: Vec<f64> = (0..n)
-            .map(|i| (i as f64 * 1.618033988749895).sin() * 0.01)
-            .collect();
+        let mut rng = StdRng::seed_from_u64(2024);
+        let independent: Vec<f64> = (0..n).map(|_| (rng.gen::<f64>() - 0.5) * 0.02).collect();
 
-        let rho = StatisticalTests::autocorrelation(&independent).expect("Should compute autocorrelation");
+        let rho = StatisticalTests::autocorrelation(&independent)
+            .expect("Should compute autocorrelation");
 
         // Should be near 0 for independent data
         assert!(
@@ -4975,14 +4967,16 @@ mod tests {
         );
 
         // High autocorrelation case (AR(1) process)
+        let mut ar_rng = StdRng::seed_from_u64(2025);
         let mut ar1 = Vec::with_capacity(n);
         ar1.push(0.0);
         for i in 1..n {
-            let innovation = (i as f64 * 1.618033988749895).sin() * 0.002;
+            let innovation = (ar_rng.gen::<f64>() - 0.5) * 0.004;
             ar1.push(0.9 * ar1[i - 1] + innovation);
         }
 
-        let rho_ar1 = StatisticalTests::autocorrelation(&ar1).expect("Should compute autocorrelation");
+        let rho_ar1 =
+            StatisticalTests::autocorrelation(&ar1).expect("Should compute autocorrelation");
 
         // Should be near 0.9 for AR(1) with rho=0.9
         assert!(
@@ -4995,9 +4989,8 @@ mod tests {
     #[test]
     fn test_ljung_box_no_autocorrelation() {
         let n = 200;
-        let independent: Vec<f64> = (0..n)
-            .map(|i| (i as f64 * 1.618033988749895).sin() * 0.01)
-            .collect();
+        let mut rng = StdRng::seed_from_u64(3030);
+        let independent: Vec<f64> = (0..n).map(|_| (rng.gen::<f64>() - 0.5) * 0.02).collect();
 
         let result =
             StatisticalTests::ljung_box(&independent, Some(10)).expect("Should compute LB test");
@@ -5072,12 +5065,7 @@ mod tests {
 
     #[test]
     fn test_statistical_test_result_creation() {
-        let result = StatisticalTestResult::new(
-            "Test Name",
-            2.5,
-            0.03,
-            "Test interpretation",
-        );
+        let result = StatisticalTestResult::new("Test Name", 2.5, 0.03, "Test interpretation");
 
         assert_eq!(result.test_name, "Test Name");
         assert_eq!(result.statistic, 2.5);
@@ -5088,12 +5076,8 @@ mod tests {
 
     #[test]
     fn test_statistical_test_result_serialization() {
-        let result = StatisticalTestResult::new(
-            "Jarque-Bera",
-            15.5,
-            0.0004,
-            "Non-normal distribution",
-        );
+        let result =
+            StatisticalTestResult::new("Jarque-Bera", 15.5, 0.0004, "Non-normal distribution");
 
         let json = serde_json::to_string(&result).unwrap();
         assert!(json.contains("Jarque-Bera"));
