@@ -1371,6 +1371,7 @@ def backtest(
     stop_loss: Optional[Union[float, str]] = None,
     take_profit: Optional[Union[float, str]] = None,
     allow_short: bool = True,
+    fractional: bool = False,
     borrow_cost: float = 0.03,
     max_position: float = 1.0,
     fill_price: str = "next_open",
@@ -1393,6 +1394,8 @@ def backtest(
         take_profit: Optional take profit. Can be:
             - float: percentage (e.g., 0.10 for 10%)
             - str: ATR-based (e.g., "3atr" for 3x ATR), risk-reward (e.g., "2rr")
+        fractional: Allow fractional shares (default: False for whole shares).
+            Set to True for crypto or fractional brokers.
         benchmark: Optional benchmark data (from load()) for performance comparison.
                    When provided, the result will include alpha, beta, benchmark_return,
                    excess_return, and other benchmark comparison metrics.
@@ -1411,7 +1414,7 @@ def backtest(
     rust_result = _backtest_raw(
         data, signal, strategy, strategy_params, config,
         commission, slippage, size, cash, stop_loss,
-        take_profit, allow_short, borrow_cost, max_position, fill_price,
+        take_profit, allow_short, fractional, borrow_cost, max_position, fill_price,
         benchmark, freq, trading_hours_24, max_volume_participation,
         order_type, limit_offset
     )

@@ -7,7 +7,7 @@
 
 ## Executive Summary
 
-The Mantis backtesting framework implementation is **complete**. All 30 planned items have been verified and implemented.
+The Mantis backtesting framework implementation is **complete**. All 31 planned items have been verified and implemented.
 
 **Core Features:**
 - Core backtest engine with comprehensive cost modeling
@@ -35,10 +35,12 @@ The Mantis backtesting framework implementation is **complete**. All 30 planned 
 - pandas/polars DataFrame support
 - Interactive Plotly charts in Jupyter
 - Sensitivity analysis bindings
+- `fractional` parameter for fractional shares support
 
 **Key Fixes Applied:**
 - LOOKAHEAD BUG: FIXED - Orders now buffer and fill at bar[i+1].open
 - Statistical tests (ADF, autocorrelation, Ljung-Box): FIXED in commit 0b67bff
+- FRACTIONAL SHARES DEFAULT: FIXED - Now defaults to whole shares per spec
 
 ---
 
@@ -91,6 +93,7 @@ The Mantis backtesting framework implementation is **complete**. All 30 planned 
 | 28 | Volume Participation | P3 | max_volume_participation param |
 | 29 | Additional Metrics/Plots | P2 | volatility, duration, plot_drawdown, etc. |
 | 30 | mt.compare() Visualization | P2 | CompareResult with Plotly equity curve overlay |
+| 31 | Fractional Shares Default | P1 | fractional=False per spec, whole shares by default |
 
 ---
 
@@ -137,6 +140,22 @@ All API drift issues between core library and PyO3 bindings have been resolved:
 - Native speed, proper types, Jupyter integration
 - Package: `mantis-bt`
 - ABI3 stable Python ABI (Python 3.8+)
+
+### Fractional Shares Default Fix (2026-01-16)
+
+Per spec (`specs/position-sizing.md`), position sizes are rounded to **whole shares by default**:
+- The `fractional` parameter defaults to `False` (whole shares)
+- Set `fractional=True` for crypto or fractional brokers
+- This matches the spec requirement: "Position sizes are rounded to whole shares by default"
+
+**Files modified:**
+- `src/engine.rs`: BacktestConfig default changed from `true` to `false`
+- `src/config.rs`: BacktestSettings default changed from `true` to `false`
+- `src/portfolio.rs`: Portfolio default changed from `true` to `false`
+- `src/python/backtest.rs`: Added `fractional` parameter with `false` default
+- `src/python/sweep.rs`: Updated default from `true` to `false`
+- `python/mantis/__init__.py`: Added `fractional` parameter with `False` default
+- `python/mantis/__init__.pyi`: Updated type stubs
 
 ---
 

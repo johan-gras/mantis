@@ -61,7 +61,7 @@ class BacktestConfig:
         slippage: float = 0.001,
         position_size: float = 0.10,
         allow_short: bool = True,
-        fractional_shares: bool = True,
+        fractional_shares: bool = False,
         stop_loss: Optional[Union[float, str]] = None,
         take_profit: Optional[Union[float, str]] = None,
         borrow_cost: float = 0.03,
@@ -953,6 +953,7 @@ def backtest(
     stop_loss: Optional[Union[float, str]] = None,
     take_profit: Optional[Union[float, str]] = None,
     allow_short: bool = True,
+    fractional: bool = False,
     borrow_cost: float = 0.03,
     max_position: float = 1.0,
     fill_price: str = "next_open",
@@ -990,6 +991,8 @@ def backtest(
             - str: ATR-based (e.g., "3atr" for 3x ATR take profit)
             - str: risk-reward (e.g., "2rr" for 2:1 risk-reward ratio)
         allow_short: Whether to allow short positions
+        fractional: Allow fractional shares (default: False for whole shares).
+            Set to True for crypto or fractional brokers.
         borrow_cost: Annual borrow rate for shorts (default 3%)
         max_position: Maximum position size as fraction of equity (default 1.0 = 100%)
         fill_price: Execution price model ("next_open", "close", "vwap", "twap", "midpoint")

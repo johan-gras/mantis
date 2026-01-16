@@ -92,7 +92,7 @@ impl Default for BacktestSettings {
             initial_capital: 100_000.0,
             position_size: 0.1,
             allow_short: true,
-            fractional_shares: true,
+            fractional_shares: false, // Default: whole shares (per spec)
             execution_price: ExecutionPrice::Open,
             fill_probability: default_fill_probability(),
             limit_order_ttl_bars: Some(5),

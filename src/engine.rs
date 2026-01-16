@@ -93,7 +93,7 @@ impl Default for BacktestConfig {
             position_size: 0.1,
             position_sizing_method: None, // Uses position_size field as fallback
             allow_short: true,
-            fractional_shares: true,
+            fractional_shares: false, // Default: whole shares (per spec)
             show_progress: true,
             start_date: None,
             end_date: None,

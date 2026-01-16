@@ -397,7 +397,7 @@ impl Portfolio {
             margin_config: MarginConfig::default(),
             peak_equity: initial_capital,
             allow_short: true,
-            fractional_shares: true,
+            fractional_shares: false, // Default: whole shares (per spec)
             asset_configs: HashMap::new(),
             volume_profiles: HashMap::new(),
             last_prices: HashMap::new(),
@@ -424,7 +424,7 @@ impl Portfolio {
             margin_config: MarginConfig::default(),
             peak_equity: initial_capital,
             allow_short: true,
-            fractional_shares: true,
+            fractional_shares: false, // Default: whole shares (per spec)
             asset_configs: HashMap::new(),
             volume_profiles: HashMap::new(),
             last_prices: HashMap::new(),
