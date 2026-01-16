@@ -148,17 +148,19 @@ Mantis is a high-performance Rust CLI backtest engine for quantitative trading w
 
 ---
 
-### 2.5 Pre-commit Hooks Missing
+### 2.5 ~~Pre-commit Hooks Missing~~ RESOLVED
 
-| Issue | No `.pre-commit-config.yaml` file |
-|-------|----------------------------------|
-| **Verified** | File does not exist |
+| Status | ✅ FIXED - `.pre-commit-config.yaml` created |
+|--------|---------------------------------------------|
+| **Fix Date** | 2026-01-16 |
 
-**Required per specs/ci-testing.md:**
-- [ ] cargo fmt
-- [ ] cargo clippy
-- [ ] black (Python)
-- [ ] pytest (quick tests)
+**Implemented hooks:**
+- [x] cargo fmt - Rust formatting
+- [x] cargo clippy - Rust linting
+- [x] black - Python formatting
+- [x] Standard hooks: trailing-whitespace, end-of-file-fixer, check-yaml, check-toml, check-json
+
+**Installation:** `pip install pre-commit && pre-commit install`
 
 ---
 
