@@ -652,6 +652,57 @@ def sweep(
     """
     ...
 
+def adjust(
+    data: Dict[str, Any],
+    splits: Optional[List[Dict[str, Any]]] = None,
+    dividends: Optional[List[Dict[str, Any]]] = None,
+    method: str = "proportional",
+) -> Dict[str, Any]:
+    """
+    Adjust price data for stock splits and dividends.
+
+    This function modifies OHLCV data to account for corporate actions,
+    ensuring historical prices are comparable to current prices. This is
+    essential for accurate backtesting, as unadjusted data will produce
+    false signals at split/dividend dates.
+
+    Args:
+        data: Data dictionary from load() containing OHLCV arrays
+        splits: Optional list of split dictionaries with keys:
+            - date: Split date (str "YYYY-MM-DD" or int timestamp)
+            - ratio: Split ratio (e.g., 2.0 for 2:1 split)
+            - reverse: Optional bool, True for reverse splits (default False)
+        dividends: Optional list of dividend dictionaries with keys:
+            - date: Ex-dividend date (str "YYYY-MM-DD" or int timestamp)
+            - amount: Dividend amount per share
+            - type: Optional dividend type ("regular", "special", "qualified")
+        method: Dividend adjustment method:
+            - "proportional": Adjust prices proportionally (default, preserves returns)
+            - "absolute": Subtract dividend from prices
+            - "none": No dividend adjustment (only apply splits)
+
+    Returns:
+        New data dictionary with adjusted OHLCV arrays.
+
+    Example:
+        >>> data = mt.load("AAPL.csv")
+        >>> # Adjust for a 4:1 split on 2020-08-31
+        >>> adjusted = mt.adjust(
+        ...     data,
+        ...     splits=[{"date": "2020-08-31", "ratio": 4.0}],
+        ... )
+        >>> # Adjust for dividends
+        >>> adjusted = mt.adjust(
+        ...     data,
+        ...     dividends=[
+        ...         {"date": "2024-02-09", "amount": 0.24},
+        ...         {"date": "2024-05-10", "amount": 0.25},
+        ...     ],
+        ... )
+    """
+    ...
+
+
 def load_results(path: str) -> BacktestResult:
     """
     Load previously saved backtest results from a JSON file.

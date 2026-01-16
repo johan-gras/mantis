@@ -665,28 +665,37 @@ result.plot()  # Interactive Plotly in Jupyter
 
 ---
 
-### 21. Python Split/Dividend Adjustment [NOT EXPOSED]
-**Status:** PARTIAL (Rust complete, Python missing)
+### 21. Python Split/Dividend Adjustment [COMPLETE]
+**Status:** COMPLETE
 **Priority:** P2
 
-**Issue:** Split/dividend adjustment functions exist in Rust data.rs but not exposed to Python.
+**Implementation details:**
+- Added `mt.adjust()` function to Python API
+- Parameters:
+  - `data` - Data dictionary from load() containing OHLCV arrays
+  - `splits` - Optional list of split dictionaries with keys: date, ratio, reverse (optional)
+  - `dividends` - Optional list of dividend dictionaries with keys: date, amount, type (optional)
+  - `method` - Dividend adjustment method: "proportional" (default), "absolute", "none"
+- Returns new data dictionary with adjusted OHLCV arrays
+- Uses existing Rust functions: adjust_for_splits(), adjust_for_dividends()
+- Type stubs added for IDE autocomplete
 
-**Specification requires:**
-- `adjust=True` parameter in `mt.load()`
-- `mt.adjust(data, splits=splits_df, dividends=divs_df)` function
+**Files modified:**
+- `src/python/data.rs` - Added adjust() function with parse_splits(), parse_dividends(), parse_date_from_dict() helpers
+- `src/python/mod.rs` - Registered adjust function
+- `python/mantis/__init__.py` - Added adjust to imports
+- `python/mantis/__init__.pyi` - Added type stubs with docstrings
 
-**Rust implementation complete:**
-- `adjust_for_splits()` - lines 2019-2052
-- `adjust_for_dividends()` - lines 2068-2137 with 3 methods (Proportional, Absolute, None)
-- `apply_adjustment_factor()` - lines 2165-2189
-- `load_corporate_actions()` - lines 2252-2424
+**Example:**
+```python
+>>> data = mt.load("AAPL.csv")
+>>> # Adjust for a 4:1 split on 2020-08-31
+>>> adjusted = mt.adjust(data, splits=[{"date": "2020-08-31", "ratio": 4.0}])
+>>> # Adjust for dividends with proportional method
+>>> adjusted = mt.adjust(data, dividends=[{"date": "2024-02-09", "amount": 0.24}])
+```
 
-**Missing in Python:**
-- No `adjust` parameter in load()
-- No `mt.adjust()` function
-- No `CorporateAction` type exposed
-
-**Effort:** Small (1-2 days)
+**Effort:** Small (completed)
 **Dependencies:** None
 
 ---
@@ -769,7 +778,7 @@ result.plot()  # Interactive Plotly in Jupyter
 | 18f | Sensitivity analysis bindings | **COMPLETE** | P3 | Medium | None |
 | 19 | Frequency Auto-Detection | **COMPLETE** | P1 | Medium | None |
 | 20 | Python Benchmark Comparison | **COMPLETE** | P2 | Small | None |
-| 21 | Python Split/Dividend Adjustment | PARTIAL | P2 | Small | None |
+| 21 | Python Split/Dividend Adjustment | **COMPLETE** | P2 | Small | None |
 | 22 | ATR-Based Stop-Loss in Python | PARTIAL | P2 | Small | None |
 | 23 | Parallel Parameter Sweep | NOT FUNCTIONAL | P3 | Medium | None |
 
@@ -823,6 +832,7 @@ result.plot()  # Interactive Plotly in Jupyter
 | **Documentation Site** | **COMPLETE**: mkdocs.yml with material theme, dark/light mode, search; docs/ with quickstart.md, cookbook/ (6 recipe pages), concepts/ (4 pages), api/ (5 reference pages), playground.md; Custom CSS for styling; Full coverage of Quick Start, Cookbook, API Reference, Concepts |
 | **Python Sensitivity Analysis Bindings** | **COMPLETE**: src/python/sensitivity.rs (~1050 lines); mt.sensitivity() for parameter sensitivity on built-in strategies with stability scores, cliffs, plateaus, heatmaps; mt.cost_sensitivity() for cost robustness testing; parameter range functions (linear_range, log_range, discrete_range, centered_range); Plotly visualization in Jupyter; type stubs for IDE autocomplete |
 | **Frequency Auto-Detection** | **COMPLETE**: DataFrequency enum with 14 variants (Second1-Month); detect() analyzes timestamp gaps; annualization_factor(trading_hours_24) for traditional (252 days) or 24/7 (365 days) markets; is_likely_crypto() heuristic; BacktestConfig.data_frequency and .trading_hours_24 overrides; Engine auto-detects frequency for Sharpe/Sortino; 13 unit tests |
+| **Python Split/Dividend Adjustment** | **COMPLETE**: mt.adjust() function with splits (date, ratio, reverse) and dividends (date, amount, type) parameters; method options (proportional, absolute, none); parse_splits(), parse_dividends(), parse_date_from_dict() helpers; type stubs; Files: src/python/data.rs, src/python/mod.rs, python/mantis/__init__.py, python/mantis/__init__.pyi |
 | Codebase Cleanliness | **VERIFIED**: No TODOs/FIXMEs in codebase |
 | ALL TESTS | **PASSING**: 571 lib tests (0 failures) |
 | Python Bindings Build | **VERIFIED**: `cargo check --features python` compiles successfully (API drift fix 2026-01-16) |

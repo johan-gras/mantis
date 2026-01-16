@@ -34,6 +34,7 @@ from mantis._mantis import (
     load_sample,
     list_samples,
     load_results,
+    adjust,
     backtest as _backtest_raw,
     signal_check,
     validate as _validate_raw,

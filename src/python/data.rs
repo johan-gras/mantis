@@ -6,15 +6,17 @@
 use std::collections::HashMap;
 use std::path::Path;
 
+use chrono::TimeZone;
 use numpy::{PyArray1, PyArray2};
 use pyo3::prelude::*;
-use pyo3::types::PyDict;
+use pyo3::types::{PyDict, PyList};
 
 use crate::data::{
+    adjust_for_dividends, adjust_for_splits,
     list_samples as rust_list_samples, load_csv, load_parquet, load_sample as rust_load_sample,
     DataConfig,
 };
-use crate::types::Bar;
+use crate::types::{Bar, CorporateAction, CorporateActionType, DividendAdjustMethod, DividendType};
 
 use super::types::PyBar;
 
@@ -340,4 +342,310 @@ pub fn load_results(path: &str) -> PyResult<super::results::PyBacktestResult> {
 
     // Convert to PyBacktestResult
     Ok(super::results::PyBacktestResult::from_summary(&summary))
+}
+
+/// Adjust price data for stock splits and dividends.
+///
+/// This function modifies the input data dictionary in place to apply
+/// split and dividend adjustments. This is essential for accurate backtesting
+/// when using historical price data that includes corporate actions.
+///
+/// Args:
+///     data: Data dictionary from load() containing numpy arrays
+///     splits: Optional list of split dictionaries with keys:
+///         - 'date': Unix timestamp or ISO date string of ex-split date
+///         - 'ratio': Split ratio (e.g., 2.0 for 2-for-1 split)
+///         - 'reverse': Optional boolean, True for reverse split (default: False)
+///     dividends: Optional list of dividend dictionaries with keys:
+///         - 'date': Unix timestamp or ISO date string of ex-dividend date
+///         - 'amount': Dividend amount per share
+///         - 'type': Optional dividend type ('cash', 'stock', 'special')
+///     method: Dividend adjustment method:
+///         - 'proportional' (default): Standard method (price * (1 - div/close))
+///         - 'absolute': Subtract dividend amount directly
+///         - 'none': No dividend adjustment (only apply splits)
+///
+/// Returns:
+///     Dictionary with adjusted numpy arrays for open, high, low, close, volume.
+///
+/// Example:
+///     >>> data = mt.load("AAPL.csv")
+///     >>> # Apply a 4-for-1 split that occurred on 2020-08-31
+///     >>> splits = [{'date': '2020-08-31', 'ratio': 4.0}]
+///     >>> adjusted = mt.adjust(data, splits=splits)
+///     >>> # Use adjusted data for backtesting
+///     >>> results = mt.backtest(adjusted, signal)
+///
+///     >>> # Apply both splits and dividends
+///     >>> dividends = [
+///     ...     {'date': '2024-05-10', 'amount': 0.25},
+///     ...     {'date': '2024-02-09', 'amount': 0.24},
+///     ... ]
+///     >>> adjusted = mt.adjust(data, splits=splits, dividends=dividends)
+#[pyfunction]
+#[pyo3(signature = (data, splits=None, dividends=None, method="proportional"))]
+pub fn adjust(
+    py: Python<'_>,
+    data: &Bound<'_, PyDict>,
+    splits: Option<&Bound<'_, PyList>>,
+    dividends: Option<&Bound<'_, PyList>>,
+    method: &str,
+) -> PyResult<PyObject> {
+    // Extract bars from data dictionary
+    let timestamps: Vec<i64> = data
+        .get_item("timestamp")?
+        .ok_or_else(|| pyo3::exceptions::PyKeyError::new_err("Missing 'timestamp' key"))?
+        .extract()?;
+    let opens: Vec<f64> = data
+        .get_item("open")?
+        .ok_or_else(|| pyo3::exceptions::PyKeyError::new_err("Missing 'open' key"))?
+        .extract()?;
+    let highs: Vec<f64> = data
+        .get_item("high")?
+        .ok_or_else(|| pyo3::exceptions::PyKeyError::new_err("Missing 'high' key"))?
+        .extract()?;
+    let lows: Vec<f64> = data
+        .get_item("low")?
+        .ok_or_else(|| pyo3::exceptions::PyKeyError::new_err("Missing 'low' key"))?
+        .extract()?;
+    let closes: Vec<f64> = data
+        .get_item("close")?
+        .ok_or_else(|| pyo3::exceptions::PyKeyError::new_err("Missing 'close' key"))?
+        .extract()?;
+    let volumes: Vec<f64> = data
+        .get_item("volume")?
+        .ok_or_else(|| pyo3::exceptions::PyKeyError::new_err("Missing 'volume' key"))?
+        .extract()?;
+
+    // Create mutable bars
+    let mut bars: Vec<Bar> = timestamps
+        .into_iter()
+        .zip(opens)
+        .zip(highs)
+        .zip(lows)
+        .zip(closes)
+        .zip(volumes)
+        .map(|(((((ts, o), h), l), c), v)| Bar {
+            timestamp: chrono::Utc.timestamp_opt(ts, 0).unwrap(),
+            open: o,
+            high: h,
+            low: l,
+            close: c,
+            volume: v,
+        })
+        .collect();
+
+    // Parse and apply splits
+    if let Some(splits_list) = splits {
+        let split_actions = parse_splits(splits_list)?;
+        if !split_actions.is_empty() {
+            adjust_for_splits(&mut bars, &split_actions);
+        }
+    }
+
+    // Parse and apply dividends
+    if let Some(dividends_list) = dividends {
+        let dividend_actions = parse_dividends(dividends_list)?;
+        if !dividend_actions.is_empty() {
+            let adjust_method = match method.to_lowercase().as_str() {
+                "proportional" => DividendAdjustMethod::Proportional,
+                "absolute" => DividendAdjustMethod::Absolute,
+                "none" => DividendAdjustMethod::None,
+                _ => {
+                    return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                        "Invalid dividend adjustment method: '{}'. Use 'proportional', 'absolute', or 'none'.",
+                        method
+                    )))
+                }
+            };
+            adjust_for_dividends(&mut bars, &dividend_actions, adjust_method);
+        }
+    }
+
+    // Create result dictionary with adjusted data
+    let result = PyDict::new_bound(py);
+
+    let adj_timestamps: Vec<i64> = bars.iter().map(|b| b.timestamp.timestamp()).collect();
+    let adj_opens: Vec<f64> = bars.iter().map(|b| b.open).collect();
+    let adj_highs: Vec<f64> = bars.iter().map(|b| b.high).collect();
+    let adj_lows: Vec<f64> = bars.iter().map(|b| b.low).collect();
+    let adj_closes: Vec<f64> = bars.iter().map(|b| b.close).collect();
+    let adj_volumes: Vec<f64> = bars.iter().map(|b| b.volume).collect();
+
+    result.set_item("timestamp", PyArray1::from_vec_bound(py, adj_timestamps))?;
+    result.set_item("open", PyArray1::from_vec_bound(py, adj_opens))?;
+    result.set_item("high", PyArray1::from_vec_bound(py, adj_highs))?;
+    result.set_item("low", PyArray1::from_vec_bound(py, adj_lows))?;
+    result.set_item("close", PyArray1::from_vec_bound(py, adj_closes))?;
+    result.set_item("volume", PyArray1::from_vec_bound(py, adj_volumes))?;
+    result.set_item("n_bars", bars.len())?;
+
+    // Copy through any additional metadata from original data
+    for key in ["path", "sample_name", "symbol"] {
+        if let Some(value) = data.get_item(key)? {
+            result.set_item(key, value)?;
+        }
+    }
+
+    // Add bars as list of PyBar objects
+    let py_bars: Vec<Py<PyBar>> = bars
+        .iter()
+        .map(|b| Py::new(py, PyBar::from(b)).unwrap())
+        .collect();
+    result.set_item("bars", py_bars)?;
+
+    Ok(result.into())
+}
+
+/// Parse splits from Python list of dictionaries.
+fn parse_splits(splits_list: &Bound<'_, PyList>) -> PyResult<Vec<CorporateAction>> {
+    let mut actions = Vec::new();
+
+    for item in splits_list.iter() {
+        let dict: &Bound<'_, PyDict> = item.downcast()?;
+
+        // Parse date
+        let ex_date = parse_date_from_dict(dict, "date")?;
+
+        // Parse ratio
+        let ratio: f64 = dict
+            .get_item("ratio")?
+            .ok_or_else(|| pyo3::exceptions::PyKeyError::new_err("Split missing 'ratio' key"))?
+            .extract()?;
+
+        if ratio <= 0.0 {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "Invalid split ratio: {}. Must be > 0.",
+                ratio
+            )));
+        }
+
+        // Check if it's a reverse split
+        let is_reverse: bool = dict
+            .get_item("reverse")?
+            .map(|v| v.extract().unwrap_or(false))
+            .unwrap_or(false);
+
+        let action_type = if is_reverse {
+            CorporateActionType::ReverseSplit { ratio }
+        } else {
+            CorporateActionType::Split { ratio }
+        };
+
+        actions.push(CorporateAction {
+            symbol: String::new(), // Not needed for adjustment
+            action_type,
+            ex_date,
+            record_date: None,
+            pay_date: None,
+        });
+    }
+
+    Ok(actions)
+}
+
+/// Parse dividends from Python list of dictionaries.
+fn parse_dividends(dividends_list: &Bound<'_, PyList>) -> PyResult<Vec<CorporateAction>> {
+    let mut actions = Vec::new();
+
+    for item in dividends_list.iter() {
+        let dict: &Bound<'_, PyDict> = item.downcast()?;
+
+        // Parse date
+        let ex_date = parse_date_from_dict(dict, "date")?;
+
+        // Parse amount
+        let amount: f64 = dict
+            .get_item("amount")?
+            .ok_or_else(|| {
+                pyo3::exceptions::PyKeyError::new_err("Dividend missing 'amount' key")
+            })?
+            .extract()?;
+
+        if amount <= 0.0 {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "Invalid dividend amount: {}. Must be > 0.",
+                amount
+            )));
+        }
+
+        // Parse dividend type (optional, default to Cash)
+        let div_type = if let Some(type_value) = dict.get_item("type")? {
+            let type_str: String = type_value.extract()?;
+            match type_str.to_lowercase().as_str() {
+                "cash" => DividendType::Cash,
+                "stock" => DividendType::Stock,
+                "special" => DividendType::Special,
+                _ => {
+                    return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                        "Invalid dividend type: '{}'. Use 'cash', 'stock', or 'special'.",
+                        type_str
+                    )))
+                }
+            }
+        } else {
+            DividendType::Cash
+        };
+
+        actions.push(CorporateAction {
+            symbol: String::new(), // Not needed for adjustment
+            action_type: CorporateActionType::Dividend { amount, div_type },
+            ex_date,
+            record_date: None,
+            pay_date: None,
+        });
+    }
+
+    Ok(actions)
+}
+
+/// Parse a date from a dictionary value (supports Unix timestamp or ISO date string).
+fn parse_date_from_dict(
+    dict: &Bound<'_, PyDict>,
+    key: &str,
+) -> PyResult<chrono::DateTime<chrono::Utc>> {
+    let value = dict
+        .get_item(key)?
+        .ok_or_else(|| pyo3::exceptions::PyKeyError::new_err(format!("Missing '{}' key", key)))?;
+
+    // Try as integer (Unix timestamp)
+    if let Ok(ts) = value.extract::<i64>() {
+        return chrono::Utc
+            .timestamp_opt(ts, 0)
+            .single()
+            .ok_or_else(|| pyo3::exceptions::PyValueError::new_err(format!(
+                "Invalid Unix timestamp: {}",
+                ts
+            )));
+    }
+
+    // Try as string (ISO date or date string)
+    if let Ok(date_str) = value.extract::<String>() {
+        // Try ISO 8601 format first (YYYY-MM-DDTHH:MM:SS or YYYY-MM-DD)
+        if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(&date_str) {
+            return Ok(dt.with_timezone(&chrono::Utc));
+        }
+
+        // Try simple date format (YYYY-MM-DD)
+        if let Ok(naive_date) = chrono::NaiveDate::parse_from_str(&date_str, "%Y-%m-%d") {
+            return Ok(chrono::Utc
+                .from_utc_datetime(&naive_date.and_hms_opt(0, 0, 0).unwrap()));
+        }
+
+        // Try US date format (MM/DD/YYYY)
+        if let Ok(naive_date) = chrono::NaiveDate::parse_from_str(&date_str, "%m/%d/%Y") {
+            return Ok(chrono::Utc
+                .from_utc_datetime(&naive_date.and_hms_opt(0, 0, 0).unwrap()));
+        }
+
+        return Err(pyo3::exceptions::PyValueError::new_err(format!(
+            "Could not parse date string: '{}'. Use YYYY-MM-DD, ISO 8601, or Unix timestamp.",
+            date_str
+        )));
+    }
+
+    Err(pyo3::exceptions::PyTypeError::new_err(format!(
+        "'{}' must be a Unix timestamp (int) or date string",
+        key
+    )))
 }

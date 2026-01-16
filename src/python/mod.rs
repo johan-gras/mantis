@@ -32,6 +32,7 @@ fn _mantis(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(data::load_sample, m)?)?;
     m.add_function(wrap_pyfunction!(data::list_samples, m)?)?;
     m.add_function(wrap_pyfunction!(data::load_results, m)?)?;
+    m.add_function(wrap_pyfunction!(data::adjust, m)?)?;
 
     // Register main backtest function
     m.add_function(wrap_pyfunction!(backtest::backtest, m)?)?;
