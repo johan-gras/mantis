@@ -196,3 +196,4 @@ The following items were resolved on 2026-01-16:
 - **Monte Carlo enhancements (2026-01-16)** → Added mc.sharpe_distribution and mc.drawdown_distribution properties, mc.plot() ASCII histogram, mc.percentile(metric, n) multi-metric syntax
 - **Results export (2026-01-16)** → Added BacktestResult.to_dataframe() for comparison DataFrames
 - **PSR validation (2026-01-16)** → Added validation.psr property and validation.psr_threshold(benchmark) method
+- **Benchmark spec fix (2026-01-16)** → Fixed single_bar_1000 target from < 100us (typo) to < 10ms in benchmark comments, aligning with corrected benchmarking.md spec
