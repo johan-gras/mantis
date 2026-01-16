@@ -262,8 +262,24 @@ impl CostModel {
     }
 
     /// Calculate additional market impact adjustment in absolute price terms.
+    /// Maximum slippage/market impact cap as fraction of price (10% per spec).
+    const MAX_SLIPPAGE_CAP: f64 = 0.10;
+
     pub fn calculate_market_impact(&self, order_size: f64, avg_volume: f64, price: f64) -> f64 {
-        self.market_impact.impact(order_size, avg_volume, price)
+        let impact = self.market_impact.impact(order_size, avg_volume, price);
+        let max_impact = price * Self::MAX_SLIPPAGE_CAP;
+
+        if impact > max_impact {
+            tracing::warn!(
+                "Market impact {:.2}% exceeds maximum {:.2}%, capping at {:.2}%",
+                (impact / price) * 100.0,
+                Self::MAX_SLIPPAGE_CAP * 100.0,
+                Self::MAX_SLIPPAGE_CAP * 100.0
+            );
+            max_impact
+        } else {
+            impact
+        }
     }
 
     /// Apply additional spread adjustments for certain asset classes.
@@ -2716,6 +2732,77 @@ mod tests {
             "Expected borrow cost ~${:.2}, got ${:.2}",
             expected_borrow_cost,
             actual_cash_reduction
+        );
+    }
+
+    #[test]
+    fn test_market_impact_capped_at_10_percent() {
+        // Test that market impact is capped at 10% of price per spec
+        let mut cost_model = CostModel::zero();
+
+        // Use a very high coefficient that would normally cause >10% impact
+        cost_model.market_impact = MarketImpactModel::SquareRoot { coefficient: 1.0 };
+
+        let price = 100.0;
+        let order_size = 10000.0;
+        let avg_volume = 1000.0; // Trading 10x daily volume
+
+        // Without capping, sqrt(10000/1000) * 1.0 * 100 = sqrt(10) * 100 = 316.2
+        // That's 316% of price, which should be capped to 10%
+        let impact = cost_model.calculate_market_impact(order_size, avg_volume, price);
+
+        // Should be capped at 10% of price = $10
+        assert!(
+            (impact - 10.0).abs() < 0.01,
+            "Expected impact to be capped at $10 (10%), got ${:.2}",
+            impact
+        );
+    }
+
+    #[test]
+    fn test_market_impact_below_cap_unchanged() {
+        // Test that market impact below 10% is not modified
+        let mut cost_model = CostModel::zero();
+
+        // Use a small coefficient that produces <10% impact
+        cost_model.market_impact = MarketImpactModel::SquareRoot { coefficient: 0.01 };
+
+        let price = 100.0;
+        let order_size = 100.0;
+        let avg_volume = 1000.0; // Trading 10% of daily volume
+
+        // Expected: sqrt(100/1000) * 0.01 * 100 = sqrt(0.1) * 1 = 0.316 (~0.3%)
+        let impact = cost_model.calculate_market_impact(order_size, avg_volume, price);
+
+        // Should be the uncapped value
+        let expected = (100.0_f64 / 1000.0).sqrt() * 0.01 * price;
+        assert!(
+            (impact - expected).abs() < 0.01,
+            "Expected impact ${:.4}, got ${:.4}",
+            expected,
+            impact
+        );
+    }
+
+    #[test]
+    fn test_linear_market_impact_capped() {
+        // Test linear model also gets capped
+        let mut cost_model = CostModel::zero();
+
+        // Linear coefficient of 1.0 with 100% volume = 100% impact (should cap)
+        cost_model.market_impact = MarketImpactModel::Linear { coefficient: 1.0 };
+
+        let price = 100.0;
+        let order_size = 1000.0;
+        let avg_volume = 1000.0; // Trading 100% of daily volume
+
+        // Linear: 1.0 * (1000/1000) * 100 = 100 (100% impact should be capped to 10%)
+        let impact = cost_model.calculate_market_impact(order_size, avg_volume, price);
+
+        assert!(
+            (impact - 10.0).abs() < 0.01,
+            "Expected impact to be capped at $10 (10%), got ${:.2}",
+            impact
         );
     }
 }

@@ -51,7 +51,7 @@ The Mantis backtesting framework implementation is **complete**. All 37 planned 
 ## Test Status Summary
 
 **Last Run:** 2026-01-16
-- **Total Tests:** 576 passed (lib) + 28 (integration) + 14 (doc tests)
+- **Total Tests:** 590 passed (lib) + 28 (integration) + 14 (doc tests)
 - **Failed:** 0 tests
 - **Status:** ALL TESTS PASSING
 
@@ -372,6 +372,33 @@ Per spec (`specs/performance-metrics.md`), added `risk_free_rate` parameter to S
 - `src/python/backtest.rs`: Added `risk_free_rate` parameter to `PyBacktestConfig` and `backtest()` function
 
 **Tests added:** 3 unit tests for risk-free rate in Sharpe/Sortino calculations
+
+---
+
+### Spec Compliance Fixes - Edge Cases (2026-01-16)
+
+The following edge case fixes were implemented to match specification requirements:
+
+**1. Market Impact 10% Cap (execution-realism.md)**
+- Per spec, market impact from sqrt/linear models is now capped at 10% of price
+- Added `MAX_SLIPPAGE_CAP` constant (0.10) to `CostModel`
+- Warning logged when impact exceeds cap: "Market impact X% exceeds maximum 10%, capping at 10%"
+- **File modified:** `src/portfolio.rs` (calculate_market_impact method)
+- **Tests added:** 3 unit tests for market impact capping
+
+**2. Zero Equity Validation (position-sizing.md)**
+- Per spec, attempts to open new positions with zero equity are now prevented
+- Warning logged: "Cannot trade with zero equity"
+- Exit and Hold signals are still processed (to allow closing existing positions)
+- **File modified:** `src/engine.rs` (signal_to_order method)
+- **Tests added:** 1 unit test for zero equity handling
+
+**3. ATR=0 and Volatility=0 Minimum Size (position-sizing.md)**
+- Per spec (updated for consistency), both ATR=0 and volatility=0 now use minimum size (1 share)
+- Previously fell back to percent-of-equity sizing
+- Warnings logged with specific messages about the condition
+- Spec updated to use consistent behavior for both edge cases
+- **Files modified:** `src/engine.rs` (calculate_position_value method), `specs/position-sizing.md`
 
 ---
 

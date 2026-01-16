@@ -520,6 +520,21 @@ impl Engine {
                 .map(|p| p.quantity * p.avg_entry_price)
                 .sum::<f64>();
 
+        // Per spec: Zero equity is an error condition - cannot trade with zero equity
+        if equity <= 0.0 && !matches!(signal, Signal::Exit | Signal::Hold) {
+            warn!(
+                "Cannot trade with zero equity (equity: {:.2}). Skipping {} signal for {}",
+                equity,
+                match signal {
+                    Signal::Long => "Long",
+                    Signal::Short => "Short",
+                    _ => "trade",
+                },
+                symbol
+            );
+            return None;
+        }
+
         match signal {
             Signal::Long => {
                 if current_position <= 0.0 {
@@ -615,9 +630,12 @@ impl Engine {
                 if asset_vol > 0.0 {
                     PositionSizer::size_by_volatility_target(equity, target_vol, asset_vol)
                 } else {
-                    // Fallback to percent of equity if volatility can't be calculated
-                    warn!("Cannot calculate volatility, falling back to percent sizing");
-                    PositionSizer::size_percent_of_equity(equity, self.config.position_size)
+                    // Per spec: Volatility = 0 with warning, use minimum size (1 share)
+                    warn!(
+                        "Cannot compute volatility-targeted size with zero volatility. Using minimum size (1 share)"
+                    );
+                    // Return value for 1 share
+                    price
                 }
             }
             PositionSizingMethod::SignalScaled { base_size } => {
@@ -635,9 +653,12 @@ impl Engine {
                         PositionSizer::size_by_volatility(equity, risk_per_trade, atr, stop_atr);
                     shares * price
                 } else {
-                    // Fallback to percent of equity if ATR can't be calculated
-                    warn!("Cannot calculate ATR, falling back to percent sizing");
-                    PositionSizer::size_percent_of_equity(equity, self.config.position_size)
+                    // Per spec: ATR = 0 uses minimum size of 1 share with warning
+                    warn!(
+                        "ATR is zero or insufficient data for calculation. Using minimum size (1 share)"
+                    );
+                    // Return value for 1 share
+                    price
                 }
             }
         }
@@ -1321,5 +1342,44 @@ mod tests {
         let sortino_with_rf = calculate_sortino(&returns, 252.0, 0.02); // 2% annual risk-free rate
                                                                         // With positive risk-free rate, Sortino should be lower
         assert!(sortino_with_rf < sortino_no_rf);
+    }
+
+    #[test]
+    fn test_zero_equity_skips_trade() {
+        // Per spec: Zero equity should prevent new trades with warning
+        use crate::portfolio::Portfolio;
+
+        let config = BacktestConfig::default();
+        let engine = Engine::new(config);
+
+        // Create a portfolio with zero equity (cash=0, no positions)
+        let portfolio = Portfolio::new(0.0);
+
+        let bar = Bar::new(
+            Utc.with_ymd_and_hms(2024, 1, 15, 9, 30, 0).unwrap(),
+            100.0,
+            105.0,
+            98.0,
+            102.0,
+            1000.0,
+        );
+        let bars = vec![bar.clone()];
+
+        // Long signal with zero equity should return None (no order)
+        let order = engine.signal_to_order(Signal::Long, "AAPL", &bar, &bars, 0, &portfolio);
+        assert!(order.is_none(), "Long signal with zero equity should be skipped");
+
+        // Short signal with zero equity should return None (no order)
+        let order = engine.signal_to_order(Signal::Short, "AAPL", &bar, &bars, 0, &portfolio);
+        assert!(order.is_none(), "Short signal with zero equity should be skipped");
+
+        // Exit signal with zero equity should still work (closing positions is allowed)
+        // But since there's no position, it also returns None naturally
+        let order = engine.signal_to_order(Signal::Exit, "AAPL", &bar, &bars, 0, &portfolio);
+        assert!(order.is_none(), "Exit with no position returns None naturally");
+
+        // Hold signal always returns None
+        let order = engine.signal_to_order(Signal::Hold, "AAPL", &bar, &bars, 0, &portfolio);
+        assert!(order.is_none(), "Hold signal always returns None");
     }
 }
