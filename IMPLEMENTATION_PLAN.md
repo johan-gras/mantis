@@ -42,7 +42,7 @@ The Mantis backtesting framework has a solid core implementation with excellent 
 ## Test Status Summary
 
 **Last Run:** 2026-01-16
-- **Total Tests:** 520 passed (475 + 5 + 28 + 12)
+- **Total Tests:** 532 passed
 - **Failed:** 0 tests
 - **Status:** ALL TESTS PASSING
 
@@ -110,25 +110,23 @@ All 3 previously failing tests now pass:
 
 ---
 
-### 4. Helpful Error Messages [MISSING - VERIFIED]
-**Status:** Only basic error types exist (16 variants in error.rs)
+### 4. Helpful Error Messages [COMPLETE]
+**Status:** COMPLETE
 
-**Current state (src/error.rs):**
-- NO `SignalShapeMismatch` error
-- NO `LookaheadError` error
-- NO `InvalidSignalError` error
-- NO "Common causes" or "Quick fix" guidance anywhere
-
-**Spec requirements:**
-```
-SignalShapeMismatch: Signal has 250 rows but data has 252 rows
-  Common causes: Weekend/holiday filtering mismatch, date alignment
-  Quick fix: Use `signal.reindex(data.index, fill_value=0)` to match indices
-```
-
-**Files affected:**
-- `src/error.rs` - Add new error types with structured help
-- `src/validation.rs` (new) - Signal validation with helpful errors
+**Implementation details:**
+- New error types in `src/error.rs`:
+  - `SignalShapeMismatch` - Detects signal/data length mismatches with helpful guidance
+  - `InvalidSignal` - Catches NaN, infinity, and out-of-range values
+  - `LookaheadBias` - Warns when signals reference future data
+  - `SuspiciousSignal` - Flags statistically unusual patterns
+- `ErrorHelp` struct with `common_causes` and `quick_fixes` fields for user guidance
+- New validation module `src/validation.rs` with:
+  - `validate_signal()` - Full validation with configurable checks
+  - `validate_signal_quick()` - Fast validation for hot paths
+  - `validate_signals()` - Batch validation for multiple signals
+  - `SignalValidationConfig` - Configuration for validation behavior
+  - `SignalStats` - Statistics about signal quality
+- 11 new tests for validation (all passing)
 
 **Dependencies:** None
 **Effort:** Medium (3-5 days)
@@ -157,8 +155,8 @@ SignalShapeMismatch: Signal has 250 rows but data has 252 rows
 ### 6. Short Borrow Costs [PARTIAL - VERIFIED]
 **Status:** Only margin interest exists (no dedicated borrow fees)
 
-**Current state (src/portfolio.rs:755-768):**
-- Margin interest charged on negative cash balance (3% default)
+**Current state:**
+- Margin interest charged on negative cash balance (config.rs:127, 3% default)
 - NO dedicated stock borrow fees
 - NO locate fee fields
 - NO hard-to-borrow list support
@@ -220,7 +218,7 @@ let sample = mt.load_sample("AAPL")?;  // Works offline
 **Status:** Utilities exist but not integrated into Engine
 
 **Current state:**
-- `src/engine.rs:527-549` - Only percent-of-equity sizing implemented
+- `src/engine.rs:451-522` - Only percent-of-equity sizing implemented
 - `src/risk.rs:273-331` - PositionSizer utilities exist but NEVER CALLED:
   - `size_by_risk()` (line 273)
   - `size_by_volatility()` (line 284)
@@ -320,9 +318,29 @@ let sample = mt.load_sample("AAPL")?;  // Works offline
 
 ---
 
+### 14. Verdict System [PARTIAL - VERIFIED]
+**Status:** Boolean methods exist, no explicit enum
+
+**Current state:**
+- `is_robust()` and `is_robust_with_sharpe()` methods exist in walkforward.rs (return booleans)
+- NO explicit `Verdict` enum with "robust"/"borderline"/"likely_overfit" variants
+
+**Spec requirement:**
+```rust
+enum Verdict { Robust, Borderline, LikelyOverfit }
+```
+
+**Files affected:**
+- `src/walkforward.rs` - Add Verdict enum, enhance classification logic
+
+**Dependencies:** None
+**Effort:** Small (1 day)
+
+---
+
 ## P3 - Lower Priority (Nice to Have)
 
-### 14. Polars Backend Support [PARTIAL]
+### 15. Polars Backend Support [PARTIAL]
 **Status:** Arrow compatibility provides foundation
 
 **Dependencies:** Python bindings (P0 item 2)
@@ -330,7 +348,7 @@ let sample = mt.load_sample("AAPL")?;  // Works offline
 
 ---
 
-### 15. Sample Data Bundling [MISSING]
+### 16. Sample Data Bundling [MISSING]
 **Status:** Not implemented
 
 **Spec requirement:** `mt.load_sample("AAPL")` works offline with bundled data
@@ -345,7 +363,7 @@ let sample = mt.load_sample("AAPL")?;  // Works offline
 
 ---
 
-### 16. Documentation Site [MISSING]
+### 17. Documentation Site [MISSING]
 **Status:** Not implemented
 
 **Spec requirements:**
@@ -370,7 +388,7 @@ let sample = mt.load_sample("AAPL")?;  // Works offline
 | 1 | Statistical Tests | **COMPLETE** | P0 | - | - |
 | 2 | Python Bindings (PyO3) | MISSING | P0 | Large | None |
 | 3 | ONNX Module | PARTIAL | P0 | Small | ort crate |
-| 4 | Helpful Error Messages | MISSING | P0 | Medium | None |
+| 4 | Helpful Error Messages | **COMPLETE** | P0 | Medium | None |
 | 5 | Rolling Metrics | MISSING | P1 | Medium | None |
 | 6 | Short Borrow Costs | PARTIAL | P1 | Medium | None |
 | 7 | load_multi/load_dir | MISSING | P1 | Small | None |
@@ -380,9 +398,10 @@ let sample = mt.load_sample("AAPL")?;  // Works offline
 | 11 | Parameter Sensitivity | PARTIAL | P2 | Medium | None |
 | 12 | Visualization Module | MISSING | P2 | Medium | Item 2 |
 | 13 | HTML Reports | MISSING | P2 | Small | Item 12 |
-| 14 | Polars Backend | PARTIAL | P3 | Small | Item 2 |
-| 15 | Sample Data Bundling | MISSING | P3 | Small | None |
-| 16 | Documentation Site | MISSING | P3 | Medium | None |
+| 14 | Verdict System | PARTIAL | P2 | Small | None |
+| 15 | Polars Backend | PARTIAL | P3 | Small | Item 2 |
+| 16 | Sample Data Bundling | MISSING | P3 | Small | None |
+| 17 | Documentation Site | MISSING | P3 | Medium | None |
 
 ---
 
@@ -390,25 +409,35 @@ let sample = mt.load_sample("AAPL")?;  // Works offline
 
 | Item | Verification |
 |------|-------------|
-| **Monthly Returns Synthetic** | FIXED: Now calculates actual calendar-month returns from equity curve instead of synthetic uniform distribution. Groups equity points by (year, month) and calculates actual returns. File: src/analytics.rs |
-| **Auto-Warnings for Suspicious Metrics** | FIXED: Added SuspiciousMetricWarning struct, check_suspicious_metrics() method to PerformanceMetrics, and check_oos_degradation() standalone function. Checks: Sharpe > 3, Win rate > 80%, Max DD < 5%, Trades < 30, Profit factor > 5, OOS/IS < 0.60. File: src/analytics.rs |
-| **Lookahead Bug Fix** | FIXED: Orders now buffered via `buffer_order_for_next_bar()` and fill at bar[i+1].open. Stop-loss/take-profit exits also buffered. Files: src/engine.rs (main loop, handle_pending_orders, buffer_order_for_next_bar), PendingOrder.signal field for entry tracking, pending_exits HashSet prevents double-buffering. |
-| **Walk-Forward Default Parameters** | FIXED in commit f8f9ef9: num_windows 5→12, in_sample_ratio 0.7→0.75, anchored false→true |
+| **Order Buffering/Lookahead** | WORKING: engine.rs:598-623, PendingOrder struct, buffer_order_for_next_bar() |
+| **Monthly Returns from Equity** | IMPLEMENTED: analytics.rs:941-967, groups by (year, month), calculates actual returns |
+| **Auto-Warnings (check_suspicious_metrics)** | IMPLEMENTED: analytics.rs:979-1038, 5 warning types (Sharpe>3, WinRate>80%, DD<5%, Trades<30, PF>5) |
+| **OOS Degradation Check** | IMPLEMENTED: analytics.rs:1043-1075, check_oos_degradation() standalone function |
+| **Walk-Forward Default Parameters** | CORRECT: walkforward.rs:31-40 (12 folds, 75/25 ratio, anchored=true) |
+| **Walk-Forward OOS/IS Degradation** | IMPLEMENTED: walkforward.rs:173-182, 354-359, 414-419 |
+| **Parameter Stability** | IMPLEMENTED: walkforward.rs:361-364, 424-430 |
+| **DSR (Deflated Sharpe Ratio)** | IMPLEMENTED: analytics.rs:863-885 |
+| **PSR (Probabilistic Sharpe Ratio)** | IMPLEMENTED: analytics.rs:904-939 |
+| **Column Auto-Detection** | IMPLEMENTED: data.rs:14-36 (CSV), data.rs:244-276 (Parquet) |
+| **Square-Root Market Impact** | IMPLEMENTED: portfolio.rs:122-154, MarketImpactModel::SquareRoot |
+| **Volume Participation Limits** | IMPLEMENTED: portfolio.rs:177-180, 304-316, applied at 969-972 |
+| **Limit Order Fill Logic** | IMPLEMENTED: portfolio.rs:1581-1639 |
+| **Black-Litterman** | FULLY IMPLEMENTED: multi_asset.rs:2124-2635 |
+| **Mean-Variance Optimization** | FULLY IMPLEMENTED: multi_asset.rs:1515-2082 |
+| **HRP (Hierarchical Risk Parity)** | FULLY IMPLEMENTED: multi_asset.rs:2683-3141 |
+| **Cost Sensitivity Module** | COMPLETE (not CLI-integrated): cost_sensitivity.rs (725 lines) |
+| **ONNX Module Code** | COMPLETE but disabled: onnx.rs (524 lines, waiting for ort crate) |
 | Config Defaults | CORRECT: slippage=0.1%, commission=0.1%, position_size=10% |
 | Performance Benchmarks | EXISTS in benches/backtest_bench.rs (9 benchmark groups) |
-| Limit Order Fill Logic | IMPLEMENTED correctly in portfolio.rs:1584-1639 |
-| DSR/PSR Implementation | IMPLEMENTED in analytics.rs:846-922 with tests passing |
-| Black-Litterman | IMPLEMENTED in multi_asset.rs:2181-2582 (fully tested) |
-| Mean-Variance Optimization | IMPLEMENTED in multi_asset.rs:1519-1958 (fully tested) |
-| Walk-Forward OOS Degradation | IMPLEMENTED in walkforward.rs:173-182, 354-359, 414-419 |
 | CPCV | IMPLEMENTED in cpcv.rs with purging/embargo (663 lines) |
 | Monte Carlo | IMPLEMENTED in monte_carlo.rs with CI, bootstrap (726 lines) |
-| Cost Sensitivity Module | IMPLEMENTED in cost_sensitivity.rs (724 lines) |
 | Multi-Asset Strategies | 8 strategies: EqualWeight, Momentum, InverseVol, RiskParity, MVO, BL, HRP, Drift |
 | Options Pricing | IMPLEMENTED: Black-Scholes, Binomial, Greeks, put-call parity |
 | Streaming Indicators | IMPLEMENTED in streaming.rs (SMA, EMA, RSI, MACD, BB, ATR, StdDev) |
 | Statistical Tests | **FIXED** in commit 0b67bff: ADF, autocorrelation, Ljung-Box all passing |
-| ALL TESTS | **PASSING**: 28 unit tests + 12 doc tests (0 failures) |
+| **Helpful Error Messages** | **COMPLETE**: New error types (SignalShapeMismatch, InvalidSignal, LookaheadBias, SuspiciousSignal), ErrorHelp struct, validation.rs module with validate_signal(), validate_signal_quick(), validate_signals(), SignalValidationConfig, SignalStats - 11 tests |
+| Codebase Cleanliness | **VERIFIED**: No TODOs/FIXMEs in codebase |
+| ALL TESTS | **PASSING**: 532 tests (0 failures) |
 
 ---
 
@@ -416,7 +445,7 @@ let sample = mt.load_sample("AAPL")?;  // Works offline
 
 **Phase 0 - Foundation (Week 1):**
 1. Python Bindings (#2) - 2-3 weeks (parallel track)
-2. Helpful Error Messages (#4) - 3-5 days
+2. ~~Helpful Error Messages (#4)~~ - **COMPLETE**
 
 **Phase 1 - Core Features (Weeks 2-3):**
 3. Rolling Metrics (#5) - 2-3 days
@@ -430,12 +459,13 @@ let sample = mt.load_sample("AAPL")?;  // Works offline
 
 **Phase 3 - Analysis (Week 5):**
 9. Parameter Sensitivity (#11) - 3-4 days
+10. Verdict System (#14) - 1 day
 
 **Phase 4 - Polish (Weeks 6+):**
-10. Visualization Module (#12) - 3-4 days
-11. HTML Reports (#13) - 1-2 days
-12. ONNX re-enablement (when ort stabilizes)
-13. Lower priority items as time permits
+11. Visualization Module (#12) - 3-4 days
+12. HTML Reports (#13) - 1-2 days
+13. ONNX re-enablement (when ort stabilizes)
+14. Lower priority items as time permits
 
 ---
 

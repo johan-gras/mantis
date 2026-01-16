@@ -123,6 +123,7 @@ pub mod strategy;
 pub mod streaming;
 pub mod timeframe;
 pub mod types;
+pub mod validation;
 pub mod walkforward;
 
 // Re-exports for convenience
@@ -132,7 +133,7 @@ pub use analytics::{
     StatisticalTests,
 };
 pub use engine::{BacktestConfig, BacktestResult, Engine};
-pub use error::{BacktestError, Result};
+pub use error::{BacktestError, ErrorHelp, Result};
 pub use options::{
     black_scholes, calculate_greeks, validate_put_call_parity, ExerciseStyle, Greeks,
     OptionContract, OptionType, SettlementType,
@@ -154,3 +155,9 @@ pub use data::{
 
 // Multi-timeframe support
 pub use timeframe::TimeframeManager;
+
+// Signal validation
+pub use validation::{
+    validate_signal, validate_signal_quick, validate_signals, SignalStats,
+    SignalValidationConfig, SignalValidationResult,
+};
