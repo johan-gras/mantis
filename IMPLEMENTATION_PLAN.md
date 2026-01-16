@@ -438,21 +438,46 @@ mantis portfolio -d ./data/stocks/ -p "*.csv" --strategy risk-parity --rebalance
 
 ---
 
-### 17. Documentation Site [MISSING]
-**Status:** Not implemented
+### 17. Documentation Site [COMPLETE]
+**Status:** COMPLETE
 
-**Spec requirements:**
-- mkdocs/sphinx with search
-- Quick Start (5-minute guide)
-- Cookbook/recipes
-- Auto-generated API reference
+**Implementation details:**
+- mkdocs-material theme with dark/light mode toggle
+- Search with fuzzy matching enabled
+- Code copy buttons on all examples
+- Mobile-friendly responsive design
 
-**Files affected:**
-- `docs/` (new) - mkdocs content
-- `mkdocs.yml` (new) - Site configuration
+**Documentation structure:**
+- `docs/index.md` - Homepage with hero section and quick links
+- `docs/quickstart.md` - 5-minute getting started guide
+- `docs/cookbook/` - Copy-paste recipes:
+  - `index.md` - Cookbook overview
+  - `loading-data.md` - Data loading examples
+  - `backtests.md` - Running backtests
+  - `validation.md` - Walk-forward validation
+  - `multi-symbol.md` - Multi-asset backtesting
+  - `position-sizing.md` - Position sizing methods
+  - `visualization.md` - Charts and reports
+- `docs/concepts/` - How it works:
+  - `how-it-works.md` - Architecture overview
+  - `execution-model.md` - Order execution details
+  - `cost-model.md` - Trading costs explained
+  - `validation.md` - Validation philosophy
+- `docs/api/` - API reference:
+  - `index.md` - API overview
+  - `data.md` - Data loading functions
+  - `backtest.md` - Backtest functions
+  - `results.md` - Results classes
+  - `validation.md` - Validation classes
+- `docs/playground.md` - Google Colab/Binder links
+- `docs/stylesheets/extra.css` - Custom styling
 
-**Dependencies:** None
-**Effort:** Medium (ongoing)
+**Files created:**
+- `mkdocs.yml` - Site configuration with material theme
+- `docs/` directory with all documentation pages
+
+**Dependencies:** None (mkdocs-material is external for building)
+**Effort:** Medium (completed)
 
 ---
 
@@ -533,7 +558,7 @@ mantis portfolio -d ./data/stocks/ -p "*.csv" --strategy risk-parity --rebalance
 | 14 | Verdict System | **COMPLETE** | P2 | Small | None |
 | 15 | Polars Backend | **COMPLETE** | P3 | Small | None |
 | 16 | Sample Data Bundling | **COMPLETE** | P3 | Small | None |
-| 17 | Documentation Site | MISSING | P3 | Medium | None |
+| 17 | Documentation Site | **COMPLETE** | P3 | Medium | None |
 | 18a | results.validate() method | **COMPLETE** | P1 | Small | None |
 | 18b | mt.load_results() | **COMPLETE** | P2 | Small | None |
 | 18c | mt.Backtest fluent API | **COMPLETE** | P3 | Medium | None |
@@ -586,6 +611,7 @@ mantis portfolio -d ./data/stocks/ -p "*.csv" --strategy risk-parity --rebalance
 | **Multi-Symbol CLI Command** | **COMPLETE**: `mantis portfolio` CLI command with 9 portfolio strategies (equal-weight, momentum, inverse-vol, risk-parity, min-variance, max-sharpe, hrp, drift-equal, drift-momentum), glob pattern loading, portfolio constraints (max-position, max-leverage, max-turnover, min/max-holdings), text/JSON/CSV output |
 | **Python Bindings Advanced Metrics** | **COMPLETE**: ValidationResult.report() method for HTML export; BacktestResult.deflated_sharpe and .psr properties; metrics() dict includes deflated_sharpe and psr |
 | **Interactive Plotly Charts** | **COMPLETE**: plotly>=5.0.0 as optional dependency (`pip install mantis-bt[jupyter]`); results.plot() auto-detects Jupyter via IPython; returns interactive Plotly Figure with equity curve and drawdown subplots in Jupyter, ASCII sparkline fallback otherwise; validation.plot() also supports Plotly with IS vs OOS bar charts; _repr_html_() for rich Jupyter display; show_drawdown parameter; Files: pyproject.toml, python/mantis/__init__.py, python/mantis/__init__.pyi |
+| **Documentation Site** | **COMPLETE**: mkdocs.yml with material theme, dark/light mode, search; docs/ with quickstart.md, cookbook/ (6 recipe pages), concepts/ (4 pages), api/ (5 reference pages), playground.md; Custom CSS for styling; Full coverage of Quick Start, Cookbook, API Reference, Concepts |
 | Codebase Cleanliness | **VERIFIED**: No TODOs/FIXMEs in codebase |
 | ALL TESTS | **PASSING**: 558+ lib tests (0 failures) |
 
