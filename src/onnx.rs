@@ -410,7 +410,8 @@ impl OnnxModel {
                 ));
             }
         } else if config.input_size == 0 {
-            warnings.push("Unable to detect model input size and config.input_size is 0".to_string());
+            warnings
+                .push("Unable to detect model input size and config.input_size is 0".to_string());
         }
 
         // Validate output size if both are known
@@ -797,10 +798,7 @@ impl OnnxModel {
     /// ```
     pub fn validate_with_dry_run(&mut self) -> Result<()> {
         // Determine input size: use detected size if available, otherwise use config
-        let input_size = self
-            .schema
-            .input_size
-            .unwrap_or(self.config.input_size);
+        let input_size = self.schema.input_size.unwrap_or(self.config.input_size);
 
         if input_size == 0 {
             return Err(anyhow::anyhow!(

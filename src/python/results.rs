@@ -1064,7 +1064,12 @@ impl PyValidationResult {
     fn psr_threshold(&self, benchmark: f64) -> f64 {
         // Use OOS Sharpe and OOS observations for PSR calculation
         let sharpe = self.oos_sharpe;
-        let n_observations: usize = self.rust_result.windows.iter().map(|w| w.window.oos_bars).sum();
+        let n_observations: usize = self
+            .rust_result
+            .windows
+            .iter()
+            .map(|w| w.window.oos_bars)
+            .sum();
 
         if n_observations == 0 || sharpe.is_nan() {
             return 0.5; // No data, coin flip
@@ -1762,14 +1767,18 @@ impl PyMonteCarloResult {
     ///     >>> mc.percentile("sharpe", 10)  # 10th percentile Sharpe
     ///     >>> mc.percentile("drawdown", 99)  # 99th percentile worst drawdown
     #[pyo3(signature = (metric_or_percentile, percentile=None))]
-    fn percentile(&self, metric_or_percentile: &Bound<'_, pyo3::PyAny>, percentile: Option<usize>) -> PyResult<f64> {
+    fn percentile(
+        &self,
+        metric_or_percentile: &Bound<'_, pyo3::PyAny>,
+        percentile: Option<usize>,
+    ) -> PyResult<f64> {
         // Determine which syntax is being used
         let (distribution, pct) = if let Ok(metric_str) = metric_or_percentile.extract::<String>() {
             // String metric name provided
             let pct = percentile.ok_or_else(|| {
                 pyo3::exceptions::PyValueError::new_err(
                     "When specifying a metric name, percentile must be provided.\n\
-                     Example: mc.percentile('sharpe', 10)"
+                     Example: mc.percentile('sharpe', 10)",
                 )
             })?;
 
@@ -1777,9 +1786,12 @@ impl PyMonteCarloResult {
                 "return" | "returns" => &self.return_distribution_data,
                 "sharpe" => &self.sharpe_distribution_data,
                 "drawdown" | "max_drawdown" => &self.drawdown_distribution_data,
-                _ => return Err(pyo3::exceptions::PyValueError::new_err(
-                    format!("Unknown metric '{}'. Valid metrics: 'return', 'sharpe', 'drawdown'", metric_str)
-                )),
+                _ => {
+                    return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                        "Unknown metric '{}'. Valid metrics: 'return', 'sharpe', 'drawdown'",
+                        metric_str
+                    )))
+                }
             };
             (dist, pct)
         } else if let Ok(pct) = metric_or_percentile.extract::<usize>() {
@@ -1787,7 +1799,7 @@ impl PyMonteCarloResult {
             (&self.return_distribution_data, pct)
         } else {
             return Err(pyo3::exceptions::PyTypeError::new_err(
-                "First argument must be either a metric name (str) or percentile (int)"
+                "First argument must be either a metric name (str) or percentile (int)",
             ));
         };
 

@@ -691,7 +691,12 @@ use crate::monte_carlo::MonteCarloResult;
 pub fn monte_carlo_chart(result: &MonteCarloResult, width: usize) -> String {
     let mut output = String::new();
 
-    writeln!(output, "Monte Carlo Simulation ({} iterations)", result.num_simulations).unwrap();
+    writeln!(
+        output,
+        "Monte Carlo Simulation ({} iterations)",
+        result.num_simulations
+    )
+    .unwrap();
     writeln!(output, "{}", "═".repeat(60)).unwrap();
 
     // Return distribution histogram

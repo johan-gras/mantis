@@ -27,7 +27,9 @@ fn models_available() -> bool {
 #[test]
 fn test_load_simple_model() {
     if !models_available() {
-        eprintln!("Skipping test: ONNX test models not found. Run: python scripts/generate_test_onnx.py");
+        eprintln!(
+            "Skipping test: ONNX test models not found. Run: python scripts/generate_test_onnx.py"
+        );
         return;
     }
 
@@ -45,7 +47,9 @@ fn test_load_simple_model() {
 #[test]
 fn test_load_minimal_model() {
     if !models_available() {
-        eprintln!("Skipping test: ONNX test models not found. Run: python scripts/generate_test_onnx.py");
+        eprintln!(
+            "Skipping test: ONNX test models not found. Run: python scripts/generate_test_onnx.py"
+        );
         return;
     }
 
@@ -53,13 +57,19 @@ fn test_load_minimal_model() {
     let config = ModelConfig::new("minimal", 10);
 
     let result = OnnxModel::from_file(&model_path, config);
-    assert!(result.is_ok(), "Failed to load minimal model: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Failed to load minimal model: {:?}",
+        result.err()
+    );
 }
 
 #[test]
 fn test_single_inference() {
     if !models_available() {
-        eprintln!("Skipping test: ONNX test models not found. Run: python scripts/generate_test_onnx.py");
+        eprintln!(
+            "Skipping test: ONNX test models not found. Run: python scripts/generate_test_onnx.py"
+        );
         return;
     }
 
@@ -86,7 +96,9 @@ fn test_single_inference() {
 #[test]
 fn test_batch_inference() {
     if !models_available() {
-        eprintln!("Skipping test: ONNX test models not found. Run: python scripts/generate_test_onnx.py");
+        eprintln!(
+            "Skipping test: ONNX test models not found. Run: python scripts/generate_test_onnx.py"
+        );
         return;
     }
 
@@ -97,11 +109,7 @@ fn test_batch_inference() {
 
     // Create batch of test inputs
     let batch: Vec<Vec<f64>> = (0..100)
-        .map(|i| {
-            (0..10)
-                .map(|j| ((i * 10 + j) as f64) / 1000.0)
-                .collect()
-        })
+        .map(|i| (0..10).map(|j| ((i * 10 + j) as f64) / 1000.0).collect())
         .collect();
 
     let result = model.predict_batch(&batch);
@@ -124,7 +132,9 @@ fn test_batch_inference() {
 #[test]
 fn test_inference_latency_under_1ms() {
     if !models_available() {
-        eprintln!("Skipping test: ONNX test models not found. Run: python scripts/generate_test_onnx.py");
+        eprintln!(
+            "Skipping test: ONNX test models not found. Run: python scripts/generate_test_onnx.py"
+        );
         return;
     }
 
@@ -169,7 +179,9 @@ fn test_inference_latency_under_1ms() {
 #[test]
 fn test_batch_faster_than_sequential() {
     if !models_available() {
-        eprintln!("Skipping test: ONNX test models not found. Run: python scripts/generate_test_onnx.py");
+        eprintln!(
+            "Skipping test: ONNX test models not found. Run: python scripts/generate_test_onnx.py"
+        );
         return;
     }
 
@@ -177,11 +189,7 @@ fn test_batch_faster_than_sequential() {
 
     // Create batch of inputs
     let batch: Vec<Vec<f64>> = (0..100)
-        .map(|i| {
-            (0..10)
-                .map(|j| ((i * 10 + j) as f64) / 1000.0)
-                .collect()
-        })
+        .map(|i| (0..10).map(|j| ((i * 10 + j) as f64) / 1000.0).collect())
         .collect();
 
     // Measure sequential inference
@@ -228,7 +236,9 @@ fn test_batch_faster_than_sequential() {
 #[test]
 fn test_input_size_mismatch_error() {
     if !models_available() {
-        eprintln!("Skipping test: ONNX test models not found. Run: python scripts/generate_test_onnx.py");
+        eprintln!(
+            "Skipping test: ONNX test models not found. Run: python scripts/generate_test_onnx.py"
+        );
         return;
     }
 
@@ -254,7 +264,9 @@ fn test_input_size_mismatch_error() {
 #[test]
 fn test_inference_stats_tracking() {
     if !models_available() {
-        eprintln!("Skipping test: ONNX test models not found. Run: python scripts/generate_test_onnx.py");
+        eprintln!(
+            "Skipping test: ONNX test models not found. Run: python scripts/generate_test_onnx.py"
+        );
         return;
     }
 
@@ -283,7 +295,9 @@ fn test_inference_stats_tracking() {
 #[test]
 fn test_model_with_normalization() {
     if !models_available() {
-        eprintln!("Skipping test: ONNX test models not found. Run: python scripts/generate_test_onnx.py");
+        eprintln!(
+            "Skipping test: ONNX test models not found. Run: python scripts/generate_test_onnx.py"
+        );
         return;
     }
 
@@ -300,7 +314,11 @@ fn test_model_with_normalization() {
     let features: Vec<f64> = vec![0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0];
 
     let result = model.predict(&features);
-    assert!(result.is_ok(), "Inference with normalization failed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Inference with normalization failed: {:?}",
+        result.err()
+    );
 
     let prediction = result.unwrap();
     assert!(
@@ -313,7 +331,9 @@ fn test_model_with_normalization() {
 #[test]
 fn test_model_schema_validation() {
     if !models_available() {
-        eprintln!("Skipping test: ONNX test models not found. Run: python scripts/generate_test_onnx.py");
+        eprintln!(
+            "Skipping test: ONNX test models not found. Run: python scripts/generate_test_onnx.py"
+        );
         return;
     }
 
@@ -326,16 +346,25 @@ fn test_model_schema_validation() {
 
     // Schema should have been extracted
     assert!(schema.input_name.is_some(), "Input name should be detected");
-    assert!(schema.output_name.is_some(), "Output name should be detected");
+    assert!(
+        schema.output_name.is_some(),
+        "Output name should be detected"
+    );
 
     // Validation should pass with correct config
-    assert!(schema.validated, "Schema validation should pass: {}", schema.validation_message);
+    assert!(
+        schema.validated,
+        "Schema validation should pass: {}",
+        schema.validation_message
+    );
 }
 
 #[test]
 fn test_dry_run_validation() {
     if !models_available() {
-        eprintln!("Skipping test: ONNX test models not found. Run: python scripts/generate_test_onnx.py");
+        eprintln!(
+            "Skipping test: ONNX test models not found. Run: python scripts/generate_test_onnx.py"
+        );
         return;
     }
 
@@ -346,13 +375,19 @@ fn test_dry_run_validation() {
 
     // Validate with dry run
     let result = model.validate_with_dry_run();
-    assert!(result.is_ok(), "Dry run validation failed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Dry run validation failed: {:?}",
+        result.err()
+    );
 }
 
 #[test]
 fn test_larger_model_20_inputs() {
     if !models_available() {
-        eprintln!("Skipping test: ONNX test models not found. Run: python scripts/generate_test_onnx.py");
+        eprintln!(
+            "Skipping test: ONNX test models not found. Run: python scripts/generate_test_onnx.py"
+        );
         return;
     }
 
@@ -370,7 +405,11 @@ fn test_larger_model_20_inputs() {
     let features: Vec<f64> = (0..20).map(|i| i as f64 / 20.0).collect();
 
     let result = model.predict(&features);
-    assert!(result.is_ok(), "Larger model inference failed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Larger model inference failed: {:?}",
+        result.err()
+    );
 
     let prediction = result.unwrap();
     assert!(
@@ -383,7 +422,9 @@ fn test_larger_model_20_inputs() {
 #[test]
 fn test_empty_batch_returns_empty() {
     if !models_available() {
-        eprintln!("Skipping test: ONNX test models not found. Run: python scripts/generate_test_onnx.py");
+        eprintln!(
+            "Skipping test: ONNX test models not found. Run: python scripts/generate_test_onnx.py"
+        );
         return;
     }
 
@@ -402,7 +443,9 @@ fn test_empty_batch_returns_empty() {
 #[test]
 fn test_fallback_on_inference_error() {
     if !models_available() {
-        eprintln!("Skipping test: ONNX test models not found. Run: python scripts/generate_test_onnx.py");
+        eprintln!(
+            "Skipping test: ONNX test models not found. Run: python scripts/generate_test_onnx.py"
+        );
         return;
     }
 
