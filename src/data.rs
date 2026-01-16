@@ -584,6 +584,140 @@ pub fn load_data(path: impl AsRef<Path>, config: &DataConfig) -> Result<Vec<Bar>
     }
 }
 
+/// Load multiple symbols from a map of symbol -> file path.
+///
+/// # Example
+/// ```ignore
+/// use std::collections::HashMap;
+/// use mantis::data::{load_multi, DataConfig};
+///
+/// let paths: HashMap<&str, &str> = [
+///     ("AAPL", "data/AAPL.csv"),
+///     ("GOOGL", "data/GOOGL.csv"),
+///     ("MSFT", "data/MSFT.csv"),
+/// ].into_iter().collect();
+///
+/// let data = load_multi(&paths, &DataConfig::default())?;
+/// assert!(data.contains_key("AAPL"));
+/// ```
+pub fn load_multi<S, P>(
+    paths: &HashMap<S, P>,
+    config: &DataConfig,
+) -> Result<HashMap<String, Vec<Bar>>>
+where
+    S: AsRef<str>,
+    P: AsRef<Path>,
+{
+    let mut result = HashMap::new();
+
+    for (symbol, path) in paths {
+        let symbol = symbol.as_ref().to_string();
+        let path = path.as_ref();
+
+        info!("Loading {} from {}", symbol, path.display());
+
+        let bars = load_data(path, config)?;
+        result.insert(symbol, bars);
+    }
+
+    info!("Loaded {} symbols", result.len());
+    Ok(result)
+}
+
+/// Load all matching files from a directory using a glob pattern.
+///
+/// The symbol name is derived from the file stem (filename without extension).
+///
+/// # Example
+/// ```ignore
+/// use mantis::data::{load_dir, DataConfig};
+///
+/// // Load all CSV files from the data directory
+/// let data = load_dir("data/", "*.csv", &DataConfig::default())?;
+///
+/// // Load all Parquet files matching a pattern
+/// let data = load_dir("data/prices/", "*.parquet", &DataConfig::default())?;
+/// ```
+pub fn load_dir(
+    dir: impl AsRef<Path>,
+    pattern: &str,
+    config: &DataConfig,
+) -> Result<HashMap<String, Vec<Bar>>> {
+    let dir = dir.as_ref();
+
+    if !dir.is_dir() {
+        return Err(BacktestError::DataError(format!(
+            "Not a directory: {}",
+            dir.display()
+        )));
+    }
+
+    // Construct full glob pattern
+    let glob_pattern = dir.join(pattern);
+    let glob_pattern_str = glob_pattern.to_string_lossy();
+
+    info!("Loading files matching: {}", glob_pattern_str);
+
+    let paths = glob::glob(&glob_pattern_str).map_err(|e| {
+        BacktestError::DataError(format!("Invalid glob pattern '{}': {}", pattern, e))
+    })?;
+
+    let mut result = HashMap::new();
+    let mut loaded = 0;
+    let mut errors = 0;
+
+    for entry in paths {
+        match entry {
+            Ok(path) => {
+                // Extract symbol from filename stem
+                let symbol = path
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .map(|s| s.to_string())
+                    .ok_or_else(|| {
+                        BacktestError::DataError(format!(
+                            "Could not extract symbol from path: {}",
+                            path.display()
+                        ))
+                    })?;
+
+                debug!("Loading {} from {}", symbol, path.display());
+
+                match load_data(&path, config) {
+                    Ok(bars) => {
+                        result.insert(symbol, bars);
+                        loaded += 1;
+                    }
+                    Err(e) => {
+                        warn!("Failed to load {}: {}", path.display(), e);
+                        errors += 1;
+                    }
+                }
+            }
+            Err(e) => {
+                warn!("Glob error: {}", e);
+                errors += 1;
+            }
+        }
+    }
+
+    if loaded == 0 && errors > 0 {
+        return Err(BacktestError::DataError(format!(
+            "No files loaded from {}. {} errors occurred.",
+            dir.display(),
+            errors
+        )));
+    }
+
+    info!(
+        "Loaded {} symbols from {} ({} errors)",
+        loaded,
+        dir.display(),
+        errors
+    );
+    Ok(result)
+}
+
 /// Multi-symbol data container.
 #[derive(Debug, Default)]
 pub struct DataManager {
@@ -698,6 +832,89 @@ impl DataManager {
         let symbol = symbol.into();
         self.ensure_asset_config(&symbol);
         self.data.insert(symbol, bars);
+    }
+
+    /// Load multiple symbols from a map of symbol -> file path.
+    ///
+    /// # Example
+    /// ```ignore
+    /// use std::collections::HashMap;
+    /// use mantis::data::DataManager;
+    ///
+    /// let mut manager = DataManager::new();
+    /// let paths: HashMap<&str, &str> = [
+    ///     ("AAPL", "data/AAPL.csv"),
+    ///     ("GOOGL", "data/GOOGL.csv"),
+    /// ].into_iter().collect();
+    ///
+    /// manager.load_multi(&paths)?;
+    /// assert!(manager.contains("AAPL"));
+    /// ```
+    pub fn load_multi<S, P>(&mut self, paths: &HashMap<S, P>) -> Result<()>
+    where
+        S: AsRef<str>,
+        P: AsRef<Path>,
+    {
+        let data = load_multi(paths, &DataConfig::default())?;
+        for (symbol, bars) in data {
+            self.ensure_asset_config(&symbol);
+            self.data.insert(symbol, bars);
+        }
+        Ok(())
+    }
+
+    /// Load all matching files from a directory using a glob pattern.
+    ///
+    /// The symbol name is derived from the file stem (filename without extension).
+    ///
+    /// # Example
+    /// ```ignore
+    /// use mantis::data::DataManager;
+    ///
+    /// let mut manager = DataManager::new();
+    /// manager.load_dir("data/", "*.csv")?;
+    /// println!("Loaded symbols: {:?}", manager.symbols());
+    /// ```
+    pub fn load_dir(&mut self, dir: impl AsRef<Path>, pattern: &str) -> Result<()> {
+        let data = load_dir(dir, pattern, &DataConfig::default())?;
+        for (symbol, bars) in data {
+            self.ensure_asset_config(&symbol);
+            self.data.insert(symbol, bars);
+        }
+        Ok(())
+    }
+
+    /// Load multiple symbols from a map with custom configuration.
+    pub fn load_multi_with_config<S, P>(
+        &mut self,
+        paths: &HashMap<S, P>,
+        config: &DataConfig,
+    ) -> Result<()>
+    where
+        S: AsRef<str>,
+        P: AsRef<Path>,
+    {
+        let data = load_multi(paths, config)?;
+        for (symbol, bars) in data {
+            self.ensure_asset_config(&symbol);
+            self.data.insert(symbol, bars);
+        }
+        Ok(())
+    }
+
+    /// Load all matching files from a directory with custom configuration.
+    pub fn load_dir_with_config(
+        &mut self,
+        dir: impl AsRef<Path>,
+        pattern: &str,
+        config: &DataConfig,
+    ) -> Result<()> {
+        let data = load_dir(dir, pattern, config)?;
+        for (symbol, bars) in data {
+            self.ensure_asset_config(&symbol);
+            self.data.insert(symbol, bars);
+        }
+        Ok(())
     }
 
     /// Register or override the asset configuration for a symbol.
@@ -3234,5 +3451,142 @@ mod tests {
 
         // Bar from July 2024 (after the June 2024 split) should remain unchanged
         assert!((bars[1].close - 182.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_load_multi() {
+        use std::io::Write;
+
+        // Create temp directory with test CSV files
+        let temp_dir = tempfile::tempdir().unwrap();
+        let aapl_path = temp_dir.path().join("AAPL.csv");
+        let msft_path = temp_dir.path().join("MSFT.csv");
+
+        // Write test data
+        let csv_content = "Date,Open,High,Low,Close,Volume
+2024-01-02,100.0,105.0,99.0,103.0,1000000
+2024-01-03,103.0,107.0,102.0,106.0,1200000";
+
+        std::fs::File::create(&aapl_path)
+            .unwrap()
+            .write_all(csv_content.as_bytes())
+            .unwrap();
+        std::fs::File::create(&msft_path)
+            .unwrap()
+            .write_all(csv_content.as_bytes())
+            .unwrap();
+
+        // Test load_multi
+        let paths: HashMap<&str, std::path::PathBuf> = [
+            ("AAPL", aapl_path),
+            ("MSFT", msft_path),
+        ]
+        .into_iter()
+        .collect();
+
+        let result = load_multi(&paths, &DataConfig::default()).unwrap();
+        assert_eq!(result.len(), 2);
+        assert!(result.contains_key("AAPL"));
+        assert!(result.contains_key("MSFT"));
+        assert_eq!(result["AAPL"].len(), 2);
+        assert_eq!(result["MSFT"].len(), 2);
+    }
+
+    #[test]
+    fn test_load_dir() {
+        use std::io::Write;
+
+        // Create temp directory with test CSV files
+        let temp_dir = tempfile::tempdir().unwrap();
+
+        let csv_content = "Date,Open,High,Low,Close,Volume
+2024-01-02,100.0,105.0,99.0,103.0,1000000";
+
+        // Create multiple CSV files
+        for symbol in &["AAPL", "GOOGL", "MSFT"] {
+            let path = temp_dir.path().join(format!("{}.csv", symbol));
+            std::fs::File::create(&path)
+                .unwrap()
+                .write_all(csv_content.as_bytes())
+                .unwrap();
+        }
+
+        // Also create a non-matching file
+        let txt_path = temp_dir.path().join("readme.txt");
+        std::fs::File::create(txt_path)
+            .unwrap()
+            .write_all(b"This is not a CSV")
+            .unwrap();
+
+        // Test load_dir with glob pattern
+        let result = load_dir(temp_dir.path(), "*.csv", &DataConfig::default()).unwrap();
+        assert_eq!(result.len(), 3);
+        assert!(result.contains_key("AAPL"));
+        assert!(result.contains_key("GOOGL"));
+        assert!(result.contains_key("MSFT"));
+    }
+
+    #[test]
+    fn test_load_dir_not_a_directory() {
+        let temp_file = tempfile::NamedTempFile::new().unwrap();
+        let result = load_dir(temp_file.path(), "*.csv", &DataConfig::default());
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_data_manager_load_multi() {
+        use std::io::Write;
+
+        let temp_dir = tempfile::tempdir().unwrap();
+
+        let csv_content = "Date,Open,High,Low,Close,Volume
+2024-01-02,100.0,105.0,99.0,103.0,1000000";
+
+        // Create test files
+        let paths: HashMap<&str, std::path::PathBuf> = ["AAPL", "MSFT"]
+            .iter()
+            .map(|symbol| {
+                let path = temp_dir.path().join(format!("{}.csv", symbol));
+                std::fs::File::create(&path)
+                    .unwrap()
+                    .write_all(csv_content.as_bytes())
+                    .unwrap();
+                (*symbol, path)
+            })
+            .collect();
+
+        let mut manager = DataManager::new();
+        manager.load_multi(&paths).unwrap();
+
+        assert_eq!(manager.len(), 2);
+        assert!(manager.contains("AAPL"));
+        assert!(manager.contains("MSFT"));
+    }
+
+    #[test]
+    fn test_data_manager_load_dir() {
+        use std::io::Write;
+
+        let temp_dir = tempfile::tempdir().unwrap();
+
+        let csv_content = "Date,Open,High,Low,Close,Volume
+2024-01-02,100.0,105.0,99.0,103.0,1000000";
+
+        // Create test files
+        for symbol in &["SPY", "QQQ", "IWM"] {
+            let path = temp_dir.path().join(format!("{}.csv", symbol));
+            std::fs::File::create(&path)
+                .unwrap()
+                .write_all(csv_content.as_bytes())
+                .unwrap();
+        }
+
+        let mut manager = DataManager::new();
+        manager.load_dir(temp_dir.path(), "*.csv").unwrap();
+
+        assert_eq!(manager.len(), 3);
+        assert!(manager.contains("SPY"));
+        assert!(manager.contains("QQQ"));
+        assert!(manager.contains("IWM"));
     }
 }

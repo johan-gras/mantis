@@ -172,26 +172,16 @@ All 3 previously failing tests now pass:
 
 ---
 
-### 7. load_multi / load_dir Functions [MISSING - VERIFIED]
-**Status:** Not implemented
+### 7. load_multi / load_dir Functions [COMPLETE]
+**Status:** COMPLETE
 
-**Spec requirements:**
-```rust
-let data = mt.load_dir("data/prices/*.parquet")?;
-let data = mt.load_multi(&["AAPL", "MSFT", "GOOGL"], "data/")?;
-let sample = mt.load_sample("AAPL")?;  // Works offline
-```
-
-**Current state (src/data.rs):**
-- `load_csv()` exists (line 119)
-- `load_parquet()` exists (line 226)
-- `load_data()` exists (line 572, auto-detect format)
-- `align_series()` exists (line 1508, multi-symbol alignment)
-- NO `load_multi()`, `load_dir()`, `load_sample()` functions
-- NO glob pattern support
-
-**Files affected:**
-- `src/data.rs` - Add bulk loading functions
+**Implementation details:**
+- `load_multi()` function that loads multiple symbols from a HashMap<symbol, path>
+- `load_dir()` function that loads all files matching a glob pattern from a directory
+- Both functions support custom DataConfig
+- Corresponding methods added to DataManager: `load_multi()`, `load_dir()`, `load_multi_with_config()`, `load_dir_with_config()`
+- Added `glob` crate dependency for pattern matching
+- 5 unit tests added for the new functionality
 
 **Dependencies:** None
 **Effort:** Small (1-2 days)
@@ -391,7 +381,7 @@ enum Verdict { Robust, Borderline, LikelyOverfit }
 | 4 | Helpful Error Messages | **COMPLETE** | P0 | Medium | None |
 | 5 | Rolling Metrics | MISSING | P1 | Medium | None |
 | 6 | Short Borrow Costs | PARTIAL | P1 | Medium | None |
-| 7 | load_multi/load_dir | MISSING | P1 | Small | None |
+| 7 | load_multi/load_dir | **COMPLETE** | P1 | Small | None |
 | 8 | Cost Sensitivity CLI | **COMPLETE** | P1 | Small | None |
 | 9 | Position Sizing Integration | PARTIAL | P1 | Medium | None |
 | 10 | Multi-Symbol Documentation | DOC GAP | P1 | Small | None |
@@ -436,6 +426,7 @@ enum Verdict { Robust, Borderline, LikelyOverfit }
 | Streaming Indicators | IMPLEMENTED in streaming.rs (SMA, EMA, RSI, MACD, BB, ATR, StdDev) |
 | Statistical Tests | **FIXED** in commit 0b67bff: ADF, autocorrelation, Ljung-Box all passing |
 | **Helpful Error Messages** | **COMPLETE**: New error types (SignalShapeMismatch, InvalidSignal, LookaheadBias, SuspiciousSignal), ErrorHelp struct, validation.rs module with validate_signal(), validate_signal_quick(), validate_signals(), SignalValidationConfig, SignalStats - 11 tests |
+| **load_multi/load_dir** | **COMPLETE**: load_multi() and load_dir() functions, DataManager methods, glob pattern support, 5 unit tests |
 | Codebase Cleanliness | **VERIFIED**: No TODOs/FIXMEs in codebase |
 | ALL TESTS | **PASSING**: 532 tests (0 failures) |
 
@@ -450,8 +441,8 @@ enum Verdict { Robust, Borderline, LikelyOverfit }
 **Phase 1 - Core Features (Weeks 2-3):**
 3. Rolling Metrics (#5) - 2-3 days
 4. Short Borrow Costs (#6) - 2-3 days
-5. load_multi/load_dir (#7) - 1-2 days
-6. Cost Sensitivity CLI (#8) - 1 day
+5. ~~load_multi/load_dir (#7)~~ - **COMPLETE**
+6. ~~Cost Sensitivity CLI (#8)~~ - **COMPLETE**
 
 **Phase 2 - Integration (Week 4):**
 7. Position Sizing Integration (#9) - 2-3 days
