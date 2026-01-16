@@ -462,6 +462,18 @@ Improved error handling for ONNX feature dictionary access:
 
 ---
 
+### Type Inference Fix in Python Bindings (2026-01-16)
+
+Fixed Rust compiler errors in Python bindings where type inference failed on `Ok(Bar {...})`:
+- Added explicit type annotations `Ok::<_, PyErr>(...)` to closures constructing Bar structs
+- Resolves compilation errors when building with `--features python`
+
+**Files modified:**
+- `src/python/backtest.rs`: 3 locations (extract_bars, extract_bars_from_pandas, extract_bars_from_polars)
+- `src/python/data.rs`: 1 location (adjust function)
+
+---
+
 ## Completed Items - GitHub Pages Deployment (2026-01-16)
 
 ### Item 39: GitHub Pages Deployment
