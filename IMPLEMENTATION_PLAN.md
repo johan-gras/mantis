@@ -60,7 +60,7 @@ Mantis is a high-performance Rust CLI backtest engine for quantitative trading w
 - [ ] `release.yml` for automated PyPI publishing
 - [ ] `bench.yml` for benchmark regression detection
 - [ ] `coverage.yml` for coverage reporting
-- [ ] Python tests (tests/python/ directory doesn't exist yet)
+- [ ] Add Python tests to CI workflow (tests/python/ now exists with 172 tests)
 
 ---
 
@@ -86,22 +86,33 @@ Mantis is a high-performance Rust CLI backtest engine for quantitative trading w
 
 ## Priority 2: HIGH (Production Readiness)
 
-### 2.1 Python Test Infrastructure Missing
+### 2.1 ~~Python Test Infrastructure Missing~~ RESOLVED
 
-| Issue | Zero Python tests exist |
-|-------|------------------------|
-| **Verified** | `tests/python/` directory does not exist |
-| **Impact** | Cannot verify Python bindings work correctly |
+| Status | ✅ FIXED - Python test suite implemented |
+|--------|----------------------------------------|
+| **Fix Date** | 2026-01-16 |
+| **Tests** | 172 Python tests across 8 test files |
+| **Coverage** | Data loading, backtest, metrics, validation, sensitivity, sweep, compare, visualization, export |
 
-**Required per specs/ci-testing.md:**
-- [ ] pytest configuration (conftest.py, pytest.ini)
-- [ ] End-to-end backtest tests
-- [ ] Metrics validation tests
-- [ ] Data loading tests
-- [ ] Python-Rust boundary tests
-- [ ] ONNX integration tests (feature-gated)
+**Implemented per specs/ci-testing.md:**
+- [x] pytest configuration (pytest.ini, conftest.py with fixtures)
+- [x] End-to-end backtest tests
+- [x] Metrics validation tests
+- [x] Data loading tests
+- [x] Python-Rust boundary tests
+- [ ] ONNX integration tests (feature-gated) - Not yet implemented
 
-**Current State:** Only Rust tests (403 unit, 20 integration, 12 doc tests passing)
+**Test files created:**
+- `tests/python/test_data_loading.py` - Data loading and validation
+- `tests/python/test_backtest.py` - Core backtest functionality
+- `tests/python/test_metrics.py` - Performance metrics
+- `tests/python/test_validation.py` - Walk-forward and Monte Carlo
+- `tests/python/test_sensitivity.py` - Parameter and cost sensitivity
+- `tests/python/test_sweep.py` - Parameter sweep
+- `tests/python/test_compare.py` - Strategy comparison
+- `tests/python/test_visualization.py` - Visualization and export
+
+**Bug fix:** Python `backtest()` wrapper was passing positional arguments incorrectly to the Rust binding. Fixed to use keyword arguments for proper parameter mapping.
 
 ---
 
@@ -436,7 +447,7 @@ The following are **100% implemented** per specifications:
 | Integration | 20 | PASS |
 | Doc tests | 12 | PASS (24 ignored) |
 | **Total Rust** | **403+** | **ALL PASS** |
-| **Python** | **0** | MISSING |
+| **Python** | **172** | **ALL PASS** |
 
 ---
 
@@ -470,18 +481,18 @@ The following are **100% implemented** per specifications:
 ### Missing Infrastructure
 | File/Directory | Status | Impact |
 |----------------|--------|--------|
-| `.github/workflows/ci.yml` | DOES NOT EXIST | No automated testing |
+| `.github/workflows/ci.yml` | ✅ EXISTS | Automated testing on PR/push |
 | `.github/workflows/release.yml` | DOES NOT EXIST | No automated releases |
 | `.github/workflows/bench.yml` | DOES NOT EXIST | No benchmark regression detection |
 | `.github/workflows/lint.yml` | DOES NOT EXIST | No automated linting |
 | `.github/workflows/coverage.yml` | DOES NOT EXIST | No coverage reporting |
-| `.pre-commit-config.yaml` | DOES NOT EXIST | No local quality gates |
+| `.pre-commit-config.yaml` | ✅ EXISTS | Pre-commit hooks configured |
 | `scripts/` | DOES NOT EXIST | No helper scripts |
 | `scripts/check_bench_regression.py` | DOES NOT EXIST | No benchmark regression script |
 | `scripts/test_doc_examples.py` | DOES NOT EXIST | No doc example testing |
 | `benchmarks/results/` | DOES NOT EXIST | No benchmark history |
-| `tests/python/` | DOES NOT EXIST | No Python tests |
-| `CHANGELOG.md` | DOES NOT EXIST | No release history |
+| `tests/python/` | ✅ EXISTS | 172 tests passing |
+| `CHANGELOG.md` | ✅ EXISTS | Release history documented |
 
 ### Configuration Files
 | File | Status |
@@ -489,7 +500,10 @@ The following are **100% implemented** per specifications:
 | `Cargo.toml` | Complete |
 | `pyproject.toml` | Complete |
 | `mkdocs.yml` | Complete |
-| `.github/workflows/docs.yml` | Only workflow that exists |
+| `pytest.ini` | Complete |
+| `.github/workflows/docs.yml` | Complete |
+| `.github/workflows/ci.yml` | Complete |
+| `.pre-commit-config.yaml` | Complete |
 
 ### Spec Files
 - `specs/core-engine.md`
@@ -513,11 +527,11 @@ The following are **100% implemented** per specifications:
 |---------|--------|----------------|
 | Missing features/streaming/regime modules | `cargo bench` won't compile (13 benchmarks blocked) | Low (remove benchmarks) or Medium (implement) |
 | No CI workflows | No automated testing on PRs | Medium |
-| No Python tests | Can't verify bindings | Medium |
-| No CHANGELOG.md | Can't do proper release | Low |
+| ~~No Python tests~~ | ~~Can't verify bindings~~ | ~~Medium~~ RESOLVED |
+| ~~No CHANGELOG.md~~ | ~~Can't do proper release~~ | ~~Low~~ RESOLVED |
 | Missing spec-required benchmarks | Can't verify performance claims | Medium |
 | No ONNX benchmarks | Can't verify <1ms/bar target | Medium |
-| No legal disclaimers | Regulatory risk | Low |
+| ~~No legal disclaimers~~ | ~~Regulatory risk~~ | ~~Low~~ RESOLVED |
 | Monte Carlo bootstrap method | Differs from spec (trade vs block) | Medium |
 | ONNX batch inference sequential | 10-100x slower than true batching | Medium |
 
@@ -550,19 +564,22 @@ The following items were **incorrectly identified as gaps** in previous analysis
 ## Verification Commands
 
 ```bash
-# Verify tests pass
+# Verify Rust tests pass
 cargo test                      # 403 unit + 20 integration tests
 
-# Verify benchmarks fail to compile (known issue)
-cargo bench --no-run            # Fails with 3 unresolved imports
+# Verify Python tests pass
+pytest tests/python/            # 172 Python tests
+
+# Verify benchmarks compile and run
+cargo bench --no-run            # 5 benchmark groups active
 
 # Check clippy status
-cargo clippy                    # 1 warning in export.rs:1780
+cargo clippy                    # 0 warnings (clean)
 
-# Verify missing files
-ls CHANGELOG.md .pre-commit-config.yaml scripts/ tests/python/ benchmarks/results/
-# All return "No such file or directory"
+# Verify infrastructure files exist
+ls CHANGELOG.md .pre-commit-config.yaml tests/python/ .github/workflows/ci.yml
+# All should exist
 
-# Verify only docs workflow exists
-ls .github/workflows/           # Only docs.yml present
+# Verify workflows
+ls .github/workflows/           # docs.yml and ci.yml present
 ```

@@ -1553,11 +1553,28 @@ def backtest(
             Only used when order_type="limit".
     """
     rust_result = _backtest_raw(
-        data, signal, strategy, strategy_params, config,
-        commission, slippage, size, cash, stop_loss,
-        take_profit, allow_short, fractional, borrow_cost, max_position, fill_price,
-        benchmark, freq, trading_hours_24, max_volume_participation,
-        order_type, limit_offset
+        data=data,
+        signal=signal,
+        strategy=strategy,
+        strategy_params=strategy_params,
+        config=config,
+        commission=commission,
+        slippage=slippage,
+        size=size,
+        cash=cash,
+        stop_loss=stop_loss,
+        take_profit=take_profit,
+        allow_short=allow_short,
+        fractional=fractional,
+        borrow_cost=borrow_cost,
+        max_position=max_position,
+        fill_price=fill_price,
+        benchmark=benchmark,
+        freq=freq,
+        trading_hours_24=trading_hours_24,
+        max_volume_participation=max_volume_participation,
+        order_type=order_type,
+        limit_offset=limit_offset,
     )
     return BacktestResult(rust_result)
 
