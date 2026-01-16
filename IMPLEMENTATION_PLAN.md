@@ -8,7 +8,7 @@
 
 Mantis is a high-performance Rust CLI backtest engine for quantitative trading with Python bindings. Core functionality (backtesting, metrics, validation, visualization) is **100% complete** per specifications.
 
-**Test Status:** 416 Rust unit tests + 35 integration tests + 18 doc tests + 17 proptests = ALL PASSING
+**Test Status:** 416 unit tests + 35 integration tests + 22 proptests + 18 doc tests = 491 tests ALL PASSING
 **Clippy Status:** CLEAN (0 warnings)
 **Benchmark Status:** Compiles and runs (6 benchmark groups active, including ONNX)
 **Python Tests:** 195 tests ALL PASSING
@@ -89,9 +89,9 @@ These modules are NOT required for production but noted for potential expansion:
 | ONNX (unit) | 7 | PASS |
 | ONNX (integration) | 15 | PASS |
 | Integration | 20 | PASS |
-| Property (proptest) | 17 | PASS |
+| Property (proptest) | 22 | PASS |
 | Doc tests | 18 | PASS |
-| **Total Rust** | **433+** | **ALL PASS** |
+| **Total Rust** | **491** | **ALL PASS** |
 | **Python** | **195** | **ALL PASS** |
 
 ---
@@ -153,7 +153,7 @@ Run with: `cargo bench --features onnx -- onnx`
 
 ```bash
 # Verify all Rust tests pass (including ONNX)
-cargo test --features onnx      # 433+ unit/integration tests
+cargo test --features onnx      # 491 Rust tests (unit, integration, proptest, doc)
 
 # Verify Python tests pass
 pytest tests/python/            # 195 Python tests
