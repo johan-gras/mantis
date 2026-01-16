@@ -243,7 +243,7 @@ fn build_backtest_config(
         position_size: size,
         allow_short,
         fractional_shares: false, // Default: whole shares (per spec)
-        show_progress: false, // Disable progress bar in parallel mode
+        show_progress: false,     // Disable progress bar in parallel mode
         ..Default::default()
     };
 
