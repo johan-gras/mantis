@@ -492,9 +492,39 @@ mantis portfolio -d ./data/stocks/ -p "*.csv" --strategy risk-parity --rebalance
 
 #### 18d. Interactive Plotly Charts [MISSING]
 - Spec requires: `results.plot()` shows interactive Plotly in Jupyter
-- Current: ASCII sparkline only (terminal fallback)
-- **Priority:** P2 (visualization spec)
+- **Priority:** P2 - deferred as ASCII/HTML alternatives work well
 - **Effort:** Medium (add plotly dependency, Jupyter detection)
+
+**Current state:**
+- ASCII sparkline works in terminal via `results.plot(width=40)`
+- HTML reports work via `results.report("file.html")` with SVG charts
+- Both provide functional visualization without additional dependencies
+
+**What's missing:**
+- Plotly dependency not included
+- No Jupyter environment detection
+- No interactive chart rendering in notebooks
+
+**Implementation approach (if someone wants to add it):**
+1. Add plotly as optional dependency in pyproject.toml:
+   ```toml
+   [project.optional-dependencies]
+   jupyter = ["plotly>=5.0"]
+   ```
+2. Detect Jupyter environment in `plot()` method:
+   ```python
+   def _is_jupyter():
+       try:
+           from IPython import get_ipython
+           return get_ipython() is not None
+       except ImportError:
+           return False
+   ```
+3. Return Plotly figure object when in Jupyter:
+   - Create `plotly.graph_objects.Figure` with equity curve
+   - Add drawdown subplot
+   - Return figure (auto-displays in Jupyter)
+4. Keep ASCII fallback for terminal usage when Plotly unavailable or not in Jupyter
 
 **Dependencies:** None
 **Effort:** Medium total
