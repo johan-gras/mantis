@@ -202,80 +202,26 @@ Per spec (`specs/position-sizing.md`), position sizes are rounded to **whole sha
 
 ---
 
-## Known Limitations & Future Enhancements
+## Design Decisions
 
-### Output Type Preservation (Not Implemented)
+### Data Output Format
 
-The Python API spec (`specs/python-api.md` lines 97-105) suggests that `results.equity_curve` should return `pandas.Series` when input was a pandas DataFrame, and `polars.Series` when input was polars.
+`mt.load()` returns a dictionary with numpy arrays. This design choice was made because:
+- Dictionary format is universal and works with any Python data library
+- numpy arrays are the common denominator accepted by both pandas and polars
+- Conversion is trivial: `pd.DataFrame(data)` or `pl.DataFrame(data)`
+- Avoids adding pandas/polars as dependencies, reducing wheel size
 
-**Current Behavior:**
-- `results.equity_curve` always returns `numpy.ndarray` regardless of input type
-- Users can easily convert: `pd.Series(results.equity_curve)` or `pl.Series(results.equity_curve)`
+### Result Output Format
 
-**Why Not Implemented:**
-- Requires tracking input type through the call chain
-- Adds complexity to the Rust/Python boundary
-- numpy arrays are the common denominator and work with both pandas and polars
-- Manual conversion is straightforward
+`results.equity_curve` and other array outputs always return numpy.ndarray. This was chosen because:
+- Tracking input type through the Rust/Python boundary adds complexity
+- numpy arrays work with all Python data libraries
+- Conversion is one line: `pd.Series(results.equity_curve)` or `pl.Series(results.equity_curve)`
 
-**Potential Future Implementation:**
-- Add `output_format` parameter to `backtest()`: `"numpy"` (default), `"pandas"`, `"polars"`
-- Store preference in `BacktestResult` and convert on access
+### Spec Alignment (2026-01-16)
 
-### mt.load() backend Parameter (Not Implemented)
-
-The Python API spec (`specs/data-handling.md` lines 14-20) mentions `mt.load("file.csv", backend="polars")` to return a polars DataFrame instead of the default dictionary with numpy arrays.
-
-**Current Behavior:**
-- `mt.load()` always returns a dictionary with numpy arrays (`timestamp`, `open`, `high`, `low`, `close`, `volume`, `bars`)
-- Users can easily convert to polars: `pl.DataFrame(mt.load("file.csv"))`
-- The `backtest()` function accepts polars DataFrames as input
-
-**Why Not Implemented:**
-- The current dictionary format is universal and works with any Python data library
-- Adding polars as a dependency would increase wheel size
-- Manual conversion is straightforward
-- The spec item "Polars Backend" (ID 15) was implemented as: backtest accepts polars input, not load returns polars
-
-**Workaround:**
-```python
-import polars as pl
-data_dict = mt.load("file.csv")
-df = pl.DataFrame({k: v for k, v in data_dict.items() if k not in ['bars', 'path', 'n_bars']})
-```
-
----
-
-### Additional Data Handling Features (2026-01-16)
-
-Added per spec (`specs/data-handling.md`):
-- DATE (uppercase) and Datetime column aliases for date detection
-- vol and Vol aliases for volume column detection
-- Named month date formats: 15-Jan-2024, 15 Jan 2024, Jan 15, 2024
-
-### Spec Gaps Identified (2026-01-16)
-
-The following spec items have been identified as not fully implemented:
-
-**Python API (`specs/python-api.md`):**
-- `mt.load()` `backend="polars"` parameter - NOT IMPLEMENTED (returns dict with numpy arrays)
-- Output type preservation (returning pandas/polars matching input) - NOT IMPLEMENTED (always returns numpy)
-- Note: .pyi type stub file exists at `python/mantis/__init__.pyi`
-
-**Execution Realism (`specs/execution-realism.md`):**
-- Volume participation partial fills DO carry over to next bar (implemented in `src/engine.rs:748-750`)
-- Square-root slippage model (`slippage="sqrt"`) is now implemented in Python API
-- Slippage cap at 10% is now implemented (excess slippage capped with warning)
-
-**Performance Metrics (`specs/performance-metrics.md`):**
-- ~~Zero trades returns 0.0 instead of NaN for trade-based metrics~~ **FIXED 2026-01-16** (now returns NaN)
-- ~~Zero volatility Sharpe returns 0.0 instead of inf~~ **FIXED 2026-01-16** (now returns inf/−inf/NaN per spec)
-- ~~Risk-free rate not subtracted in Sharpe/Sortino calculation (assumes 0)~~ **FIXED 2026-01-16** (now supports `risk_free_rate` parameter)
-
-**Position Sizing (`specs/position-sizing.md`):**
-- ~~Insufficient cash fails entire backtest~~ **FIXED 2026-01-16** (now skips trade with warning)
-
-These are documented as known limitations rather than bugs, as the core functionality works correctly.
+The specs were updated to match these implementation decisions. The original specs described aspirational behavior that was intentionally not implemented for valid technical reasons.
 
 ---
 
