@@ -82,6 +82,10 @@ pub struct BacktestConfig {
     /// For sells: limit_price = close * (1 + limit_offset)
     #[serde(default)]
     pub limit_offset: f64,
+    /// Annual risk-free rate for Sharpe/Sortino calculation (as decimal, e.g., 0.02 for 2%).
+    /// Default is 0.0 (no risk-free rate adjustment).
+    #[serde(default)]
+    pub risk_free_rate: f64,
 }
 
 impl Default for BacktestConfig {
@@ -107,6 +111,7 @@ impl Default for BacktestConfig {
             trading_hours_24: None, // Auto-detect from data
             use_limit_orders: false,
             limit_offset: 0.0,
+            risk_free_rate: 0.0, // No risk-free rate by default (per spec note)
         }
     }
 }
@@ -909,8 +914,10 @@ impl Engine {
             frequency, annualization_factor, trading_24h
         );
 
-        let sharpe_ratio = calculate_sharpe(&returns, annualization_factor);
-        let sortino_ratio = calculate_sortino(&returns, annualization_factor);
+        let sharpe_ratio =
+            calculate_sharpe(&returns, annualization_factor, self.config.risk_free_rate);
+        let sortino_ratio =
+            calculate_sortino(&returns, annualization_factor, self.config.risk_free_rate);
 
         let calmar_ratio = if max_drawdown_pct > 0.0 {
             annual_return_pct / max_drawdown_pct
@@ -1017,55 +1024,85 @@ impl Engine {
 
 /// Calculate Sharpe ratio from returns.
 ///
-/// Per spec (performance-metrics.md line 215):
+/// Per spec (performance-metrics.md):
+/// - sharpe = (mean(returns) - risk_free_rate) / std(returns) × √periods_per_year
 /// - Empty returns → NaN
-/// - Zero volatility with positive mean → inf
-/// - Zero volatility with negative mean → -inf
-/// - Zero volatility with zero mean → NaN
-fn calculate_sharpe(returns: &[f64], annualization_factor: f64) -> f64 {
+/// - Zero volatility with positive excess mean → inf
+/// - Zero volatility with negative excess mean → -inf
+/// - Zero volatility with zero excess mean → NaN
+///
+/// # Arguments
+/// * `returns` - Array of period returns (e.g., daily returns)
+/// * `annualization_factor` - Number of periods per year (e.g., 252 for daily)
+/// * `annual_risk_free_rate` - Annual risk-free rate as decimal (e.g., 0.02 for 2%)
+fn calculate_sharpe(returns: &[f64], annualization_factor: f64, annual_risk_free_rate: f64) -> f64 {
     if returns.is_empty() {
         return f64::NAN;
     }
 
+    // Convert annual risk-free rate to per-period rate
+    let period_risk_free_rate = annual_risk_free_rate / annualization_factor;
+
     let mean: f64 = returns.iter().sum::<f64>() / returns.len() as f64;
+    let excess_mean = mean - period_risk_free_rate;
+
     let variance: f64 =
         returns.iter().map(|r| (r - mean).powi(2)).sum::<f64>() / returns.len() as f64;
     let std_dev = variance.sqrt();
 
     if std_dev == 0.0 || std_dev.is_nan() {
-        return if mean > 0.0 {
+        return if excess_mean > 0.0 {
             f64::INFINITY
-        } else if mean < 0.0 {
+        } else if excess_mean < 0.0 {
             f64::NEG_INFINITY
         } else {
             f64::NAN
         };
     }
 
-    (mean / std_dev) * annualization_factor.sqrt()
+    (excess_mean / std_dev) * annualization_factor.sqrt()
 }
 
 /// Calculate Sortino ratio from returns.
 ///
 /// Per spec (performance-metrics.md):
+/// - sortino = (mean(returns) - risk_free_rate) / downside_std × √periods_per_year
 /// - Empty returns → NaN
-/// - No downside returns with positive mean → inf
-/// - No downside returns with non-positive mean → NaN
-/// - Zero downside deviation with positive mean → inf
-/// - Zero downside deviation with non-positive mean → NaN
-fn calculate_sortino(returns: &[f64], annualization_factor: f64) -> f64 {
+/// - No downside returns with positive excess mean → inf
+/// - No downside returns with non-positive excess mean → NaN
+/// - Zero downside deviation with positive excess mean → inf
+/// - Zero downside deviation with non-positive excess mean → NaN
+///
+/// # Arguments
+/// * `returns` - Array of period returns (e.g., daily returns)
+/// * `annualization_factor` - Number of periods per year (e.g., 252 for daily)
+/// * `annual_risk_free_rate` - Annual risk-free rate as decimal (e.g., 0.02 for 2%)
+fn calculate_sortino(
+    returns: &[f64],
+    annualization_factor: f64,
+    annual_risk_free_rate: f64,
+) -> f64 {
     if returns.is_empty() {
         return f64::NAN;
     }
 
+    // Convert annual risk-free rate to per-period rate
+    let period_risk_free_rate = annual_risk_free_rate / annualization_factor;
+
     let mean: f64 = returns.iter().sum::<f64>() / returns.len() as f64;
+    let excess_mean = mean - period_risk_free_rate;
 
     // Only consider negative returns for downside deviation
+    // Note: downside deviation is relative to 0 (or could be relative to target return)
     let downside_returns: Vec<f64> = returns.iter().filter(|&&r| r < 0.0).copied().collect();
 
     if downside_returns.is_empty() {
-        // No downside returns: if mean is positive, infinite Sortino; otherwise undefined
-        return if mean > 0.0 { f64::INFINITY } else { f64::NAN };
+        // No downside returns: if excess mean is positive, infinite Sortino; otherwise undefined
+        return if excess_mean > 0.0 {
+            f64::INFINITY
+        } else {
+            f64::NAN
+        };
     }
 
     let downside_variance: f64 =
@@ -1073,10 +1110,14 @@ fn calculate_sortino(returns: &[f64], annualization_factor: f64) -> f64 {
     let downside_dev = downside_variance.sqrt();
 
     if downside_dev == 0.0 || downside_dev.is_nan() {
-        return if mean > 0.0 { f64::INFINITY } else { f64::NAN };
+        return if excess_mean > 0.0 {
+            f64::INFINITY
+        } else {
+            f64::NAN
+        };
     }
 
-    (mean / downside_dev) * annualization_factor.sqrt()
+    (excess_mean / downside_dev) * annualization_factor.sqrt()
 }
 
 #[cfg(test)]
@@ -1184,7 +1225,7 @@ mod tests {
     #[test]
     fn test_sharpe_calculation() {
         let returns = vec![0.01, -0.02, 0.015, 0.005, -0.01, 0.02];
-        let sharpe = calculate_sharpe(&returns, 252.0);
+        let sharpe = calculate_sharpe(&returns, 252.0, 0.0);
         // Should be a reasonable number
         assert!(sharpe.is_finite());
     }
@@ -1192,7 +1233,7 @@ mod tests {
     #[test]
     fn test_sharpe_empty_returns() {
         let returns: Vec<f64> = vec![];
-        let sharpe = calculate_sharpe(&returns, 252.0);
+        let sharpe = calculate_sharpe(&returns, 252.0, 0.0);
         assert!(sharpe.is_nan());
     }
 
@@ -1200,7 +1241,7 @@ mod tests {
     fn test_sharpe_zero_volatility_positive_mean() {
         // All identical positive returns = zero volatility with positive mean → inf
         let returns = vec![0.01, 0.01, 0.01, 0.01];
-        let sharpe = calculate_sharpe(&returns, 252.0);
+        let sharpe = calculate_sharpe(&returns, 252.0, 0.0);
         assert!(sharpe.is_infinite() && sharpe > 0.0);
     }
 
@@ -1208,7 +1249,7 @@ mod tests {
     fn test_sharpe_zero_volatility_negative_mean() {
         // All identical negative returns = zero volatility with negative mean → -inf
         let returns = vec![-0.01, -0.01, -0.01, -0.01];
-        let sharpe = calculate_sharpe(&returns, 252.0);
+        let sharpe = calculate_sharpe(&returns, 252.0, 0.0);
         assert!(sharpe.is_infinite() && sharpe < 0.0);
     }
 
@@ -1216,21 +1257,43 @@ mod tests {
     fn test_sharpe_zero_volatility_zero_mean() {
         // All zero returns = zero volatility with zero mean → NaN
         let returns = vec![0.0, 0.0, 0.0, 0.0];
-        let sharpe = calculate_sharpe(&returns, 252.0);
+        let sharpe = calculate_sharpe(&returns, 252.0, 0.0);
         assert!(sharpe.is_nan());
+    }
+
+    #[test]
+    fn test_sharpe_with_risk_free_rate() {
+        // Test that risk-free rate affects the Sharpe ratio
+        let returns = vec![0.01, 0.02, 0.015, 0.005, 0.01, 0.02];
+        let sharpe_no_rf = calculate_sharpe(&returns, 252.0, 0.0);
+        let sharpe_with_rf = calculate_sharpe(&returns, 252.0, 0.02); // 2% annual risk-free rate
+                                                                      // With positive risk-free rate, Sharpe should be lower
+        assert!(sharpe_with_rf < sharpe_no_rf);
+    }
+
+    #[test]
+    fn test_sharpe_risk_free_rate_conversion() {
+        // Test the exact calculation with risk-free rate
+        // Mean return = 0.01 per day
+        // If risk-free rate = 2.52% annual (0.0252), that's 0.0001 per day (0.0252 / 252)
+        // Excess return = 0.01 - 0.0001 = 0.0099
+        let returns = vec![0.01, 0.01, 0.01, 0.01]; // Zero vol, mean = 0.01
+        let sharpe = calculate_sharpe(&returns, 252.0, 0.0252);
+        // Zero volatility with positive excess mean should still be inf
+        assert!(sharpe.is_infinite() && sharpe > 0.0);
     }
 
     #[test]
     fn test_sortino_calculation() {
         let returns = vec![0.01, -0.02, 0.015, 0.005, -0.01, 0.02];
-        let sortino = calculate_sortino(&returns, 252.0);
+        let sortino = calculate_sortino(&returns, 252.0, 0.0);
         assert!(sortino.is_finite());
     }
 
     #[test]
     fn test_sortino_empty_returns() {
         let returns: Vec<f64> = vec![];
-        let sortino = calculate_sortino(&returns, 252.0);
+        let sortino = calculate_sortino(&returns, 252.0, 0.0);
         assert!(sortino.is_nan());
     }
 
@@ -1238,7 +1301,7 @@ mod tests {
     fn test_sortino_no_downside_positive_mean() {
         // All positive returns = no downside returns with positive mean → inf
         let returns = vec![0.01, 0.02, 0.015, 0.005];
-        let sortino = calculate_sortino(&returns, 252.0);
+        let sortino = calculate_sortino(&returns, 252.0, 0.0);
         assert!(sortino.is_infinite() && sortino > 0.0);
     }
 
@@ -1246,7 +1309,17 @@ mod tests {
     fn test_sortino_no_downside_zero_mean() {
         // All zero returns = no downside returns with zero mean → NaN
         let returns = vec![0.0, 0.0, 0.0, 0.0];
-        let sortino = calculate_sortino(&returns, 252.0);
+        let sortino = calculate_sortino(&returns, 252.0, 0.0);
         assert!(sortino.is_nan());
+    }
+
+    #[test]
+    fn test_sortino_with_risk_free_rate() {
+        // Test that risk-free rate affects the Sortino ratio
+        let returns = vec![0.01, -0.02, 0.015, 0.005, -0.01, 0.02];
+        let sortino_no_rf = calculate_sortino(&returns, 252.0, 0.0);
+        let sortino_with_rf = calculate_sortino(&returns, 252.0, 0.02); // 2% annual risk-free rate
+                                                                        // With positive risk-free rate, Sortino should be lower
+        assert!(sortino_with_rf < sortino_no_rf);
     }
 }

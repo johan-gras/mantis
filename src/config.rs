@@ -461,6 +461,7 @@ impl BacktestFileConfig {
             trading_hours_24: None,  // Auto-detect from data
             use_limit_orders: false, // Default to market orders
             limit_offset: 0.0,
+            risk_free_rate: 0.0, // Default: no risk-free rate adjustment
         })
     }
 

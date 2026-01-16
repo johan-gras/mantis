@@ -80,6 +80,10 @@ pub struct PyBacktestConfig {
     /// Maximum leverage allowed (gross exposure / equity). Default 2.0.
     #[pyo3(get, set)]
     pub max_leverage: f64,
+    /// Annual risk-free rate for Sharpe/Sortino calculation (as decimal, e.g., 0.02 for 2%).
+    /// Default is 0.0 (no risk-free rate adjustment).
+    #[pyo3(get, set)]
+    pub risk_free_rate: f64,
 }
 
 /// Specification for stop loss - can be percentage or ATR-based.
@@ -518,7 +522,8 @@ impl PyBacktestConfig {
         base_size=None,
         risk_per_trade=None,
         stop_atr=None,
-        atr_period=None
+        atr_period=None,
+        risk_free_rate=0.0
     ))]
     #[allow(clippy::too_many_arguments)]
     fn new(
@@ -549,6 +554,7 @@ impl PyBacktestConfig {
         risk_per_trade: Option<f64>,
         stop_atr: Option<f64>,
         atr_period: Option<usize>,
+        risk_free_rate: f64,
     ) -> PyResult<Self> {
         let sl_spec = if let Some(ref obj) = stop_loss {
             parse_stop_loss(py, obj)?
@@ -619,6 +625,7 @@ impl PyBacktestConfig {
             order_type: order_type_lower,
             limit_offset,
             max_leverage,
+            risk_free_rate,
         })
     }
 
@@ -838,6 +845,9 @@ impl PyBacktestConfig {
         config.use_limit_orders = self.order_type == "limit";
         config.limit_offset = self.limit_offset;
 
+        // Set risk-free rate for Sharpe/Sortino calculation
+        config.risk_free_rate = self.risk_free_rate;
+
         config
     }
 }
@@ -1030,6 +1040,7 @@ pub fn backtest(
             risk_per_trade,
             stop_atr,
             atr_period,
+            0.0, // risk_free_rate default
         )?;
         py_config.to_backtest_config(Some(&bars))
     };
@@ -2026,7 +2037,8 @@ pub fn validate(
             max_volume_participation: None,
             order_type: "market".to_string(),
             limit_offset: 0.0,
-            max_leverage: 2.0, // Default max leverage
+            max_leverage: 2.0,   // Default max leverage
+            risk_free_rate: 0.0, // Default: no risk-free rate adjustment
         };
         py_config.to_backtest_config(Some(&bars))
     };

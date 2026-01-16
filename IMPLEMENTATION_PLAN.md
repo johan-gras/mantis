@@ -270,7 +270,7 @@ The following spec items have been identified as not fully implemented:
 **Performance Metrics (`specs/performance-metrics.md`):**
 - ~~Zero trades returns 0.0 instead of NaN for trade-based metrics~~ **FIXED 2026-01-16** (now returns NaN)
 - ~~Zero volatility Sharpe returns 0.0 instead of inf~~ **FIXED 2026-01-16** (now returns inf/−inf/NaN per spec)
-- Risk-free rate not subtracted in Sharpe/Sortino calculation (assumes 0)
+- ~~Risk-free rate not subtracted in Sharpe/Sortino calculation (assumes 0)~~ **FIXED 2026-01-16** (now supports `risk_free_rate` parameter)
 
 **Position Sizing (`specs/position-sizing.md`):**
 - ~~Insufficient cash fails entire backtest~~ **FIXED 2026-01-16** (now skips trade with warning)
@@ -408,6 +408,24 @@ Also fixed NaN handling in walk-forward analysis parameter optimization to preve
 - `src/walkforward.rs`: Handle NaN in metric comparison
 
 **Tests added:** 7 unit tests for Sharpe/Sortino edge cases in `src/engine.rs`
+
+---
+
+### Risk-Free Rate Support (2026-01-16)
+
+Per spec (`specs/performance-metrics.md`), added `risk_free_rate` parameter to Sharpe/Sortino calculation:
+- Added `risk_free_rate` field to `BacktestConfig` (default: 0.0)
+- Added `risk_free_rate` parameter to Python API `backtest()` function
+- Updated `calculate_sharpe()` and `calculate_sortino()` to subtract per-period risk-free rate from returns
+- Sharpe/Sortino formula: `(mean(returns) - risk_free_rate_per_period) / std × √annualization`
+- Risk-free rate is converted from annual to per-period: `annual_rate / annualization_factor`
+
+**Files modified:**
+- `src/engine.rs`: Updated `calculate_sharpe()` and `calculate_sortino()` functions, added `risk_free_rate` field to `BacktestConfig`
+- `src/config.rs`: Added `risk_free_rate` field to `BacktestFileConfig`
+- `src/python/backtest.rs`: Added `risk_free_rate` parameter to `PyBacktestConfig` and `backtest()` function
+
+**Tests added:** 3 unit tests for risk-free rate in Sharpe/Sortino calculations
 
 ---
 
