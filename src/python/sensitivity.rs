@@ -277,7 +277,7 @@ impl PyHeatmapData {
     /// Get the 2D grid of metric values as a numpy array.
     ///
     /// Returns NaN for missing values.
-    fn values<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray2<f64>> {
+    fn values<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArray2<f64>>> {
         PyArray2::from_vec2_bound(
             py,
             &self
@@ -287,7 +287,9 @@ impl PyHeatmapData {
                 .map(|row| row.iter().map(|v| v.unwrap_or(f64::NAN)).collect())
                 .collect::<Vec<Vec<f64>>>(),
         )
-        .unwrap()
+        .map_err(|e| {
+            pyo3::exceptions::PyValueError::new_err(format!("Failed to create numpy array: {}", e))
+        })
     }
 
     /// Export to CSV format for external visualization tools.
