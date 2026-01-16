@@ -490,44 +490,26 @@ mantis portfolio -d ./data/stocks/ -p "*.csv" --strategy risk-parity --rebalance
 - **Priority:** P3 (nice-to-have, functional API works)
 - **Effort:** Medium (completed)
 
-#### 18d. Interactive Plotly Charts [MISSING]
-- Spec requires: `results.plot()` shows interactive Plotly in Jupyter
-- **Priority:** P2 - deferred as ASCII/HTML alternatives work well
-- **Effort:** Medium (add plotly dependency, Jupyter detection)
+#### 18d. Interactive Plotly Charts [COMPLETE]
+**Status:** COMPLETE
 
-**Current state:**
-- ASCII sparkline works in terminal via `results.plot(width=40)`
-- HTML reports work via `results.report("file.html")` with SVG charts
-- Both provide functional visualization without additional dependencies
+**Implementation details:**
+- Added `plotly>=5.0.0` as optional dependency (`pip install mantis-bt[jupyter]`)
+- `results.plot()` now auto-detects Jupyter environment via IPython shell detection
+- In Jupyter with plotly: Returns interactive Plotly Figure with equity curve and drawdown subplots
+- In terminal or without plotly: Falls back to ASCII sparkline (backward compatible)
+- `validation.plot()` also supports Plotly in Jupyter with IS vs OOS bar charts
+- Added `_repr_html_()` method for rich display in Jupyter notebooks
+- New parameter `show_drawdown=True` to optionally hide drawdown subplot in Plotly
+- Type stubs updated in `__init__.pyi`
 
-**What's missing:**
-- Plotly dependency not included
-- No Jupyter environment detection
-- No interactive chart rendering in notebooks
+**Files modified:**
+- `pyproject.toml` - Added `jupyter = ["plotly>=5.0.0"]` optional dependency
+- `python/mantis/__init__.py` - Added wrapper classes with Plotly support
+- `python/mantis/__init__.pyi` - Updated type stubs
 
-**Implementation approach (if someone wants to add it):**
-1. Add plotly as optional dependency in pyproject.toml:
-   ```toml
-   [project.optional-dependencies]
-   jupyter = ["plotly>=5.0"]
-   ```
-2. Detect Jupyter environment in `plot()` method:
-   ```python
-   def _is_jupyter():
-       try:
-           from IPython import get_ipython
-           return get_ipython() is not None
-       except ImportError:
-           return False
-   ```
-3. Return Plotly figure object when in Jupyter:
-   - Create `plotly.graph_objects.Figure` with equity curve
-   - Add drawdown subplot
-   - Return figure (auto-displays in Jupyter)
-4. Keep ASCII fallback for terminal usage when Plotly unavailable or not in Jupyter
-
-**Dependencies:** None
-**Effort:** Medium total
+**Dependencies:** None (plotly is optional)
+**Effort:** Medium (completed)
 
 ---
 
@@ -555,7 +537,7 @@ mantis portfolio -d ./data/stocks/ -p "*.csv" --strategy risk-parity --rebalance
 | 18a | results.validate() method | **COMPLETE** | P1 | Small | None |
 | 18b | mt.load_results() | **COMPLETE** | P2 | Small | None |
 | 18c | mt.Backtest fluent API | **COMPLETE** | P3 | Medium | None |
-| 18d | Interactive Plotly charts | MISSING | P2 | Medium | None |
+| 18d | Interactive Plotly charts | **COMPLETE** | P2 | Medium | None |
 
 ---
 
@@ -603,6 +585,7 @@ mantis portfolio -d ./data/stocks/ -p "*.csv" --strategy risk-parity --rebalance
 | **Polars Backend Support** | **COMPLETE**: pandas DataFrame input support in backtest() and validate(); polars DataFrame input support in backtest() and validate(); auto-detection of DataFrame type via __class__.__module__; case-insensitive OHLCV column detection (open/Open/o, high/High/h, etc.); timestamp extraction from DatetimeIndex, date columns, or polars datetime columns; fallback to sequential timestamps; type stubs updated with DataFrame types; Files: src/python/backtest.rs (extract_bars_from_pandas, extract_bars_from_polars, extract_pandas_timestamps, extract_polars_timestamps), python/mantis/__init__.pyi |
 | **Multi-Symbol CLI Command** | **COMPLETE**: `mantis portfolio` CLI command with 9 portfolio strategies (equal-weight, momentum, inverse-vol, risk-parity, min-variance, max-sharpe, hrp, drift-equal, drift-momentum), glob pattern loading, portfolio constraints (max-position, max-leverage, max-turnover, min/max-holdings), text/JSON/CSV output |
 | **Python Bindings Advanced Metrics** | **COMPLETE**: ValidationResult.report() method for HTML export; BacktestResult.deflated_sharpe and .psr properties; metrics() dict includes deflated_sharpe and psr |
+| **Interactive Plotly Charts** | **COMPLETE**: plotly>=5.0.0 as optional dependency (`pip install mantis-bt[jupyter]`); results.plot() auto-detects Jupyter via IPython; returns interactive Plotly Figure with equity curve and drawdown subplots in Jupyter, ASCII sparkline fallback otherwise; validation.plot() also supports Plotly with IS vs OOS bar charts; _repr_html_() for rich Jupyter display; show_drawdown parameter; Files: pyproject.toml, python/mantis/__init__.py, python/mantis/__init__.pyi |
 | Codebase Cleanliness | **VERIFIED**: No TODOs/FIXMEs in codebase |
 | ALL TESTS | **PASSING**: 558+ lib tests (0 failures) |
 

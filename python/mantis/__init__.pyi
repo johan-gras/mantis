@@ -116,19 +116,25 @@ class BacktestResult:
     def metrics(self) -> Dict[str, Any]: ...
     def summary(self) -> str: ...
     def warnings(self) -> List[str]: ...
-    def plot(self, width: int = 40) -> str:
+    def plot(self, width: int = 40, show_drawdown: bool = True) -> Any:
         """
-        Display an ASCII sparkline visualization of the equity curve.
+        Display a visualization of the equity curve.
+
+        In Jupyter notebooks with plotly installed, returns an interactive
+        Plotly figure with equity curve and drawdown subplots.
+        In terminal or without plotly, returns an ASCII sparkline string.
 
         Args:
-            width: Width of the sparkline in characters (default: 40)
+            width: Width of the visualization (characters for ASCII, ignored for Plotly)
+            show_drawdown: Whether to show drawdown subplot (Plotly only, default: True)
 
         Returns:
-            A string containing the formatted equity curve visualization.
+            Plotly Figure object in Jupyter with plotly, ASCII string otherwise.
 
         Example:
             >>> results = mt.backtest(data, signal)
-            >>> print(results.plot())
+            >>> results.plot()  # Shows interactive chart in Jupyter
+            >>> print(results.plot())  # ASCII sparkline in terminal
         """
         ...
     def save(self, path: str) -> None:
@@ -226,22 +232,24 @@ class ValidationResult:
     def fold_details(self) -> List[FoldDetail]: ...
     def is_robust(self) -> bool: ...
     def summary(self) -> str: ...
-    def plot(self, width: int = 20) -> str:
+    def plot(self, width: int = 20) -> Any:
         """
-        Display an ASCII visualization of fold-by-fold performance.
+        Display a visualization of fold-by-fold performance.
 
-        Shows in-sample vs out-of-sample returns for each fold with
-        bar chart representation and efficiency metrics.
+        In Jupyter notebooks with plotly installed, returns an interactive
+        Plotly figure with in-sample vs out-of-sample comparison.
+        In terminal or without plotly, returns an ASCII bar chart string.
 
         Args:
-            width: Width of the bar charts (default: 20)
+            width: Width of ASCII bars (ignored for Plotly, default: 20)
 
         Returns:
-            A string containing the formatted walk-forward visualization.
+            Plotly Figure object in Jupyter with plotly, ASCII string otherwise.
 
         Example:
             >>> validation = mt.validate(data, signal)
-            >>> print(validation.plot())
+            >>> validation.plot()  # Shows interactive chart in Jupyter
+            >>> print(validation.plot())  # ASCII chart in terminal
         """
         ...
     def report(self, path: str) -> None:
