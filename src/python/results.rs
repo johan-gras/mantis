@@ -311,7 +311,10 @@ impl PyBacktestResult {
         dict.set_item("psr", perf_metrics.probabilistic_sharpe_ratio)?;
         // Add new metrics per spec
         dict.set_item("volatility", perf_metrics.volatility_annual / 100.0)?;
-        dict.set_item("max_drawdown_duration", perf_metrics.max_drawdown_duration_days)?;
+        dict.set_item(
+            "max_drawdown_duration",
+            perf_metrics.max_drawdown_duration_days,
+        )?;
         dict.set_item("avg_trade_duration", perf_metrics.avg_holding_period_days)?;
         // Add benchmark metrics if available
         if let Some(ref bm) = self.benchmark_metrics {
@@ -684,7 +687,11 @@ impl PyBacktestResult {
         for i in 1..self.equity_values.len() {
             let prev = self.equity_values[i - 1];
             let curr = self.equity_values[i];
-            let ret = if prev > 0.0 { (curr - prev) / prev } else { 0.0 };
+            let ret = if prev > 0.0 {
+                (curr - prev) / prev
+            } else {
+                0.0
+            };
             returns.push(ret);
         }
         returns

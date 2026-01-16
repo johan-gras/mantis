@@ -112,9 +112,9 @@ pub mod metadata;
 pub mod monte_carlo;
 pub mod multi_asset;
 // ONNX module for ML model inference (optional, enable with --features onnx)
+pub mod cost_sensitivity;
 #[cfg(feature = "onnx")]
 pub mod onnx;
-pub mod cost_sensitivity;
 pub mod options;
 pub mod portfolio;
 pub mod regime;

@@ -272,7 +272,9 @@ impl OnnxModel {
         // CUDA support: Currently disabled as it requires additional setup
         // To enable CUDA, add the ort 'cuda' feature and configure execution providers
         if config.use_cuda {
-            warn!("CUDA requested but CUDA execution provider not enabled in this build. Using CPU.");
+            warn!(
+                "CUDA requested but CUDA execution provider not enabled in this build. Using CPU."
+            );
         }
 
         // Load model from file (ort 2.0: commit_from_file instead of with_model_from_file)

@@ -659,7 +659,8 @@ pub fn backtest(
                 })?;
 
             // Extract features and run inference
-            let signal_vec = run_onnx_inference(py, &mut onnx_model, &features_obj, signal_threshold)?;
+            let signal_vec =
+                run_onnx_inference(py, &mut onnx_model, &features_obj, signal_threshold)?;
 
             // Validate signal length
             if signal_vec.len() != bars.len() {
