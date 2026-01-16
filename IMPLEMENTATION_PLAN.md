@@ -425,9 +425,12 @@ The GitHub Pages deployment has been implemented with the following changes:
 - Uses actions/upload-pages-artifact@v3 and actions/deploy-pages@v4
 - Builds with mkdocs-material>=9.0 and mkdocstrings[python]>=0.24
 
-**Note:** After pushing, enable GitHub Pages in repository settings:
-- Go to Settings → Pages → Build and deployment
-- Source: GitHub Actions
+**GitHub Pages enabled via CLI:**
+```bash
+gh api -X POST "/repos/johan-gras/mantis/pages" -f build_type=workflow
+```
+
+**Site live at:** https://johan-gras.github.io/mantis/
 
 ---
 
