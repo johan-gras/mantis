@@ -7,6 +7,7 @@ use csv::ReaderBuilder;
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::fs::File;
+use std::io::{BufRead, BufReader};
 use std::path::Path;
 use tracing::{debug, info, warn};
 
@@ -42,8 +43,8 @@ pub struct DataConfig {
     pub date_format: Option<String>,
     /// Whether the CSV has headers.
     pub has_headers: bool,
-    /// CSV delimiter character.
-    pub delimiter: u8,
+    /// CSV delimiter character. If None, delimiter is auto-detected.
+    pub delimiter: Option<u8>,
     /// Skip invalid rows instead of failing.
     pub skip_invalid: bool,
     /// Validate bar data (high >= low, etc.).
@@ -55,11 +56,85 @@ impl Default for DataConfig {
         Self {
             date_format: None,
             has_headers: true,
-            delimiter: b',',
+            delimiter: None, // Auto-detect by default
             skip_invalid: true,
             validate_bars: true,
         }
     }
+}
+
+/// Detect the CSV delimiter by analyzing the first few lines of the file.
+///
+/// Tries common delimiters (comma, tab, semicolon, pipe) and returns the one
+/// that produces the most consistent column count across lines.
+fn detect_delimiter(path: &Path) -> Result<u8> {
+    let file = File::open(path)?;
+    let reader = BufReader::new(file);
+
+    // Read first 5 lines for analysis (or less if file is smaller)
+    let lines: Vec<String> = reader.lines().take(5).filter_map(|l| l.ok()).collect();
+
+    if lines.is_empty() {
+        return Ok(b','); // Default to comma for empty files
+    }
+
+    // Common delimiters to try (comma, tab, semicolon, pipe)
+    let delimiters = [b',', b'\t', b';', b'|'];
+
+    let mut best_delimiter = b',';
+    let mut best_score = 0;
+
+    for &delim in &delimiters {
+        // Count fields per line for this delimiter
+        let counts: Vec<usize> = lines
+            .iter()
+            .map(|line| line.as_bytes().iter().filter(|&&b| b == delim).count() + 1)
+            .collect();
+
+        if counts.is_empty() {
+            continue;
+        }
+
+        // Calculate score: consistency (all lines have same count) + minimum 5 fields for OHLCV
+        let first_count = counts[0];
+        let all_consistent = counts.iter().all(|&c| c == first_count);
+        let has_enough_fields = first_count >= 5; // At least date,O,H,L,C,V
+
+        if all_consistent && has_enough_fields {
+            // Score higher for more fields (tie-breaker)
+            let score = first_count;
+            if score > best_score {
+                best_score = score;
+                best_delimiter = delim;
+            }
+        }
+    }
+
+    // If no delimiter produced consistent results, try to find any that produces >= 5 fields
+    if best_score == 0 {
+        for &delim in &delimiters {
+            let first_line = &lines[0];
+            let count = first_line
+                .as_bytes()
+                .iter()
+                .filter(|&&b| b == delim)
+                .count()
+                + 1;
+            if count >= 5 {
+                debug!(
+                    "Detected delimiter {:?} with {} fields",
+                    delim as char, count
+                );
+                return Ok(delim);
+            }
+        }
+    }
+
+    debug!(
+        "Detected delimiter {:?} with score {}",
+        best_delimiter as char, best_score
+    );
+    Ok(best_delimiter)
 }
 
 /// Parse a date string with multiple format attempts.
@@ -120,9 +195,19 @@ pub fn load_csv(path: impl AsRef<Path>, config: &DataConfig) -> Result<Vec<Bar>>
     let path = path.as_ref();
     info!("Loading data from: {}", path.display());
 
+    // Auto-detect delimiter if not specified
+    let delimiter = match config.delimiter {
+        Some(d) => d,
+        None => {
+            let detected = detect_delimiter(path)?;
+            debug!("Auto-detected delimiter: {:?}", char::from(detected));
+            detected
+        }
+    };
+
     let mut reader = ReaderBuilder::new()
         .has_headers(config.has_headers)
-        .delimiter(config.delimiter)
+        .delimiter(delimiter)
         .flexible(true)
         .from_path(path)?;
 
@@ -662,9 +747,12 @@ pub fn load_sample(name: &str) -> Result<Vec<Bar>> {
 
 /// Parse CSV data from a string (used for embedded sample data).
 fn load_csv_from_string(csv_content: &str, config: &DataConfig) -> Result<Vec<Bar>> {
+    // For string-based loading, default to comma if not specified
+    let delimiter = config.delimiter.unwrap_or(b',');
+
     let mut reader = ReaderBuilder::new()
         .has_headers(config.has_headers)
-        .delimiter(config.delimiter)
+        .delimiter(delimiter)
         .flexible(true)
         .from_reader(csv_content.as_bytes());
 
@@ -3860,5 +3948,72 @@ mod tests {
         let err_str = format!("{}", err);
         assert!(err_str.contains("Unknown sample"));
         assert!(err_str.contains("AAPL")); // Should suggest available samples
+    }
+
+    #[test]
+    fn test_detect_delimiter_comma() {
+        use std::io::Write;
+        use tempfile::NamedTempFile;
+
+        // Create temp file with comma-separated data
+        let mut file = NamedTempFile::new().unwrap();
+        writeln!(file, "date,open,high,low,close,volume").unwrap();
+        writeln!(file, "2024-01-01,100.0,105.0,99.0,104.0,1000").unwrap();
+        writeln!(file, "2024-01-02,104.0,108.0,103.0,107.0,1500").unwrap();
+        file.flush().unwrap();
+
+        let delimiter = detect_delimiter(file.path()).unwrap();
+        assert_eq!(delimiter, b',');
+    }
+
+    #[test]
+    fn test_detect_delimiter_semicolon() {
+        use std::io::Write;
+        use tempfile::NamedTempFile;
+
+        // Create temp file with semicolon-separated data
+        let mut file = NamedTempFile::new().unwrap();
+        writeln!(file, "date;open;high;low;close;volume").unwrap();
+        writeln!(file, "2024-01-01;100.0;105.0;99.0;104.0;1000").unwrap();
+        writeln!(file, "2024-01-02;104.0;108.0;103.0;107.0;1500").unwrap();
+        file.flush().unwrap();
+
+        let delimiter = detect_delimiter(file.path()).unwrap();
+        assert_eq!(delimiter, b';');
+    }
+
+    #[test]
+    fn test_detect_delimiter_tab() {
+        use std::io::Write;
+        use tempfile::NamedTempFile;
+
+        // Create temp file with tab-separated data
+        let mut file = NamedTempFile::new().unwrap();
+        writeln!(file, "date\topen\thigh\tlow\tclose\tvolume").unwrap();
+        writeln!(file, "2024-01-01\t100.0\t105.0\t99.0\t104.0\t1000").unwrap();
+        writeln!(file, "2024-01-02\t104.0\t108.0\t103.0\t107.0\t1500").unwrap();
+        file.flush().unwrap();
+
+        let delimiter = detect_delimiter(file.path()).unwrap();
+        assert_eq!(delimiter, b'\t');
+    }
+
+    #[test]
+    fn test_load_csv_auto_detect_semicolon() {
+        use std::io::Write;
+        use tempfile::NamedTempFile;
+
+        // Create temp file with semicolon-separated data
+        let mut file = NamedTempFile::new().unwrap();
+        writeln!(file, "date;open;high;low;close;volume").unwrap();
+        writeln!(file, "2024-01-01;100.0;105.0;99.0;104.0;1000").unwrap();
+        writeln!(file, "2024-01-02;104.0;108.0;103.0;107.0;1500").unwrap();
+        file.flush().unwrap();
+
+        // Load with auto-detection (default config)
+        let bars = load_csv(file.path(), &DataConfig::default()).unwrap();
+        assert_eq!(bars.len(), 2);
+        assert_eq!(bars[0].open, 100.0);
+        assert_eq!(bars[1].close, 107.0);
     }
 }

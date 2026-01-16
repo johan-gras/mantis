@@ -7,7 +7,7 @@
 
 ## Executive Summary
 
-The Mantis backtesting framework implementation is **complete**. All 32 planned items have been verified and implemented.
+The Mantis backtesting framework implementation is **complete**. All 33 planned items have been verified and implemented.
 
 **Core Features:**
 - Core backtest engine with comprehensive cost modeling
@@ -96,6 +96,7 @@ The Mantis backtesting framework implementation is **complete**. All 32 planned 
 | 30 | mt.compare() Visualization | P2 | CompareResult with Plotly equity curve overlay |
 | 31 | Fractional Shares Default | P1 | fractional=False per spec, whole shares by default |
 | 32 | Per-Share Commission Model | P1 | commission_per_share field, commission_type="per_share" support |
+| 33 | CSV Auto-Delimiter Detection | P1 | Auto-detects comma, tab, semicolon, pipe delimiters |
 
 ---
 
@@ -156,6 +157,22 @@ Per spec (`specs/execution-realism.md`), added support for per-share commission 
 - `src/python/backtest.rs`: Added commission_per_share parameter to backtest() and BacktestConfig
 - `src/python/fluent.rs`: Added commission_per_share() method to fluent API
 - `python/mantis/__init__.pyi`: Updated type stubs
+
+---
+
+### CSV Auto-Delimiter Detection (2026-01-16)
+
+Per spec (`specs/data-handling.md`), CSV loading now auto-detects delimiters:
+- `DataConfig.delimiter` changed from `u8` to `Option<u8>` (None = auto-detect)
+- `detect_delimiter()` function analyzes first 5 lines of CSV data
+- Tries comma, tab, semicolon, and pipe delimiters
+- Selects based on consistency across lines and minimum 5 fields (for OHLCV data)
+- `load_csv()` auto-detects delimiter when `delimiter` is `None`
+
+**Files modified:**
+- `src/data.rs`: Added detect_delimiter() function, updated DataConfig and load_csv()
+
+**Tests added:** 4 tests for delimiter detection
 
 ---
 
