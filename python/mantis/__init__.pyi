@@ -36,8 +36,8 @@ class BacktestConfig:
     position_size: float
     allow_short: bool
     fractional_shares: bool
-    stop_loss: Optional[float]
-    take_profit: Optional[float]
+    stop_loss: Optional[Union[float, str]]
+    take_profit: Optional[Union[float, str]]
     borrow_cost: float
     max_position: float
     fill_price: str
@@ -50,8 +50,8 @@ class BacktestConfig:
         position_size: float = 0.10,
         allow_short: bool = True,
         fractional_shares: bool = True,
-        stop_loss: Optional[float] = None,
-        take_profit: Optional[float] = None,
+        stop_loss: Optional[Union[float, str]] = None,
+        take_profit: Optional[Union[float, str]] = None,
         borrow_cost: float = 0.03,
         max_position: float = 1.0,
         fill_price: str = "next_open",
@@ -483,8 +483,8 @@ def backtest(
     slippage: float = 0.001,
     size: float = 0.10,
     cash: float = 100_000.0,
-    stop_loss: Optional[float] = None,
-    take_profit: Optional[float] = None,
+    stop_loss: Optional[Union[float, str]] = None,
+    take_profit: Optional[Union[float, str]] = None,
     allow_short: bool = True,
     borrow_cost: float = 0.03,
     max_position: float = 1.0,
@@ -505,8 +505,14 @@ def backtest(
         slippage: Slippage rate (default 0.001 = 0.1%)
         size: Position size as fraction of equity (default 0.10 = 10%)
         cash: Initial capital (default 100,000)
-        stop_loss: Optional stop loss percentage
-        take_profit: Optional take profit percentage
+        stop_loss: Optional stop loss. Can be:
+            - float: percentage (e.g., 0.05 for 5% stop loss)
+            - str: ATR-based (e.g., "2atr" for 2x ATR stop loss)
+            - str: trailing (e.g., "5trail" for 5% trailing stop)
+        take_profit: Optional take profit. Can be:
+            - float: percentage (e.g., 0.10 for 10% take profit)
+            - str: ATR-based (e.g., "3atr" for 3x ATR take profit)
+            - str: risk-reward (e.g., "2rr" for 2:1 risk-reward ratio)
         allow_short: Whether to allow short positions
         borrow_cost: Annual borrow rate for shorts (default 3%)
         max_position: Maximum position size as fraction of equity (default 1.0 = 100%)
@@ -527,18 +533,14 @@ def backtest(
         >>> print(results.sharpe)
         1.24
 
-        >>> # Using pandas DataFrame directly
-        >>> import pandas as pd
-        >>> df = pd.read_csv("AAPL.csv", index_col='date', parse_dates=True)
-        >>> results = mt.backtest(df, signal)
+        >>> # With ATR-based stop loss
+        >>> results = mt.backtest(data, signal, stop_loss="2atr")
 
-        >>> # Using polars DataFrame directly
-        >>> import polars as pl
-        >>> df = pl.read_csv("AAPL.csv")
-        >>> results = mt.backtest(df, signal)
+        >>> # With percentage stop loss and ATR take profit
+        >>> results = mt.backtest(data, signal, stop_loss=0.05, take_profit="3atr")
 
-        >>> # With max position and fill price
-        >>> results = mt.backtest(data, signal, max_position=0.25, fill_price="vwap")
+        >>> # With risk-reward ratio
+        >>> results = mt.backtest(data, signal, stop_loss="2atr", take_profit="2rr")
 
         >>> # With benchmark comparison
         >>> spy = mt.load("SPY.csv")
@@ -769,11 +771,33 @@ class Backtest:
     def cash(self, amount: float) -> "Backtest":
         """Set the initial capital."""
         ...
-    def stop_loss(self, pct: float) -> "Backtest":
-        """Set a stop loss percentage (e.g., 0.05 = 5%)."""
+    def stop_loss(self, value: Union[float, str]) -> "Backtest":
+        """
+        Set a stop loss.
+
+        Args:
+            value: Stop loss specification. Can be:
+                - float: percentage (e.g., 0.05 for 5%)
+                - str: ATR-based (e.g., "2atr" for 2x ATR)
+                - str: trailing (e.g., "5trail" for 5% trailing)
+
+        Example:
+            >>> mt.Backtest(data, signal).stop_loss("2atr")  # 2x ATR stop
+        """
         ...
-    def take_profit(self, pct: float) -> "Backtest":
-        """Set a take profit percentage (e.g., 0.10 = 10%)."""
+    def take_profit(self, value: Union[float, str]) -> "Backtest":
+        """
+        Set a take profit.
+
+        Args:
+            value: Take profit specification. Can be:
+                - float: percentage (e.g., 0.10 for 10%)
+                - str: ATR-based (e.g., "3atr" for 3x ATR)
+                - str: risk-reward (e.g., "2rr" for 2:1 R:R ratio)
+
+        Example:
+            >>> mt.Backtest(data, signal).take_profit("2rr")  # 2:1 risk-reward
+        """
         ...
     def allow_short(self, enabled: bool = True) -> "Backtest":
         """Enable or disable short selling."""

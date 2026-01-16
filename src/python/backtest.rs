@@ -7,7 +7,7 @@ use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
 use crate::analytics::BenchmarkMetrics;
-use crate::data::{load_csv, load_parquet, DataConfig};
+use crate::data::{atr, load_csv, load_parquet, DataConfig};
 use crate::engine::{BacktestConfig, BacktestResult, Engine};
 use crate::portfolio::CostModel;
 use crate::risk::{StopLoss, TakeProfit};
@@ -36,16 +36,164 @@ pub struct PyBacktestConfig {
     pub allow_short: bool,
     #[pyo3(get, set)]
     pub fractional_shares: bool,
-    #[pyo3(get, set)]
-    pub stop_loss: Option<f64>,
-    #[pyo3(get, set)]
-    pub take_profit: Option<f64>,
+    /// Stop loss specification: float (percentage, e.g., 0.05 for 5%)
+    /// or string (ATR-based, e.g., "2atr" for 2x ATR)
+    pub stop_loss: Option<StopSpec>,
+    /// Take profit specification: float (percentage, e.g., 0.10 for 10%)
+    /// or string (ATR-based, e.g., "3atr" for 3x ATR)
+    pub take_profit: Option<TakeProfitSpec>,
     #[pyo3(get, set)]
     pub borrow_cost: f64,
     #[pyo3(get, set)]
     pub max_position: f64,
     #[pyo3(get, set)]
     pub fill_price: String,
+}
+
+/// Specification for stop loss - can be percentage or ATR-based.
+#[derive(Debug, Clone)]
+pub enum StopSpec {
+    /// Percentage stop loss (e.g., 0.05 for 5%)
+    Percentage(f64),
+    /// ATR-based stop loss (e.g., 2.0 for 2x ATR)
+    Atr(f64),
+    /// Trailing stop loss percentage
+    Trailing(f64),
+}
+
+/// Specification for take profit - can be percentage or ATR-based.
+#[derive(Debug, Clone)]
+pub enum TakeProfitSpec {
+    /// Percentage take profit (e.g., 0.10 for 10%)
+    Percentage(f64),
+    /// ATR-based take profit (e.g., 3.0 for 3x ATR)
+    Atr(f64),
+    /// Risk-reward ratio (e.g., 2.0 for 2:1 R:R)
+    RiskReward(f64),
+}
+
+/// Parse stop loss specification from Python object (float or string).
+fn parse_stop_loss(py: Python<'_>, obj: &PyObject) -> PyResult<Option<StopSpec>> {
+    // Try as None first
+    if obj.is_none(py) {
+        return Ok(None);
+    }
+
+    // Try as float
+    if let Ok(pct) = obj.extract::<f64>(py) {
+        return Ok(Some(StopSpec::Percentage(pct)));
+    }
+
+    // Try as string
+    if let Ok(s) = obj.extract::<String>(py) {
+        let s_lower = s.to_lowercase().trim().to_string();
+
+        // Check for ATR format: "2atr", "2.5atr", "2ATR", etc.
+        if let Some(num_str) = s_lower.strip_suffix("atr") {
+            let multiplier: f64 = num_str.trim().parse().map_err(|_| {
+                pyo3::exceptions::PyValueError::new_err(format!(
+                    "Invalid ATR stop loss format: '{}'. Use format like '2atr' or '1.5atr'",
+                    s
+                ))
+            })?;
+            return Ok(Some(StopSpec::Atr(multiplier)));
+        }
+
+        // Check for trailing format: "5%trailing", "trailing5%", "trail5"
+        if s_lower.contains("trail") {
+            // Extract numeric part
+            let num_str: String = s_lower.chars().filter(|c| c.is_ascii_digit() || *c == '.').collect();
+            if !num_str.is_empty() {
+                let pct: f64 = num_str.parse().map_err(|_| {
+                    pyo3::exceptions::PyValueError::new_err(format!(
+                        "Invalid trailing stop format: '{}'. Use format like '5trail' or 'trail5'",
+                        s
+                    ))
+                })?;
+                // Convert percentage like "5" to decimal 0.05
+                let decimal = if pct > 1.0 { pct / 100.0 } else { pct };
+                return Ok(Some(StopSpec::Trailing(decimal)));
+            }
+        }
+
+        // Try as percentage string: "5%", "0.05"
+        let num_str = s_lower.trim_end_matches('%');
+        if let Ok(pct) = num_str.parse::<f64>() {
+            // If > 1.0, assume it's a percentage like "5" meaning 5%
+            let decimal = if pct > 1.0 { pct / 100.0 } else { pct };
+            return Ok(Some(StopSpec::Percentage(decimal)));
+        }
+
+        return Err(pyo3::exceptions::PyValueError::new_err(format!(
+            "Invalid stop loss: '{}'. Use float (0.05 for 5%) or string ('2atr' for 2x ATR)",
+            s
+        )));
+    }
+
+    Err(pyo3::exceptions::PyTypeError::new_err(
+        "stop_loss must be a float, string, or None",
+    ))
+}
+
+/// Parse take profit specification from Python object (float or string).
+fn parse_take_profit(py: Python<'_>, obj: &PyObject) -> PyResult<Option<TakeProfitSpec>> {
+    // Try as None first
+    if obj.is_none(py) {
+        return Ok(None);
+    }
+
+    // Try as float
+    if let Ok(pct) = obj.extract::<f64>(py) {
+        return Ok(Some(TakeProfitSpec::Percentage(pct)));
+    }
+
+    // Try as string
+    if let Ok(s) = obj.extract::<String>(py) {
+        let s_lower = s.to_lowercase().trim().to_string();
+
+        // Check for ATR format: "3atr", "2.5atr", etc.
+        if let Some(num_str) = s_lower.strip_suffix("atr") {
+            let multiplier: f64 = num_str.trim().parse().map_err(|_| {
+                pyo3::exceptions::PyValueError::new_err(format!(
+                    "Invalid ATR take profit format: '{}'. Use format like '3atr' or '2.5atr'",
+                    s
+                ))
+            })?;
+            return Ok(Some(TakeProfitSpec::Atr(multiplier)));
+        }
+
+        // Check for risk-reward format: "2rr", "2:1", "2R"
+        if s_lower.ends_with("rr") || s_lower.ends_with('r') || s_lower.contains(':') {
+            // Extract numeric part
+            let num_str: String = s_lower.chars().filter(|c| c.is_ascii_digit() || *c == '.').collect();
+            if !num_str.is_empty() {
+                let ratio: f64 = num_str.parse().map_err(|_| {
+                    pyo3::exceptions::PyValueError::new_err(format!(
+                        "Invalid risk-reward format: '{}'. Use format like '2rr' or '2:1'",
+                        s
+                    ))
+                })?;
+                return Ok(Some(TakeProfitSpec::RiskReward(ratio)));
+            }
+        }
+
+        // Try as percentage string: "10%", "0.10"
+        let num_str = s_lower.trim_end_matches('%');
+        if let Ok(pct) = num_str.parse::<f64>() {
+            // If > 1.0, assume it's a percentage like "10" meaning 10%
+            let decimal = if pct > 1.0 { pct / 100.0 } else { pct };
+            return Ok(Some(TakeProfitSpec::Percentage(decimal)));
+        }
+
+        return Err(pyo3::exceptions::PyValueError::new_err(format!(
+            "Invalid take profit: '{}'. Use float (0.10 for 10%) or string ('3atr' for 3x ATR)",
+            s
+        )));
+    }
+
+    Err(pyo3::exceptions::PyTypeError::new_err(
+        "take_profit must be a float, string, or None",
+    ))
 }
 
 #[pymethods]
@@ -66,30 +214,62 @@ impl PyBacktestConfig {
     ))]
     #[allow(clippy::too_many_arguments)]
     fn new(
+        py: Python<'_>,
         initial_capital: f64,
         commission: f64,
         slippage: f64,
         position_size: f64,
         allow_short: bool,
         fractional_shares: bool,
-        stop_loss: Option<f64>,
-        take_profit: Option<f64>,
+        stop_loss: Option<PyObject>,
+        take_profit: Option<PyObject>,
         borrow_cost: f64,
         max_position: f64,
         fill_price: &str,
-    ) -> Self {
-        Self {
+    ) -> PyResult<Self> {
+        let sl_spec = if let Some(ref obj) = stop_loss {
+            parse_stop_loss(py, obj)?
+        } else {
+            None
+        };
+        let tp_spec = if let Some(ref obj) = take_profit {
+            parse_take_profit(py, obj)?
+        } else {
+            None
+        };
+
+        Ok(Self {
             initial_capital,
             commission,
             slippage,
             position_size,
             allow_short,
             fractional_shares,
-            stop_loss,
-            take_profit,
+            stop_loss: sl_spec,
+            take_profit: tp_spec,
             borrow_cost,
             max_position,
             fill_price: fill_price.to_string(),
+        })
+    }
+
+    #[getter]
+    fn get_stop_loss(&self, py: Python<'_>) -> PyObject {
+        match &self.stop_loss {
+            Some(StopSpec::Percentage(p)) => p.into_py(py),
+            Some(StopSpec::Atr(m)) => format!("{}atr", m).into_py(py),
+            Some(StopSpec::Trailing(p)) => format!("{}trail", p * 100.0).into_py(py),
+            None => py.None(),
+        }
+    }
+
+    #[getter]
+    fn get_take_profit(&self, py: Python<'_>) -> PyObject {
+        match &self.take_profit {
+            Some(TakeProfitSpec::Percentage(p)) => p.into_py(py),
+            Some(TakeProfitSpec::Atr(m)) => format!("{}atr", m).into_py(py),
+            Some(TakeProfitSpec::RiskReward(r)) => format!("{}rr", r).into_py(py),
+            None => py.None(),
         }
     }
 
@@ -101,36 +281,70 @@ impl PyBacktestConfig {
     }
 }
 
-impl From<&PyBacktestConfig> for BacktestConfig {
-    fn from(py_config: &PyBacktestConfig) -> Self {
+impl PyBacktestConfig {
+    /// Convert to BacktestConfig, using bars to calculate ATR if needed.
+    pub fn to_backtest_config(&self, bars: Option<&[Bar]>) -> BacktestConfig {
         let mut config = BacktestConfig {
-            initial_capital: py_config.initial_capital,
-            position_size: py_config.position_size,
-            allow_short: py_config.allow_short,
-            fractional_shares: py_config.fractional_shares,
+            initial_capital: self.initial_capital,
+            position_size: self.position_size,
+            allow_short: self.allow_short,
+            fractional_shares: self.fractional_shares,
             show_progress: false, // Disable progress bar in Python mode
             ..Default::default()
         };
 
         // Set cost model
         config.cost_model = CostModel {
-            commission_pct: py_config.commission,
-            slippage_pct: py_config.slippage,
-            borrow_cost_rate: py_config.borrow_cost,
+            commission_pct: self.commission,
+            slippage_pct: self.slippage,
+            borrow_cost_rate: self.borrow_cost,
             ..Default::default()
         };
 
+        // Calculate ATR if bars are provided (use 14-period ATR as default)
+        let atr_value = bars.and_then(|b| atr(b, 14)).unwrap_or(0.0);
+
         // Set risk config
-        config.risk_config.max_position_size = py_config.max_position;
-        if let Some(sl) = py_config.stop_loss {
-            config.risk_config.stop_loss = StopLoss::Percentage(sl);
+        config.risk_config.max_position_size = self.max_position;
+
+        // Handle stop loss
+        if let Some(ref sl_spec) = self.stop_loss {
+            config.risk_config.stop_loss = match sl_spec {
+                StopSpec::Percentage(pct) => StopLoss::Percentage(*pct),
+                StopSpec::Atr(multiplier) => StopLoss::Atr {
+                    multiplier: *multiplier,
+                    atr_value,
+                },
+                StopSpec::Trailing(pct) => StopLoss::Trailing(*pct),
+            };
         }
-        if let Some(tp) = py_config.take_profit {
-            config.risk_config.take_profit = TakeProfit::Percentage(tp);
+
+        // Handle take profit
+        if let Some(ref tp_spec) = self.take_profit {
+            config.risk_config.take_profit = match tp_spec {
+                TakeProfitSpec::Percentage(pct) => TakeProfit::Percentage(*pct),
+                TakeProfitSpec::Atr(multiplier) => TakeProfit::Atr {
+                    multiplier: *multiplier,
+                    atr_value,
+                },
+                TakeProfitSpec::RiskReward(ratio) => {
+                    // Calculate stop distance for risk-reward
+                    let stop_distance = match &self.stop_loss {
+                        Some(StopSpec::Percentage(pct)) => *pct,
+                        Some(StopSpec::Atr(mult)) => mult * atr_value,
+                        Some(StopSpec::Trailing(pct)) => *pct,
+                        None => 0.0,
+                    };
+                    TakeProfit::RiskReward {
+                        ratio: *ratio,
+                        stop_distance,
+                    }
+                }
+            };
         }
 
         // Set execution price model
-        config.execution_price = match py_config.fill_price.to_lowercase().as_str() {
+        config.execution_price = match self.fill_price.to_lowercase().as_str() {
             "open" | "next_open" => ExecutionPrice::Open,
             "close" => ExecutionPrice::Close,
             "vwap" => ExecutionPrice::Vwap,
@@ -141,6 +355,13 @@ impl From<&PyBacktestConfig> for BacktestConfig {
         };
 
         config
+    }
+}
+
+// Keep the From trait for backwards compatibility (without ATR support)
+impl From<&PyBacktestConfig> for BacktestConfig {
+    fn from(py_config: &PyBacktestConfig) -> Self {
+        py_config.to_backtest_config(None)
     }
 }
 
@@ -175,6 +396,8 @@ impl From<&PyBacktestConfig> for BacktestConfig {
 ///     >>> results = backtest(data, signal)
 ///     >>> print(results.sharpe)
 ///     1.24
+///     >>> # With ATR-based stop loss (2x ATR)
+///     >>> results = backtest(data, signal, stop_loss="2atr")
 ///     >>> # With benchmark comparison
 ///     >>> spy = load("SPY.csv")
 ///     >>> results = backtest(data, signal, benchmark=spy)
@@ -211,19 +434,29 @@ pub fn backtest(
     slippage: f64,
     size: f64,
     cash: f64,
-    stop_loss: Option<f64>,
-    take_profit: Option<f64>,
+    stop_loss: Option<PyObject>,
+    take_profit: Option<PyObject>,
     allow_short: bool,
     borrow_cost: f64,
     max_position: f64,
     fill_price: &str,
     benchmark: Option<PyObject>,
 ) -> PyResult<PyBacktestResult> {
-    // Build or use provided config
+    // Extract bars from data first (needed for ATR calculation)
+    let bars = extract_bars(py, &data)?;
+
+    if bars.is_empty() {
+        return Err(pyo3::exceptions::PyValueError::new_err(
+            "Data is empty. Cannot run backtest without bars.",
+        ));
+    }
+
+    // Build or use provided config (passing bars for ATR calculation)
     let bt_config = if let Some(cfg) = config {
-        BacktestConfig::from(cfg)
+        cfg.to_backtest_config(Some(&bars))
     } else {
         let py_config = PyBacktestConfig::new(
+            py,
             cash,
             commission,
             slippage,
@@ -235,18 +468,9 @@ pub fn backtest(
             borrow_cost,
             max_position,
             fill_price,
-        );
-        BacktestConfig::from(&py_config)
+        )?;
+        py_config.to_backtest_config(Some(&bars))
     };
-
-    // Extract bars from data
-    let bars = extract_bars(py, &data)?;
-
-    if bars.is_empty() {
-        return Err(pyo3::exceptions::PyValueError::new_err(
-            "Data is empty. Cannot run backtest without bars.",
-        ));
-    }
 
     // Create engine (clone config so we can store it for validation)
     let config_for_result = bt_config.clone();
@@ -1124,28 +1348,28 @@ pub fn validate(
     size: f64,
     cash: f64,
 ) -> PyResult<super::results::PyValidationResult> {
-    // Build config
+    // Extract bars and signal first
+    let bars = extract_bars(py, &data)?;
+
+    // Build config (pass bars for ATR calculation if needed)
     let bt_config = if let Some(cfg) = config {
-        BacktestConfig::from(cfg)
+        cfg.to_backtest_config(Some(&bars))
     } else {
-        let py_config = PyBacktestConfig::new(
-            cash,
+        let py_config = PyBacktestConfig {
+            initial_capital: cash,
             commission,
             slippage,
-            size,
-            true,        // allow_short
-            true,        // fractional_shares
-            None,        // stop_loss
-            None,        // take_profit
-            0.03,        // borrow_cost
-            1.0,         // max_position
-            "next_open", // fill_price
-        );
-        BacktestConfig::from(&py_config)
+            position_size: size,
+            allow_short: true,
+            fractional_shares: true,
+            stop_loss: None,
+            take_profit: None,
+            borrow_cost: 0.03,
+            max_position: 1.0,
+            fill_price: "next_open".to_string(),
+        };
+        py_config.to_backtest_config(Some(&bars))
     };
-
-    // Extract bars and signal
-    let bars = extract_bars(py, &data)?;
     let signal_vec: Vec<f64> = signal.as_slice()?.to_vec();
 
     if bars.is_empty() {

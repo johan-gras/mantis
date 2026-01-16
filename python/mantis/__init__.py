@@ -678,8 +678,8 @@ def backtest(
     slippage: float = 0.001,
     size: float = 0.10,
     cash: float = 100_000.0,
-    stop_loss: Optional[float] = None,
-    take_profit: Optional[float] = None,
+    stop_loss: Optional[Union[float, str]] = None,
+    take_profit: Optional[Union[float, str]] = None,
     allow_short: bool = True,
     borrow_cost: float = 0.03,
     max_position: float = 1.0,
@@ -692,6 +692,12 @@ def backtest(
     See module documentation for full details.
 
     Args:
+        stop_loss: Optional stop loss. Can be:
+            - float: percentage (e.g., 0.05 for 5%)
+            - str: ATR-based (e.g., "2atr" for 2x ATR), trailing (e.g., "5trail")
+        take_profit: Optional take profit. Can be:
+            - float: percentage (e.g., 0.10 for 10%)
+            - str: ATR-based (e.g., "3atr" for 3x ATR), risk-reward (e.g., "2rr")
         benchmark: Optional benchmark data (from load()) for performance comparison.
                    When provided, the result will include alpha, beta, benchmark_return,
                    excess_return, and other benchmark comparison metrics.
@@ -985,30 +991,45 @@ class Backtest:
         self._config["cash"] = amount
         return self
 
-    def stop_loss(self, pct: float) -> "Backtest":
+    def stop_loss(self, value: Union[float, str]) -> "Backtest":
         """
-        Set a stop loss percentage.
+        Set a stop loss.
 
         Args:
-            pct: Stop loss as a decimal (e.g., 0.05 = 5%)
+            value: Stop loss specification. Can be:
+                - float: percentage (e.g., 0.05 for 5%)
+                - str: ATR-based (e.g., "2atr" for 2x ATR)
+                - str: trailing (e.g., "5trail" for 5% trailing)
 
         Returns:
             Self for method chaining
+
+        Example:
+            >>> mt.Backtest(data, signal).stop_loss(0.05)  # 5% stop
+            >>> mt.Backtest(data, signal).stop_loss("2atr")  # 2x ATR stop
         """
-        self._config["stop_loss"] = pct
+        self._config["stop_loss"] = value
         return self
 
-    def take_profit(self, pct: float) -> "Backtest":
+    def take_profit(self, value: Union[float, str]) -> "Backtest":
         """
-        Set a take profit percentage.
+        Set a take profit.
 
         Args:
-            pct: Take profit as a decimal (e.g., 0.10 = 10%)
+            value: Take profit specification. Can be:
+                - float: percentage (e.g., 0.10 for 10%)
+                - str: ATR-based (e.g., "3atr" for 3x ATR)
+                - str: risk-reward (e.g., "2rr" for 2:1 R:R ratio)
 
         Returns:
             Self for method chaining
+
+        Example:
+            >>> mt.Backtest(data, signal).take_profit(0.10)  # 10% target
+            >>> mt.Backtest(data, signal).take_profit("3atr")  # 3x ATR target
+            >>> mt.Backtest(data, signal).take_profit("2rr")  # 2:1 risk-reward
         """
-        self._config["take_profit"] = pct
+        self._config["take_profit"] = value
         return self
 
     def allow_short(self, enabled: bool = True) -> "Backtest":

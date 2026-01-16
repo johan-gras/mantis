@@ -700,32 +700,42 @@ result.plot()  # Interactive Plotly in Jupyter
 
 ---
 
-### 22. ATR-Based Stop-Loss/Take-Profit in Python [NOT EXPOSED]
-**Status:** PARTIAL (Rust complete, Python partial)
+### 22. ATR-Based Stop-Loss/Take-Profit in Python [COMPLETE]
+**Status:** COMPLETE
 **Priority:** P2
 
-**Issue:** Python API only accepts percentage-based stop-loss/take-profit. ATR-based variants exist in Rust but aren't exposed.
+**Implementation details:**
+- `stop_loss` and `take_profit` parameters now accept both floats and strings
+- ATR-based syntax: `"2atr"` for 2x ATR stop/target
+- Trailing stop syntax: `"5trail"` for 5% trailing stop
+- Risk-reward syntax: `"2rr"` for 2:1 risk-reward ratio take profit
+- ATR is automatically calculated (14-period) from input data
+- Works with both `mt.backtest()` function and fluent `Backtest` API
 
-**Specification requires:**
-- `stop_loss="2atr"` syntax for ATR-based stops
-- ATR-based take-profit
+**Parameter formats:**
+- Float: percentage (e.g., `0.05` for 5%)
+- String ATR: `"2atr"`, `"1.5atr"` (ATR multiplier)
+- String trailing: `"5trail"` (trailing stop percentage)
+- String risk-reward: `"2rr"`, `"3:1"` (risk-reward ratio)
 
-**Rust implementation complete:**
-- `StopLoss::Atr { multiplier, atr_value }` variant
-- `StopLoss::Trailing` variant
-- `TakeProfit::Atr` variant
-- `TakeProfit::RiskReward` variant
+**Files modified:**
+- `src/python/backtest.rs` - Added `StopSpec`, `TakeProfitSpec` enums, parsing logic, ATR integration
+- `python/mantis/__init__.py` - Updated type hints and docstrings
+- `python/mantis/__init__.pyi` - Updated type stubs
 
-**Python API current:**
-- `stop_loss: float` - percentage only
-- `take_profit: float` - percentage only
+**Example:**
+```python
+>>> # ATR-based stop loss
+>>> results = mt.backtest(data, signal, stop_loss="2atr")
+>>> # Percentage stop with ATR take profit
+>>> results = mt.backtest(data, signal, stop_loss=0.05, take_profit="3atr")
+>>> # Risk-reward ratio
+>>> results = mt.backtest(data, signal, stop_loss="2atr", take_profit="2rr")
+>>> # Fluent API
+>>> mt.Backtest(data, signal).stop_loss("1.5atr").take_profit("3atr").run()
+```
 
-**Missing:**
-- String parsing for `"2atr"` syntax
-- Trailing stop exposure
-- Risk-reward take-profit exposure
-
-**Effort:** Small (1-2 days)
+**Effort:** Small (completed)
 **Dependencies:** None
 
 ---
@@ -779,7 +789,7 @@ result.plot()  # Interactive Plotly in Jupyter
 | 19 | Frequency Auto-Detection | **COMPLETE** | P1 | Medium | None |
 | 20 | Python Benchmark Comparison | **COMPLETE** | P2 | Small | None |
 | 21 | Python Split/Dividend Adjustment | **COMPLETE** | P2 | Small | None |
-| 22 | ATR-Based Stop-Loss in Python | PARTIAL | P2 | Small | None |
+| 22 | ATR-Based Stop-Loss in Python | **COMPLETE** | P2 | Small | None |
 | 23 | Parallel Parameter Sweep | NOT FUNCTIONAL | P3 | Medium | None |
 
 ---
@@ -833,6 +843,7 @@ result.plot()  # Interactive Plotly in Jupyter
 | **Python Sensitivity Analysis Bindings** | **COMPLETE**: src/python/sensitivity.rs (~1050 lines); mt.sensitivity() for parameter sensitivity on built-in strategies with stability scores, cliffs, plateaus, heatmaps; mt.cost_sensitivity() for cost robustness testing; parameter range functions (linear_range, log_range, discrete_range, centered_range); Plotly visualization in Jupyter; type stubs for IDE autocomplete |
 | **Frequency Auto-Detection** | **COMPLETE**: DataFrequency enum with 14 variants (Second1-Month); detect() analyzes timestamp gaps; annualization_factor(trading_hours_24) for traditional (252 days) or 24/7 (365 days) markets; is_likely_crypto() heuristic; BacktestConfig.data_frequency and .trading_hours_24 overrides; Engine auto-detects frequency for Sharpe/Sortino; 13 unit tests |
 | **Python Split/Dividend Adjustment** | **COMPLETE**: mt.adjust() function with splits (date, ratio, reverse) and dividends (date, amount, type) parameters; method options (proportional, absolute, none); parse_splits(), parse_dividends(), parse_date_from_dict() helpers; type stubs; Files: src/python/data.rs, src/python/mod.rs, python/mantis/__init__.py, python/mantis/__init__.pyi |
+| **ATR-Based Stop-Loss/Take-Profit** | **COMPLETE**: stop_loss and take_profit accept float or string; ATR syntax ("2atr"), trailing ("5trail"), risk-reward ("2rr"); StopSpec, TakeProfitSpec enums; parse_stop_loss(), parse_take_profit() helpers; 14-period ATR auto-calculated; works with backtest() and Backtest fluent API; type stubs updated; Files: src/python/backtest.rs, python/mantis/__init__.py, python/mantis/__init__.pyi |
 | Codebase Cleanliness | **VERIFIED**: No TODOs/FIXMEs in codebase |
 | ALL TESTS | **PASSING**: 571 lib tests (0 failures) |
 | Python Bindings Build | **VERIFIED**: `cargo check --features python` compiles successfully (API drift fix 2026-01-16) |
