@@ -10,6 +10,8 @@
 
 mod backtest;
 mod data;
+#[cfg(feature = "onnx")]
+mod onnx;
 mod results;
 mod sensitivity;
 mod sweep;
@@ -71,6 +73,16 @@ fn _mantis(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Register sweep classes
     m.add_class::<sweep::PySweepResult>()?;
     m.add_class::<sweep::PySweepResultItem>()?;
+
+    // Register ONNX classes and functions (when onnx feature is enabled)
+    #[cfg(feature = "onnx")]
+    {
+        m.add_class::<onnx::PyModelConfig>()?;
+        m.add_class::<onnx::PyInferenceStats>()?;
+        m.add_class::<onnx::PyOnnxModel>()?;
+        m.add_function(wrap_pyfunction!(onnx::load_model, m)?)?;
+        m.add_function(wrap_pyfunction!(onnx::generate_signals, m)?)?;
+    }
 
     Ok(())
 }

@@ -515,6 +515,8 @@ impl From<&PyBacktestConfig> for BacktestConfig {
 ///     >>> results = backtest(data, signal, benchmark=spy)
 ///     >>> print(results.alpha, results.beta)
 ///     0.05 1.2
+///     >>> # Using ONNX model for inference (requires --features onnx)
+///     >>> results = backtest(data, model="model.onnx", features=feature_df)
 #[pyfunction]
 #[pyo3(signature = (
     data,
@@ -537,7 +539,11 @@ impl From<&PyBacktestConfig> for BacktestConfig {
     trading_hours_24=None,
     max_volume_participation=None,
     order_type="market",
-    limit_offset=0.0
+    limit_offset=0.0,
+    model=None,
+    features=None,
+    model_input_size=None,
+    signal_threshold=None
 ))]
 #[allow(clippy::too_many_arguments)]
 pub fn backtest(
@@ -563,6 +569,10 @@ pub fn backtest(
     max_volume_participation: Option<f64>,
     order_type: &str,
     limit_offset: f64,
+    model: Option<&str>,
+    features: Option<PyObject>,
+    model_input_size: Option<usize>,
+    signal_threshold: Option<f64>,
 ) -> PyResult<PyBacktestResult> {
     // Extract bars from data first (needed for ATR calculation)
     let bars = extract_bars(py, &data)?;
@@ -604,8 +614,88 @@ pub fn backtest(
     let mut engine = Engine::new(bt_config);
     engine.add_data("SYMBOL", bars.clone());
 
-    // Run backtest based on signal or strategy
-    let (result, stored_signal) = if let Some(signal_arr) = signal {
+    // Run backtest based on signal, strategy, or ONNX model
+    #[allow(unused_variables)]
+    let (result, stored_signal) = if let Some(model_path) = model {
+        // ONNX model-based backtest
+        #[cfg(feature = "onnx")]
+        {
+            let features_obj = features.ok_or_else(|| {
+                pyo3::exceptions::PyValueError::new_err(
+                    "ONNX model requires 'features' parameter.\n\n\
+                     Usage: mt.backtest(data, model='model.onnx', features=feature_df)\n\n\
+                     The features should be a 2D array or DataFrame with one row per bar.",
+                )
+            })?;
+
+            // Determine input size
+            let input_size = if let Some(size) = model_input_size {
+                size
+            } else {
+                // Try to infer from features
+                infer_feature_size(py, &features_obj)?
+            };
+
+            // Load ONNX model
+            let config = crate::onnx::ModelConfig::new(
+                std::path::Path::new(model_path)
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("model"),
+                input_size,
+            );
+            let mut onnx_model =
+                crate::onnx::OnnxModel::from_file(model_path, config).map_err(|e| {
+                    pyo3::exceptions::PyIOError::new_err(format!(
+                        "Failed to load ONNX model '{}': {}\n\n\
+                         Common causes:\n\
+                           - File not found or invalid path\n\
+                           - Model file is corrupted\n\
+                           - Model uses unsupported operators\n\n\
+                         Quick fix:\n\
+                           Check that the model file exists and is a valid ONNX model.",
+                        model_path, e
+                    ))
+                })?;
+
+            // Extract features and run inference
+            let signal_vec = run_onnx_inference(py, &mut onnx_model, &features_obj, signal_threshold)?;
+
+            // Validate signal length
+            if signal_vec.len() != bars.len() {
+                return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                    "SignalShapeMismatch: ONNX model produced {} signals, data has {} bars.\n\n\
+                     The features array must have one row per bar in the data.\n\n\
+                     Quick fix:\n\
+                       Ensure features.shape[0] == len(data['bars'])",
+                    signal_vec.len(),
+                    bars.len()
+                )));
+            }
+
+            // Create a signal-based strategy wrapper
+            let mut strategy = SignalStrategy::new(signal_vec.clone());
+            let result = engine.run(&mut strategy, "SYMBOL").map_err(|e| {
+                pyo3::exceptions::PyRuntimeError::new_err(format!("Backtest failed: {}", e))
+            })?;
+            (result, Some(signal_vec))
+        }
+
+        #[cfg(not(feature = "onnx"))]
+        {
+            let _ = features; // Suppress unused warning
+            let _ = model_input_size;
+            let _ = signal_threshold;
+            return Err(pyo3::exceptions::PyRuntimeError::new_err(
+                "ONNX support is not enabled. Rebuild with `--features onnx` to enable ONNX model inference.\n\n\
+                 Quick fix:\n\
+                   pip install mantis-bt[onnx]  # If available\n\
+                   # OR pre-compute signals in Python:\n\
+                   signals = your_model.predict(features)\n\
+                   results = mt.backtest(data, signals)",
+            ));
+        }
+    } else if let Some(signal_arr) = signal {
         // Signal-based backtest
         let signal_vec: Vec<f64> = signal_arr.as_slice()?.to_vec();
 
@@ -636,7 +726,7 @@ pub fn backtest(
         (result, None)
     } else {
         return Err(pyo3::exceptions::PyValueError::new_err(
-            "Either 'signal' array or 'strategy' name must be provided.",
+            "Either 'signal' array, 'strategy' name, or 'model' path must be provided.",
         ));
     };
 
@@ -1763,4 +1853,132 @@ fn build_wf_result(config: WalkForwardConfig, windows: Vec<WindowResult>) -> Wal
         oos_sharpe_threshold_met,
         parameter_stability,
     }
+}
+
+/// Infer the feature size from a features object (numpy array, list, or DataFrame).
+#[cfg(feature = "onnx")]
+fn infer_feature_size(py: Python<'_>, features: &PyObject) -> PyResult<usize> {
+    // Try as numpy array with shape attribute
+    if let Ok(shape) = features.getattr(py, "shape") {
+        let shape_tuple: Vec<usize> = shape.extract(py)?;
+        if shape_tuple.len() >= 2 {
+            return Ok(shape_tuple[1]); // Number of columns
+        } else if shape_tuple.len() == 1 {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "Features must be 2D (rows x columns). Got 1D array.\n\n\
+                 Quick fix:\n\
+                   features = features.reshape(-1, 1)  # For single feature",
+            ));
+        }
+    }
+
+    // Try as DataFrame with columns
+    if let Ok(columns) = features.getattr(py, "columns") {
+        let col_list: Vec<String> = columns.call_method0(py, "tolist")?.extract(py)?;
+        return Ok(col_list.len());
+    }
+
+    // Try as list of lists
+    if let Ok(rows) = features.extract::<Vec<Vec<f64>>>(py) {
+        if !rows.is_empty() {
+            return Ok(rows[0].len());
+        }
+    }
+
+    Err(pyo3::exceptions::PyValueError::new_err(
+        "Cannot infer feature size. Please provide model_input_size parameter.\n\n\
+         Usage: mt.backtest(data, model='model.onnx', features=features, model_input_size=10)",
+    ))
+}
+
+/// Run ONNX inference on features and return signals.
+#[cfg(feature = "onnx")]
+fn run_onnx_inference(
+    py: Python<'_>,
+    model: &mut crate::onnx::OnnxModel,
+    features: &PyObject,
+    threshold: Option<f64>,
+) -> PyResult<Vec<f64>> {
+    // Extract features as Vec<Vec<f64>>
+    let feature_vecs: Vec<Vec<f64>> = extract_feature_rows(py, features)?;
+
+    if feature_vecs.is_empty() {
+        return Err(pyo3::exceptions::PyValueError::new_err(
+            "Features array is empty. Cannot run ONNX inference without features.",
+        ));
+    }
+
+    // Run batch inference
+    let predictions = model.predict_batch(&feature_vecs).map_err(|e| {
+        pyo3::exceptions::PyRuntimeError::new_err(format!(
+            "ONNX inference failed: {}\n\n\
+             Common causes:\n\
+               - Feature dimensions don't match model input size\n\
+               - NaN or infinite values in features\n\n\
+             Quick fix:\n\
+               - Check model.input_size matches your feature count\n\
+               - Use np.nan_to_num(features) to handle NaN values",
+            e
+        ))
+    })?;
+
+    // Convert to signals
+    let signals: Vec<f64> = if let Some(thresh) = threshold {
+        predictions
+            .into_iter()
+            .map(|p| {
+                let p64 = p as f64;
+                if p64 > thresh {
+                    1.0
+                } else if p64 < -thresh {
+                    -1.0
+                } else {
+                    0.0
+                }
+            })
+            .collect()
+    } else {
+        // Use raw predictions as signals
+        predictions.into_iter().map(|p| p as f64).collect()
+    };
+
+    Ok(signals)
+}
+
+/// Extract feature rows from various Python types.
+#[cfg(feature = "onnx")]
+fn extract_feature_rows(py: Python<'_>, features: &PyObject) -> PyResult<Vec<Vec<f64>>> {
+    // Try as list of lists
+    if let Ok(rows) = features.extract::<Vec<Vec<f64>>>(py) {
+        return Ok(rows);
+    }
+
+    // Try as numpy array
+    if let Ok(values) = features.call_method0(py, "tolist") {
+        if let Ok(rows) = values.extract::<Vec<Vec<f64>>>(py) {
+            return Ok(rows);
+        }
+    }
+
+    // Try as pandas DataFrame (use .values.tolist())
+    if let Ok(values) = features.getattr(py, "values") {
+        if let Ok(list) = values.call_method0(py, "tolist") {
+            if let Ok(rows) = list.extract::<Vec<Vec<f64>>>(py) {
+                return Ok(rows);
+            }
+        }
+    }
+
+    // Try as polars DataFrame
+    if let Ok(rows_method) = features.call_method0(py, "to_numpy") {
+        if let Ok(list) = rows_method.call_method0(py, "tolist") {
+            if let Ok(rows) = list.extract::<Vec<Vec<f64>>>(py) {
+                return Ok(rows);
+            }
+        }
+    }
+
+    Err(pyo3::exceptions::PyTypeError::new_err(
+        "Features must be a 2D numpy array, list of lists, pandas DataFrame, or polars DataFrame.",
+    ))
 }

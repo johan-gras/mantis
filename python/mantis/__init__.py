@@ -64,6 +64,33 @@ from mantis._mantis import (
     SweepResultItem,
 )
 
+# Try to import ONNX classes (only available when built with --features onnx)
+try:
+    from mantis._mantis import (
+        ModelConfig,
+        InferenceStats,
+        OnnxModel,
+        load_model,
+        generate_signals,
+    )
+    _HAS_ONNX = True
+except ImportError:
+    _HAS_ONNX = False
+    # Define placeholder types for when ONNX is not available
+    ModelConfig = None  # type: ignore
+    InferenceStats = None  # type: ignore
+    OnnxModel = None  # type: ignore
+    def load_model(*args, **kwargs):
+        raise RuntimeError(
+            "ONNX support is not enabled. "
+            "Rebuild with `--features onnx` to enable ONNX model inference."
+        )
+    def generate_signals(*args, **kwargs):
+        raise RuntimeError(
+            "ONNX support is not enabled. "
+            "Rebuild with `--features onnx` to enable ONNX model inference."
+        )
+
 
 # =============================================================================
 # Jupyter/Plotly detection utilities

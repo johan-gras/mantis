@@ -128,6 +128,54 @@ All 3 previously failing tests now pass:
 
 ---
 
+### 3a. ONNX Python Bindings [COMPLETE]
+**Status:** COMPLETE - Full Python API for ONNX inference in backtests (2026-01-16)
+
+**Implementation details:**
+- Python bindings for ONNX model loading and inference
+- `OnnxModel` class for loading and running ONNX models
+- `ModelConfig` class for configuring model parameters
+- `InferenceStats` class for tracking inference performance
+- `load_model()` convenience function
+- `generate_signals()` function for batch inference
+- `backtest()` now accepts `model="path.onnx"` and `features=feature_df` parameters
+- Supports signal threshold for converting predictions to discrete signals
+- Auto-detects feature dimensions from numpy arrays and DataFrames
+- Helpful error messages with common causes and quick fixes
+
+**Python API:**
+```python
+# Method 1: Use model path directly in backtest
+results = mt.backtest(data, model="model.onnx", features=feature_df)
+
+# Method 2: With signal threshold
+results = mt.backtest(data, model="model.onnx", features=features, signal_threshold=0.5)
+
+# Method 3: Load model separately
+model = mt.OnnxModel("model.onnx", input_size=10)
+signals = mt.generate_signals(model, features, threshold=0.5)
+results = mt.backtest(data, signals)
+
+# Method 4: Using load_model convenience function
+model = mt.load_model("model.onnx", input_size=10)
+prediction = model.predict([0.1, 0.2, 0.3, ...])
+predictions = model.predict_batch([[...], [...], ...])
+```
+
+**Files created:**
+- `src/python/onnx.rs` - PyO3 bindings for OnnxModel, ModelConfig, InferenceStats, load_model, generate_signals
+
+**Files modified:**
+- `src/python/mod.rs` - Added ONNX module registration with feature gate
+- `src/python/backtest.rs` - Added model, features, model_input_size, signal_threshold parameters to backtest()
+- `python/mantis/__init__.py` - Added ONNX imports with fallback for when feature not enabled
+- `python/mantis/__init__.pyi` - Added type stubs for all ONNX classes and functions
+
+**Dependencies:** Requires `--features python,onnx` to build
+**Effort:** Medium (completed)
+
+---
+
 ### 4. Helpful Error Messages [COMPLETE]
 **Status:** COMPLETE
 
@@ -915,6 +963,7 @@ These features are implemented in the Rust core but NOT exposed in the Python AP
 | 1 | Statistical Tests | **COMPLETE** | P0 | - | - |
 | 2 | Python Bindings (PyO3) | **COMPLETE** | P0 | Large | None |
 | 3 | ONNX Module | **COMPLETE** | P0 | Small | None |
+| 3a | ONNX Python Bindings | **COMPLETE** | P1 | Medium | None |
 | 4 | Helpful Error Messages | **COMPLETE** | P0 | Medium | None |
 | 5 | Rolling Metrics | **COMPLETE** | P1 | Medium | None |
 | 6 | Short Borrow Costs | **COMPLETE** | P1 | Medium | None |
@@ -1006,6 +1055,7 @@ These features are implemented in the Rust core but NOT exposed in the Python AP
 | Python Bindings Build | **VERIFIED**: `cargo check --features python` compiles successfully (API drift fix 2026-01-16) |
 | **Limit Order Python API** | **COMPLETE**: `order_type` param ("market"/"limit"), `limit_offset` as fraction of close; Rust BacktestConfig fields; `signal_to_order()` limit order creation; Backtest fluent API methods; PyBacktestConfig; type stubs updated; 571 tests pass |
 | **Python API Additional Metrics and Plot Methods** | **COMPLETE**: `volatility` property (annualized volatility as decimal); `max_drawdown_duration` property (duration in days); `avg_trade_duration` property (average holding period in days); `plot_drawdown()` method (dedicated drawdown visualization with Plotly); `plot_returns()` method (monthly returns heatmap or daily returns histogram); `plot_trades()` method (equity curve with trade markers); `metrics()` dict includes all new metrics; type stubs updated; Files: src/python/results.rs, python/mantis/__init__.py, python/mantis/__init__.pyi |
+| **ONNX Python Bindings** | **COMPLETE**: OnnxModel, ModelConfig, InferenceStats classes; load_model(), generate_signals() functions; backtest() accepts model="path.onnx" and features=df parameters; signal_threshold for converting predictions to signals; auto-detect feature dimensions; helpful error messages; Files: src/python/onnx.rs (new), src/python/mod.rs, src/python/backtest.rs, python/mantis/__init__.py, python/mantis/__init__.pyi |
 
 ---
 
@@ -1032,7 +1082,7 @@ These features are implemented in the Rust core but NOT exposed in the Python AP
 **Phase 4 - Polish (Weeks 6+):**
 11. Visualization Module (#12) - 3-4 days
 12. HTML Reports (#13) - 1-2 days
-13. ONNX re-enablement (when ort stabilizes)
+13. ~~ONNX re-enablement (when ort stabilizes)~~ - **COMPLETE** (including Python bindings)
 14. Lower priority items as time permits
 
 ---

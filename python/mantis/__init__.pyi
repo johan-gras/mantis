@@ -51,6 +51,8 @@ class BacktestConfig:
     """Order type for signal-generated orders. "market" (default) or "limit"."""
     limit_offset: float
     """Limit order offset as fraction of close price (e.g., 0.01 = 1%). Only used when order_type="limit"."""
+    model: Optional[str]
+    """Path to ONNX model file for inference-based backtesting (requires onnx feature)."""
 
     def __init__(
         self,
@@ -601,6 +603,230 @@ class ValidationResult:
         """
         ...
 
+# =============================================================================
+# ONNX Model Support (requires onnx feature)
+# =============================================================================
+
+class ModelConfig:
+    """
+    Configuration for ONNX model inference.
+
+    Specifies model parameters including input/output sizes, normalization,
+    and fallback behavior.
+
+    Example:
+        >>> config = mt.ModelConfig("my_model", input_size=10)
+        >>> model = mt.OnnxModel("model.onnx", config=config)
+    """
+
+    name: str
+    version: str
+    input_size: int
+    output_size: int
+    normalize_inputs: bool
+    feature_means: Optional[List[float]]
+    feature_stds: Optional[List[float]]
+    fallback_value: float
+    log_latency: bool
+    batch_size: int
+
+    def __init__(
+        self,
+        name: str = "unnamed_model",
+        input_size: int = 0,
+        version: str = "1.0.0",
+        output_size: int = 1,
+        normalize_inputs: bool = False,
+        feature_means: Optional[List[float]] = None,
+        feature_stds: Optional[List[float]] = None,
+        fallback_value: float = 0.0,
+        log_latency: bool = False,
+        batch_size: int = 1,
+    ) -> None: ...
+
+
+class InferenceStats:
+    """
+    Statistics tracked during model inference.
+
+    Provides performance metrics for ONNX model inference including
+    total inferences, success rate, and latency measurements.
+    """
+
+    total_inferences: int
+    successful_inferences: int
+    failed_inferences: int
+    total_inference_time_us: int
+    min_inference_time_us: int
+    max_inference_time_us: int
+
+    def avg_inference_time_us(self) -> float:
+        """Get average inference time in microseconds."""
+        ...
+    def avg_inference_time_ms(self) -> float:
+        """Get average inference time in milliseconds."""
+        ...
+    def success_rate(self) -> float:
+        """Get success rate as a percentage (0-100)."""
+        ...
+
+
+class OnnxModel:
+    """
+    ONNX model wrapper for inference.
+
+    Loads and runs ONNX models for generating trading signals during backtests.
+    Requires the onnx feature to be enabled.
+
+    Example:
+        >>> model = mt.OnnxModel("model.onnx", input_size=10)
+        >>> prediction = model.predict([0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0])
+        >>> print(prediction)
+        0.75
+    """
+
+    def __init__(
+        self,
+        path: str,
+        input_size: int,
+        config: Optional[ModelConfig] = None,
+        name: Optional[str] = None,
+        version: str = "1.0.0",
+        normalize: bool = False,
+        feature_means: Optional[List[float]] = None,
+        feature_stds: Optional[List[float]] = None,
+        fallback_value: float = 0.0,
+    ) -> None:
+        """
+        Load an ONNX model from a file.
+
+        Args:
+            path: Path to the .onnx model file
+            input_size: Number of input features (required)
+            config: Optional ModelConfig for advanced settings
+            name: Model name for logging (default: filename)
+            version: Model version (default: "1.0.0")
+            normalize: Whether to normalize inputs (requires means/stds)
+            feature_means: Feature means for z-score normalization
+            feature_stds: Feature standard deviations for normalization
+            fallback_value: Value to return if inference fails (default: 0.0)
+        """
+        ...
+
+    @property
+    def input_size(self) -> int:
+        """Get the model's input size (number of features)."""
+        ...
+
+    @property
+    def output_size(self) -> int:
+        """Get the model's output size."""
+        ...
+
+    @property
+    def name(self) -> str:
+        """Get the model's name."""
+        ...
+
+    @property
+    def version(self) -> str:
+        """Get the model's version."""
+        ...
+
+    def predict(self, features: List[float]) -> float:
+        """
+        Perform inference on a single feature vector.
+
+        Args:
+            features: List of input features
+
+        Returns:
+            Predicted value (float)
+        """
+        ...
+
+    def predict_batch(self, batch_features: List[List[float]]) -> List[float]:
+        """
+        Perform batch inference on multiple feature vectors.
+
+        Args:
+            batch_features: List of feature vectors
+
+        Returns:
+            List of predictions
+        """
+        ...
+
+    def stats(self) -> InferenceStats:
+        """Get inference statistics."""
+        ...
+
+    def reset_stats(self) -> None:
+        """Reset inference statistics."""
+        ...
+
+    def print_stats(self) -> None:
+        """Print inference statistics to stdout."""
+        ...
+
+
+def load_model(
+    path: str,
+    input_size: int,
+    name: Optional[str] = None,
+    version: str = "1.0.0",
+    fallback_value: float = 0.0,
+) -> OnnxModel:
+    """
+    Load an ONNX model from a file.
+
+    Convenience function that wraps OnnxModel creation.
+
+    Args:
+        path: Path to the .onnx model file
+        input_size: Number of input features
+        name: Model name for logging (default: filename)
+        version: Model version (default: "1.0.0")
+        fallback_value: Value to return if inference fails
+
+    Returns:
+        Loaded OnnxModel
+
+    Example:
+        >>> model = mt.load_model("model.onnx", input_size=10)
+    """
+    ...
+
+
+def generate_signals(
+    model: OnnxModel,
+    features: Any,
+    threshold: Optional[float] = None,
+) -> NDArray[np.float64]:
+    """
+    Generate signals from an ONNX model and feature DataFrame.
+
+    Runs the ONNX model on each row of the feature DataFrame
+    and returns a numpy array of predictions that can be used as signals.
+
+    Args:
+        model: OnnxModel instance
+        features: Feature array or DataFrame with features for each bar
+        threshold: Optional threshold for converting predictions to signals.
+                   If provided, predictions > threshold become 1,
+                   < -threshold become -1, else 0.
+
+    Returns:
+        numpy array of predictions/signals
+
+    Example:
+        >>> model = mt.load_model("model.onnx", input_size=10)
+        >>> signals = mt.generate_signals(model, feature_df, threshold=0.5)
+        >>> results = mt.backtest(data, signals)
+    """
+    ...
+
+
 def load(
     path: str,
     date_format: Optional[str] = None,
@@ -736,6 +962,10 @@ def backtest(
     max_volume_participation: Optional[float] = None,
     order_type: str = "market",
     limit_offset: float = 0.0,
+    model: Optional[str] = None,
+    features: Optional[Any] = None,
+    model_input_size: Optional[int] = None,
+    signal_threshold: Optional[float] = None,
 ) -> BacktestResult:
     """
     Run a backtest on historical data with a signal array.
@@ -779,6 +1009,16 @@ def backtest(
             For buys: limit_price = close * (1 - limit_offset) (below close)
             For sells: limit_price = close * (1 + limit_offset) (above close)
             Only used when order_type="limit".
+        model: Path to ONNX model file for inference-based backtesting.
+            When provided, signals are generated by running the model on the features.
+            Requires the onnx feature to be enabled.
+        features: Feature array or DataFrame for ONNX model inference.
+            Required when model is provided. Must have one row per bar in data.
+        model_input_size: Number of input features for the ONNX model.
+            Auto-detected from features if not provided.
+        signal_threshold: Threshold for converting model predictions to signals.
+            Predictions > threshold become 1, < -threshold become -1, else 0.
+            If None, raw predictions are used as signals.
 
     Returns:
         BacktestResult object with metrics, equity curve, and trades.
@@ -812,6 +1052,11 @@ def backtest(
 
         >>> # 24/7 market (crypto) with proper annualization
         >>> results = mt.backtest(btc_data, signal, trading_hours_24=True)
+
+        >>> # Using ONNX model for inference (requires onnx feature)
+        >>> results = mt.backtest(data, model="model.onnx", features=feature_df)
+        >>> # With signal threshold
+        >>> results = mt.backtest(data, model="model.onnx", features=features, signal_threshold=0.5)
     """
     ...
 
