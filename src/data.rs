@@ -34,7 +34,14 @@ struct CsvRow {
     low: f64,
     #[serde(alias = "Close", alias = "close", alias = "c", alias = "Adj Close")]
     close: f64,
-    #[serde(alias = "Volume", alias = "volume", alias = "v", alias = "vol", alias = "Vol", default)]
+    #[serde(
+        alias = "Volume",
+        alias = "volume",
+        alias = "v",
+        alias = "vol",
+        alias = "Vol",
+        default
+    )]
     volume: f64,
 }
 
@@ -177,8 +184,8 @@ fn parse_datetime(s: &str, format: Option<&str>) -> Result<DateTime<Utc>> {
         "%d-%m-%Y",
         "%d/%m/%Y",
         "%m/%d/%Y",
-        "%d-%b-%Y", // 15-Jan-2024
-        "%d %b %Y", // 15 Jan 2024
+        "%d-%b-%Y",  // 15-Jan-2024
+        "%d %b %Y",  // 15 Jan 2024
         "%b %d, %Y", // Jan 15, 2024
     ];
 

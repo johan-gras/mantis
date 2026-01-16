@@ -7,7 +7,7 @@
 
 ## Executive Summary
 
-The Mantis backtesting framework implementation is **complete**. All 33 planned items have been verified and implemented.
+The Mantis backtesting framework implementation is **complete**. All 34 planned items have been verified and implemented.
 
 **Core Features:**
 - Core backtest engine with comprehensive cost modeling
@@ -97,6 +97,7 @@ The Mantis backtesting framework implementation is **complete**. All 33 planned 
 | 31 | Fractional Shares Default | P1 | fractional=False per spec, whole shares by default |
 | 32 | Per-Share Commission Model | P1 | commission_per_share field, commission_type="per_share" support |
 | 33 | CSV Auto-Delimiter Detection | P1 | Auto-detects comma, tab, semicolon, pipe delimiters |
+| 34 | Square-Root Slippage Model | P1 | slippage="sqrt" parameter in Python API, 10% cap |
 
 ---
 
@@ -235,6 +236,60 @@ import polars as pl
 data_dict = mt.load("file.csv")
 df = pl.DataFrame({k: v for k, v in data_dict.items() if k not in ['bars', 'path', 'n_bars']})
 ```
+
+---
+
+### Additional Data Handling Features (2026-01-16)
+
+Added per spec (`specs/data-handling.md`):
+- DATE (uppercase) and Datetime column aliases for date detection
+- vol and Vol aliases for volume column detection
+- Named month date formats: 15-Jan-2024, 15 Jan 2024, Jan 15, 2024
+
+### Spec Gaps Identified (2026-01-16)
+
+The following spec items have been identified as not fully implemented:
+
+**Python API (`specs/python-api.md`):**
+- `mt.load()` `backend="polars"` parameter - NOT IMPLEMENTED (returns dict with numpy arrays)
+- Output type preservation (returning pandas/polars matching input) - NOT IMPLEMENTED (always returns numpy)
+- Note: .pyi type stub file exists at `python/mantis/__init__.pyi`
+
+**Execution Realism (`specs/execution-realism.md`):**
+- Volume participation partial fills don't carry over to next bar as spec suggests
+- Square-root slippage model (`slippage="sqrt"`) is now implemented in Python API
+- Slippage cap at 10% is now implemented (excess slippage capped with warning)
+
+**Performance Metrics (`specs/performance-metrics.md`):**
+- Zero trades returns 0.0 instead of NaN for trade-based metrics
+- Zero volatility Sharpe returns 0.0 instead of inf
+- Risk-free rate not subtracted in Sharpe/Sortino calculation (assumes 0)
+
+**Validation (`specs/validation-robustness.md`):**
+- `trials` parameter for deflated Sharpe not exposed in `results.validate()`
+- OOS/IS < 60% warning not in `warnings()` method
+
+**Position Sizing (`specs/position-sizing.md`):**
+- Python API doesn't support string sizing modes ("volatility", "signal", "risk") as shown in spec
+- `max_leverage` parameter not exposed in Python `mt.backtest()`
+
+These are documented as known limitations rather than bugs, as the core functionality works correctly.
+
+---
+
+### Square-Root Slippage Model (2026-01-16)
+
+Per spec (`specs/execution-realism.md`), added square-root slippage model support to Python API:
+- Added `SlippageSpec` enum to Python bindings (Percentage, SquareRoot, Linear)
+- Added `parse_slippage()` function to handle string-based slippage specs
+- `backtest()` now accepts `slippage="sqrt"`, `slippage="linear"`, or `slippage=0.001` (percentage)
+- Added `slippage_factor` parameter for custom coefficients (default: 0.1 for sqrt, 0.001 for linear)
+- Slippage cap at 10% per spec (excess slippage is capped with warning logged)
+- Updated `validate()` function to support string slippage specifications
+
+**Files modified:**
+- `src/python/backtest.rs`: Added SlippageSpec enum, parse_slippage(), slippage_factor parameter
+- `python/mantis/__init__.pyi`: Updated type stubs for slippage parameter
 
 ---
 

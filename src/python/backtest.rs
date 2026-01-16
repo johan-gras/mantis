@@ -9,7 +9,7 @@ use pyo3::types::PyDict;
 use crate::analytics::BenchmarkMetrics;
 use crate::data::{atr, load_csv, load_parquet, DataConfig};
 use crate::engine::{BacktestConfig, BacktestResult, Engine};
-use crate::portfolio::CostModel;
+use crate::portfolio::{CostModel, MarketImpactModel};
 use crate::risk::{StopLoss, TakeProfit};
 use crate::strategies::{
     BreakoutStrategy, MacdStrategy, MeanReversion, MomentumStrategy, RsiStrategy, SmaCrossover,
@@ -32,8 +32,11 @@ pub struct PyBacktestConfig {
     /// Use with `commission=0` to switch to per-share pricing.
     #[pyo3(get, set)]
     pub commission_per_share: f64,
-    #[pyo3(get, set)]
-    pub slippage: f64,
+    /// Slippage specification: float (percentage) or string ("sqrt", "linear").
+    /// - float: percentage slippage (e.g., 0.001 for 0.1%)
+    /// - "sqrt": square-root market impact model
+    /// - "linear": linear market impact model
+    pub slippage_spec: SlippageSpec,
     #[pyo3(get, set)]
     pub position_size: f64,
     #[pyo3(get, set)]
@@ -94,6 +97,18 @@ pub enum TakeProfitSpec {
     Atr(f64),
     /// Risk-reward ratio (e.g., 2.0 for 2:1 R:R)
     RiskReward(f64),
+}
+
+/// Specification for slippage - can be percentage or square-root market impact model.
+#[derive(Debug, Clone)]
+pub enum SlippageSpec {
+    /// Percentage slippage (e.g., 0.001 for 0.1%)
+    Percentage(f64),
+    /// Square-root market impact model: slippage = coefficient × √(trade_size / avg_volume)
+    /// The coefficient is the slippage_factor parameter (default 0.1).
+    SquareRoot { coefficient: f64 },
+    /// Linear market impact model: slippage = coefficient × (trade_size / avg_volume)
+    Linear { coefficient: f64 },
 }
 
 /// Parse stop loss specification from Python object (float or string).
@@ -251,6 +266,119 @@ fn parse_take_profit(py: Python<'_>, obj: &PyObject) -> PyResult<Option<TakeProf
     ))
 }
 
+/// Maximum slippage cap as per spec (10%).
+const MAX_SLIPPAGE_PCT: f64 = 0.10;
+
+/// Parse slippage specification from Python object (float or string).
+///
+/// Accepts:
+/// - float: percentage slippage (e.g., 0.001 for 0.1%)
+/// - "sqrt": square-root market impact model with default coefficient 0.1
+/// - "sqrt0.2": square-root model with custom coefficient 0.2
+/// - "linear": linear market impact model with default coefficient 0.1
+/// - "linear0.05": linear model with custom coefficient 0.05
+fn parse_slippage(
+    py: Python<'_>,
+    obj: &PyObject,
+    slippage_factor: Option<f64>,
+) -> PyResult<SlippageSpec> {
+    // Try as None first (use default percentage)
+    if obj.is_none(py) {
+        return Ok(SlippageSpec::Percentage(0.001)); // Default 0.1%
+    }
+
+    // Try as float
+    if let Ok(pct) = obj.extract::<f64>(py) {
+        // Cap slippage at 10% per spec
+        let capped = pct.min(MAX_SLIPPAGE_PCT);
+        if pct > MAX_SLIPPAGE_PCT {
+            tracing::warn!(
+                "Slippage {} exceeds maximum {}%, capping at {}%",
+                pct * 100.0,
+                MAX_SLIPPAGE_PCT * 100.0,
+                MAX_SLIPPAGE_PCT * 100.0
+            );
+        }
+        return Ok(SlippageSpec::Percentage(capped));
+    }
+
+    // Try as string
+    if let Ok(s) = obj.extract::<String>(py) {
+        let s_lower = s.to_lowercase().trim().to_string();
+
+        // Check for sqrt format: "sqrt", "sqrt0.1", "sqrt0.2"
+        if s_lower.starts_with("sqrt") {
+            let coef_str = s_lower.strip_prefix("sqrt").unwrap_or("");
+            let coefficient = if coef_str.is_empty() {
+                // Use slippage_factor if provided, else default 0.1
+                slippage_factor.unwrap_or(0.1)
+            } else {
+                coef_str.parse::<f64>().map_err(|_| {
+                    pyo3::exceptions::PyValueError::new_err(format!(
+                        "Invalid sqrt slippage format: '{}'. Use 'sqrt' or 'sqrt0.1'",
+                        s
+                    ))
+                })?
+            };
+            return Ok(SlippageSpec::SquareRoot { coefficient });
+        }
+
+        // Check for linear format: "linear", "linear0.1"
+        if s_lower.starts_with("linear") {
+            let coef_str = s_lower.strip_prefix("linear").unwrap_or("");
+            let coefficient = if coef_str.is_empty() {
+                slippage_factor.unwrap_or(0.1)
+            } else {
+                coef_str.parse::<f64>().map_err(|_| {
+                    pyo3::exceptions::PyValueError::new_err(format!(
+                        "Invalid linear slippage format: '{}'. Use 'linear' or 'linear0.1'",
+                        s
+                    ))
+                })?
+            };
+            return Ok(SlippageSpec::Linear { coefficient });
+        }
+
+        // Try as percentage string: "0.1%", "0.001"
+        let num_str = s_lower.trim_end_matches('%');
+        if let Ok(pct) = num_str.parse::<f64>() {
+            // If > 1.0 and ends with %, assume it's "10%" meaning 0.10
+            let decimal = if s_lower.ends_with('%') && pct > 1.0 {
+                pct / 100.0
+            } else if pct > 1.0 {
+                // Assume values > 1 are percentages (e.g., 10 = 10%)
+                pct / 100.0
+            } else {
+                pct
+            };
+            // Cap at 10%
+            let capped = decimal.min(MAX_SLIPPAGE_PCT);
+            if decimal > MAX_SLIPPAGE_PCT {
+                tracing::warn!(
+                    "Slippage {} exceeds maximum {}%, capping at {}%",
+                    decimal * 100.0,
+                    MAX_SLIPPAGE_PCT * 100.0,
+                    MAX_SLIPPAGE_PCT * 100.0
+                );
+            }
+            return Ok(SlippageSpec::Percentage(capped));
+        }
+
+        return Err(pyo3::exceptions::PyValueError::new_err(format!(
+            "Invalid slippage: '{}'. Use:\n\
+             - float (0.001 for 0.1%)\n\
+             - 'sqrt' for square-root market impact model\n\
+             - 'sqrt0.1' for sqrt model with coefficient 0.1\n\
+             - 'linear' for linear market impact model",
+            s
+        )));
+    }
+
+    Err(pyo3::exceptions::PyTypeError::new_err(
+        "slippage must be a float or string ('sqrt', 'linear')",
+    ))
+}
+
 #[pymethods]
 impl PyBacktestConfig {
     #[new]
@@ -258,7 +386,7 @@ impl PyBacktestConfig {
         initial_capital=100_000.0,
         commission=0.001,
         commission_per_share=0.0,
-        slippage=0.001,
+        slippage=None,
         position_size=0.10,
         allow_short=true,
         fractional_shares=false,
@@ -271,7 +399,8 @@ impl PyBacktestConfig {
         trading_hours_24=None,
         max_volume_participation=None,
         order_type="market",
-        limit_offset=0.0
+        limit_offset=0.0,
+        slippage_factor=None
     ))]
     #[allow(clippy::too_many_arguments)]
     fn new(
@@ -279,7 +408,7 @@ impl PyBacktestConfig {
         initial_capital: f64,
         commission: f64,
         commission_per_share: f64,
-        slippage: f64,
+        slippage: Option<PyObject>,
         position_size: f64,
         allow_short: bool,
         fractional_shares: bool,
@@ -293,6 +422,7 @@ impl PyBacktestConfig {
         max_volume_participation: Option<f64>,
         order_type: &str,
         limit_offset: f64,
+        slippage_factor: Option<f64>,
     ) -> PyResult<Self> {
         let sl_spec = if let Some(ref obj) = stop_loss {
             parse_stop_loss(py, obj)?
@@ -303,6 +433,13 @@ impl PyBacktestConfig {
             parse_take_profit(py, obj)?
         } else {
             None
+        };
+
+        // Parse slippage specification
+        let slippage_spec = if let Some(ref obj) = slippage {
+            parse_slippage(py, obj, slippage_factor)?
+        } else {
+            SlippageSpec::Percentage(0.001) // Default 0.1%
         };
 
         let freq_parsed = if let Some(f) = freq {
@@ -324,7 +461,7 @@ impl PyBacktestConfig {
             initial_capital,
             commission,
             commission_per_share,
-            slippage,
+            slippage_spec,
             position_size,
             allow_short,
             fractional_shares,
@@ -361,6 +498,17 @@ impl PyBacktestConfig {
         }
     }
 
+    /// Get slippage as Python object.
+    /// Returns float for percentage slippage, or string for model-based slippage ("sqrt", "linear").
+    #[getter]
+    fn get_slippage(&self, py: Python<'_>) -> PyObject {
+        match &self.slippage_spec {
+            SlippageSpec::Percentage(p) => p.into_py(py),
+            SlippageSpec::SquareRoot { coefficient } => format!("sqrt{}", coefficient).into_py(py),
+            SlippageSpec::Linear { coefficient } => format!("linear{}", coefficient).into_py(py),
+        }
+    }
+
     #[getter]
     fn get_freq(&self, py: Python<'_>) -> PyObject {
         match &self.freq {
@@ -378,9 +526,14 @@ impl PyBacktestConfig {
     }
 
     fn __repr__(&self) -> String {
+        let slippage_str = match &self.slippage_spec {
+            SlippageSpec::Percentage(p) => format!("{:.4}", p),
+            SlippageSpec::SquareRoot { coefficient } => format!("sqrt{}", coefficient),
+            SlippageSpec::Linear { coefficient } => format!("linear{}", coefficient),
+        };
         format!(
-            "BacktestConfig(capital={:.0}, commission={:.4}, slippage={:.4}, size={:.2}, max_position={:.2})",
-            self.initial_capital, self.commission, self.slippage, self.position_size, self.max_position
+            "BacktestConfig(capital={:.0}, commission={:.4}, slippage={}, size={:.2}, max_position={:.2})",
+            self.initial_capital, self.commission, slippage_str, self.position_size, self.max_position
         )
     }
 }
@@ -397,13 +550,29 @@ impl PyBacktestConfig {
             ..Default::default()
         };
 
-        // Set cost model
+        // Set cost model with slippage specification
+        let (slippage_pct, market_impact) = match &self.slippage_spec {
+            SlippageSpec::Percentage(pct) => (*pct, MarketImpactModel::None),
+            SlippageSpec::SquareRoot { coefficient } => (
+                0.0,
+                MarketImpactModel::SquareRoot {
+                    coefficient: *coefficient,
+                },
+            ),
+            SlippageSpec::Linear { coefficient } => (
+                0.0,
+                MarketImpactModel::Linear {
+                    coefficient: *coefficient,
+                },
+            ),
+        };
         config.cost_model = CostModel {
             commission_pct: self.commission,
             commission_per_share: self.commission_per_share,
-            slippage_pct: self.slippage,
+            slippage_pct,
             borrow_cost_rate: self.borrow_cost,
             max_volume_participation: self.max_volume_participation,
+            market_impact,
             ..Default::default()
         };
 
@@ -492,7 +661,13 @@ impl From<&PyBacktestConfig> for BacktestConfig {
 ///     strategy_params: Dictionary of strategy parameters
 ///     config: Optional BacktestConfig object
 ///     commission: Commission rate (default 0.001 = 0.1%)
-///     slippage: Slippage rate (default 0.001 = 0.1%)
+///     slippage: Slippage specification. Can be:
+///         - float: percentage slippage (e.g., 0.001 for 0.1%)
+///         - "sqrt": square-root market impact model (volume-based)
+///         - "sqrt0.1": sqrt model with custom coefficient 0.1
+///         - "linear": linear market impact model
+///     slippage_factor: Coefficient for sqrt/linear models when using "sqrt" or "linear" without
+///         explicit coefficient (e.g., slippage="sqrt", slippage_factor=0.2)
 ///     size: Position size as fraction of equity (default 0.10 = 10%)
 ///     cash: Initial capital (default 100,000)
 ///     stop_loss: Optional stop loss percentage (e.g., 0.05 for 5%)
@@ -518,6 +693,8 @@ impl From<&PyBacktestConfig> for BacktestConfig {
 ///     1.24
 ///     >>> # With ATR-based stop loss (2x ATR)
 ///     >>> results = backtest(data, signal, stop_loss="2atr")
+///     >>> # With square-root market impact model
+///     >>> results = backtest(data, signal, slippage="sqrt")
 ///     >>> # With benchmark comparison
 ///     >>> spy = load("SPY.csv")
 ///     >>> results = backtest(data, signal, benchmark=spy)
@@ -534,7 +711,8 @@ impl From<&PyBacktestConfig> for BacktestConfig {
     config=None,
     commission=0.001,
     commission_per_share=0.0,
-    slippage=0.001,
+    slippage=None,
+    slippage_factor=None,
     size=0.10,
     cash=100_000.0,
     stop_loss=None,
@@ -565,7 +743,8 @@ pub fn backtest(
     config: Option<&PyBacktestConfig>,
     commission: f64,
     commission_per_share: f64,
-    slippage: f64,
+    slippage: Option<PyObject>,
+    slippage_factor: Option<f64>,
     size: f64,
     cash: f64,
     stop_loss: Option<PyObject>,
@@ -618,6 +797,7 @@ pub fn backtest(
             max_volume_participation,
             order_type,
             limit_offset,
+            slippage_factor,
         )?;
         py_config.to_backtest_config(Some(&bars))
     };
@@ -1539,7 +1719,7 @@ fn run_builtin_strategy(
 ///     anchored: Use anchored (growing) windows instead of rolling (default True)
 ///     config: Optional BacktestConfig object
 ///     commission: Commission rate (default 0.001 = 0.1%)
-///     slippage: Slippage rate (default 0.001 = 0.1%)
+///     slippage: Slippage specification - float (0.001 for 0.1%) or string ("sqrt", "linear")
 ///     size: Position size as fraction of equity (default 0.10 = 10%)
 ///     cash: Initial capital (default 100,000)
 ///
@@ -1561,7 +1741,7 @@ fn run_builtin_strategy(
     anchored=true,
     config=None,
     commission=0.001,
-    slippage=0.001,
+    slippage=None,
     size=0.10,
     cash=100_000.0
 ))]
@@ -1575,12 +1755,19 @@ pub fn validate(
     anchored: bool,
     config: Option<&PyBacktestConfig>,
     commission: f64,
-    slippage: f64,
+    slippage: Option<PyObject>,
     size: f64,
     cash: f64,
 ) -> PyResult<super::results::PyValidationResult> {
     // Extract bars and signal first
     let bars = extract_bars(py, &data)?;
+
+    // Parse slippage specification
+    let slippage_spec = if let Some(ref obj) = slippage {
+        parse_slippage(py, obj, None)?
+    } else {
+        SlippageSpec::Percentage(0.001) // Default 0.1%
+    };
 
     // Build config (pass bars for ATR calculation if needed)
     let bt_config = if let Some(cfg) = config {
@@ -1590,7 +1777,7 @@ pub fn validate(
             initial_capital: cash,
             commission,
             commission_per_share: 0.0,
-            slippage,
+            slippage_spec,
             position_size: size,
             allow_short: true,
             fractional_shares: false, // Default: whole shares (per spec)

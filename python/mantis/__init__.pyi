@@ -34,7 +34,12 @@ class BacktestConfig:
     commission: float
     commission_per_share: float
     """Commission per share (e.g., 0.005 for $0.005/share). Use with commission=0 for per-share pricing."""
-    slippage: float
+    slippage: Union[float, str]
+    """Slippage specification. Can be:
+    - float: percentage slippage (e.g., 0.001 for 0.1%)
+    - "sqrt": square-root market impact model (volume-based)
+    - "sqrt0.1": sqrt model with custom coefficient 0.1
+    - "linear": linear market impact model"""
     position_size: float
     allow_short: bool
     fractional_shares: bool
@@ -61,7 +66,7 @@ class BacktestConfig:
         initial_capital: float = 100_000.0,
         commission: float = 0.001,
         commission_per_share: float = 0.0,
-        slippage: float = 0.001,
+        slippage: Optional[Union[float, str]] = 0.001,
         position_size: float = 0.10,
         allow_short: bool = True,
         fractional_shares: bool = False,
@@ -75,6 +80,7 @@ class BacktestConfig:
         max_volume_participation: Optional[float] = None,
         order_type: str = "market",
         limit_offset: float = 0.0,
+        slippage_factor: Optional[float] = None,
     ) -> None: ...
 
 class BacktestResult:
@@ -951,7 +957,8 @@ def backtest(
     config: Optional[BacktestConfig] = None,
     commission: float = 0.001,
     commission_per_share: float = 0.0,
-    slippage: float = 0.001,
+    slippage: Optional[Union[float, str]] = 0.001,
+    slippage_factor: Optional[float] = None,
     size: float = 0.10,
     cash: float = 100_000.0,
     stop_loss: Optional[Union[float, str]] = None,
@@ -985,7 +992,13 @@ def backtest(
         commission: Commission rate (default 0.001 = 0.1%)
         commission_per_share: Commission per share (default 0.0). Use with
             commission=0 for per-share pricing (e.g., 0.005 for $0.005/share).
-        slippage: Slippage rate (default 0.001 = 0.1%)
+        slippage: Slippage specification. Can be:
+            - float: percentage slippage (e.g., 0.001 for 0.1%)
+            - "sqrt": square-root market impact model (volume-based)
+            - "sqrt0.1": sqrt model with custom coefficient 0.1
+            - "linear": linear market impact model
+        slippage_factor: Coefficient for sqrt/linear models when using "sqrt" or "linear"
+            without explicit coefficient (e.g., slippage="sqrt", slippage_factor=0.2)
         size: Position size as fraction of equity (default 0.10 = 10%)
         cash: Initial capital (default 100,000)
         stop_loss: Optional stop loss. Can be:
@@ -1050,6 +1063,13 @@ def backtest(
         >>> # With risk-reward ratio
         >>> results = mt.backtest(data, signal, stop_loss="2atr", take_profit="2rr")
 
+        >>> # With square-root market impact model (volume-based slippage)
+        >>> results = mt.backtest(data, signal, slippage="sqrt")
+        >>> # With custom coefficient
+        >>> results = mt.backtest(data, signal, slippage="sqrt0.15")
+        >>> # Or using slippage_factor parameter
+        >>> results = mt.backtest(data, signal, slippage="sqrt", slippage_factor=0.15)
+
         >>> # With benchmark comparison
         >>> spy = mt.load("SPY.csv")
         >>> results = mt.backtest(data, signal, benchmark=spy)
@@ -1098,7 +1118,7 @@ def validate(
     anchored: bool = True,
     config: Optional[BacktestConfig] = None,
     commission: float = 0.001,
-    slippage: float = 0.001,
+    slippage: Optional[Union[float, str]] = 0.001,
     size: float = 0.10,
     cash: float = 100_000.0,
 ) -> ValidationResult:
@@ -1117,7 +1137,7 @@ def validate(
         anchored: Use anchored (growing) windows instead of rolling (default True)
         config: Optional BacktestConfig object
         commission: Commission rate (default 0.001 = 0.1%)
-        slippage: Slippage rate (default 0.001 = 0.1%)
+        slippage: Slippage specification - float (0.001 = 0.1%) or string ("sqrt", "linear")
         size: Position size as fraction of equity (default 0.10 = 10%)
         cash: Initial capital (default 100,000)
 
@@ -1442,8 +1462,21 @@ class Backtest:
     def commission(self, rate: float) -> "Backtest":
         """Set the commission rate (e.g., 0.001 = 0.1%)."""
         ...
-    def slippage(self, rate: float) -> "Backtest":
-        """Set the slippage rate (e.g., 0.001 = 0.1%)."""
+    def slippage(self, rate: Union[float, str]) -> "Backtest":
+        """
+        Set the slippage specification.
+
+        Args:
+            rate: Slippage specification. Can be:
+                - float: percentage (e.g., 0.001 = 0.1%)
+                - "sqrt": square-root market impact model
+                - "sqrt0.1": sqrt model with coefficient 0.1
+                - "linear": linear market impact model
+
+        Example:
+            >>> mt.Backtest(data, signal).slippage("sqrt")  # Volume-based slippage
+            >>> mt.Backtest(data, signal).slippage(0.001)   # 0.1% flat slippage
+        """
         ...
     def size(self, fraction: float) -> "Backtest":
         """Set the position size as a fraction of equity (e.g., 0.10 = 10%)."""
