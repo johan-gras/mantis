@@ -8,8 +8,8 @@ use crate::risk::{PositionSizer, PositionSizingMethod, RiskConfig, StopLoss, Tra
 use crate::strategy::{Strategy, StrategyContext};
 use crate::timeframe::TimeframeManager;
 use crate::types::{
-    Bar, EquityPoint, ExecutionPrice, LotSelectionMethod, Order, OrderType, Side, Signal, Trade,
-    VolumeProfile,
+    Bar, DataFrequency, EquityPoint, ExecutionPrice, LotSelectionMethod, Order, OrderType, Side,
+    Signal, Trade, VolumeProfile,
 };
 use chrono::{DateTime, Utc};
 use indicatif::{ProgressBar, ProgressStyle};
@@ -64,6 +64,14 @@ pub struct BacktestConfig {
     /// Random seed for reproducible execution (None = deterministic from timestamps).
     #[serde(default)]
     pub seed: Option<u64>,
+    /// Data frequency for proper annualization of metrics.
+    /// If None, frequency is auto-detected from bar timestamps.
+    #[serde(default)]
+    pub data_frequency: Option<DataFrequency>,
+    /// Whether to use 24/7 trading hours (for crypto markets).
+    /// If None, this is auto-detected based on weekend bars.
+    #[serde(default)]
+    pub trading_hours_24: Option<bool>,
 }
 
 impl Default for BacktestConfig {
@@ -85,6 +93,8 @@ impl Default for BacktestConfig {
             limit_order_ttl_bars: Some(5),
             lot_selection: LotSelectionMethod::default(),
             seed: None,
+            data_frequency: None,   // Auto-detect from data
+            trading_hours_24: None, // Auto-detect from data
         }
     }
 }
@@ -846,8 +856,25 @@ impl Engine {
             .map(|w| (w[1].equity - w[0].equity) / w[0].equity)
             .collect();
 
-        let sharpe_ratio = calculate_sharpe(&returns, 252.0);
-        let sortino_ratio = calculate_sortino(&returns, 252.0);
+        // Determine annualization factor based on data frequency
+        let frequency = self
+            .config
+            .data_frequency
+            .unwrap_or_else(|| DataFrequency::detect(bars));
+        let trading_24h = self
+            .config
+            .trading_hours_24
+            .unwrap_or_else(|| DataFrequency::is_likely_crypto(bars));
+        let annualization_factor = frequency.annualization_factor(trading_24h);
+
+        // Log frequency detection for transparency
+        debug!(
+            "Using {} data frequency with annualization factor {:.1} (24/7: {})",
+            frequency, annualization_factor, trading_24h
+        );
+
+        let sharpe_ratio = calculate_sharpe(&returns, annualization_factor);
+        let sortino_ratio = calculate_sortino(&returns, annualization_factor);
 
         let calmar_ratio = if max_drawdown_pct > 0.0 {
             annual_return_pct / max_drawdown_pct

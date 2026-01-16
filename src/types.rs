@@ -1,6 +1,6 @@
 //! Core data types for the backtest engine.
 
-use chrono::{DateTime, NaiveDate, Utc};
+use chrono::{DateTime, Datelike, NaiveDate, Utc};
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, fmt};
 use uuid::Uuid;
@@ -192,6 +192,233 @@ impl AssetConfig {
             } => Some(*margin_requirement),
             _ => None,
         }
+    }
+}
+
+/// Data frequency for proper annualization of metrics.
+///
+/// Different bar frequencies require different annualization factors:
+/// - Daily data: 252 trading days per year (stocks) or 365 days (24/7 markets)
+/// - Intraday data: varies based on trading hours and bar frequency
+///
+/// The `trading_hours_24` flag indicates 24/7 markets (crypto) vs traditional markets.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum DataFrequency {
+    /// 1-second bars
+    Second1,
+    /// 5-second bars
+    Second5,
+    /// 10-second bars
+    Second10,
+    /// 15-second bars
+    Second15,
+    /// 30-second bars
+    Second30,
+    /// 1-minute bars
+    Minute1,
+    /// 5-minute bars
+    Minute5,
+    /// 15-minute bars
+    Minute15,
+    /// 30-minute bars
+    Minute30,
+    /// 1-hour bars
+    Hour1,
+    /// 4-hour bars
+    Hour4,
+    /// Daily bars (default)
+    #[default]
+    Day,
+    /// Weekly bars
+    Week,
+    /// Monthly bars
+    Month,
+}
+
+impl DataFrequency {
+    /// Get the interval in seconds for this frequency.
+    pub fn to_seconds(&self) -> i64 {
+        match self {
+            DataFrequency::Second1 => 1,
+            DataFrequency::Second5 => 5,
+            DataFrequency::Second10 => 10,
+            DataFrequency::Second15 => 15,
+            DataFrequency::Second30 => 30,
+            DataFrequency::Minute1 => 60,
+            DataFrequency::Minute5 => 300,
+            DataFrequency::Minute15 => 900,
+            DataFrequency::Minute30 => 1800,
+            DataFrequency::Hour1 => 3600,
+            DataFrequency::Hour4 => 14400,
+            DataFrequency::Day => 86400,
+            DataFrequency::Week => 604800,
+            DataFrequency::Month => 2592000, // 30 days approximation
+        }
+    }
+
+    /// Get the annualization factor for this frequency.
+    ///
+    /// The annualization factor is the number of periods per year, which is used
+    /// to annualize returns, volatility, and ratios like Sharpe/Sortino.
+    ///
+    /// For traditional markets (stocks, futures, forex):
+    /// - 252 trading days per year
+    /// - 6.5 trading hours per day
+    /// - Excludes weekends and holidays
+    ///
+    /// For 24/7 markets (crypto):
+    /// - 365 days per year
+    /// - 24 hours per day
+    /// - Includes all days
+    pub fn annualization_factor(&self, trading_hours_24: bool) -> f64 {
+        if trading_hours_24 {
+            // 24/7 markets (crypto)
+            match self {
+                DataFrequency::Second1 => 31_536_000.0, // 365 * 24 * 60 * 60
+                DataFrequency::Second5 => 6_307_200.0,  // 31_536_000 / 5
+                DataFrequency::Second10 => 3_153_600.0, // 31_536_000 / 10
+                DataFrequency::Second15 => 2_102_400.0, // 31_536_000 / 15
+                DataFrequency::Second30 => 1_051_200.0, // 31_536_000 / 30
+                DataFrequency::Minute1 => 525_600.0,    // 365 * 24 * 60
+                DataFrequency::Minute5 => 105_120.0,    // 525_600 / 5
+                DataFrequency::Minute15 => 35_040.0,    // 525_600 / 15
+                DataFrequency::Minute30 => 17_520.0,    // 525_600 / 30
+                DataFrequency::Hour1 => 8_760.0,        // 365 * 24
+                DataFrequency::Hour4 => 2_190.0,        // 8_760 / 4
+                DataFrequency::Day => 365.0,
+                DataFrequency::Week => 52.0,
+                DataFrequency::Month => 12.0,
+            }
+        } else {
+            // Traditional markets (stocks, futures, forex)
+            // 252 trading days, 6.5 hours per trading day
+            match self {
+                DataFrequency::Second1 => 5_896_800.0, // 252 * 6.5 * 60 * 60
+                DataFrequency::Second5 => 1_179_360.0, // 5_896_800 / 5
+                DataFrequency::Second10 => 589_680.0,  // 5_896_800 / 10
+                DataFrequency::Second15 => 393_120.0,  // 5_896_800 / 15
+                DataFrequency::Second30 => 196_560.0,  // 5_896_800 / 30
+                DataFrequency::Minute1 => 98_280.0,    // 252 * 6.5 * 60
+                DataFrequency::Minute5 => 19_656.0,    // 98_280 / 5
+                DataFrequency::Minute15 => 6_552.0,    // 98_280 / 15
+                DataFrequency::Minute30 => 3_276.0,    // 98_280 / 30
+                DataFrequency::Hour1 => 1_638.0,       // 252 * 6.5
+                DataFrequency::Hour4 => 409.5,         // 1_638 / 4
+                DataFrequency::Day => 252.0,
+                DataFrequency::Week => 52.0,
+                DataFrequency::Month => 12.0,
+            }
+        }
+    }
+
+    /// Detect data frequency from a series of bars by analyzing timestamp gaps.
+    ///
+    /// Returns the most common frequency detected from the bar timestamps.
+    /// If bars contain fewer than 2 bars, returns Day as default.
+    pub fn detect(bars: &[Bar]) -> Self {
+        if bars.len() < 2 {
+            return DataFrequency::Day;
+        }
+
+        // Calculate time differences between consecutive bars
+        let mut gaps: Vec<i64> = bars
+            .windows(2)
+            .map(|w| (w[1].timestamp - w[0].timestamp).num_seconds())
+            .filter(|&g| g > 0) // Filter out zero or negative gaps
+            .collect();
+
+        if gaps.is_empty() {
+            return DataFrequency::Day;
+        }
+
+        // Find median gap (more robust than mean for irregular data)
+        gaps.sort_unstable();
+        let median_gap = gaps[gaps.len() / 2];
+
+        // Match to closest standard frequency
+        DataFrequency::from_seconds(median_gap)
+    }
+
+    /// Convert seconds to the closest DataFrequency variant.
+    fn from_seconds(seconds: i64) -> Self {
+        // Define frequency boundaries (midpoints between adjacent frequencies)
+        // Order matters: check from smallest to largest
+        if seconds <= 3 {
+            DataFrequency::Second1
+        } else if seconds <= 7 {
+            DataFrequency::Second5
+        } else if seconds <= 12 {
+            DataFrequency::Second10
+        } else if seconds <= 22 {
+            DataFrequency::Second15
+        } else if seconds <= 45 {
+            DataFrequency::Second30
+        } else if seconds <= 150 {
+            DataFrequency::Minute1
+        } else if seconds <= 450 {
+            DataFrequency::Minute5
+        } else if seconds <= 1350 {
+            DataFrequency::Minute15
+        } else if seconds <= 2700 {
+            DataFrequency::Minute30
+        } else if seconds <= 9000 {
+            DataFrequency::Hour1
+        } else if seconds <= 43200 {
+            DataFrequency::Hour4
+        } else if seconds <= 259200 {
+            DataFrequency::Day
+        } else if seconds <= 1209600 {
+            DataFrequency::Week
+        } else {
+            DataFrequency::Month
+        }
+    }
+
+    /// Check if this frequency requires 24/7 trading hours based on typical use.
+    /// Note: This is a heuristic. For accurate results, use explicit configuration.
+    pub fn is_likely_crypto(bars: &[Bar]) -> bool {
+        if bars.len() < 10 {
+            return false;
+        }
+
+        // Check if bars exist on weekends (Saturday=6, Sunday=0 in chrono)
+        let weekend_bars = bars
+            .iter()
+            .filter(|b| {
+                let weekday = b.timestamp.weekday().num_days_from_sunday();
+                weekday == 0 || weekday == 6
+            })
+            .count();
+
+        // If more than 10% of bars are on weekends, likely 24/7 market
+        weekend_bars as f64 / bars.len() as f64 > 0.10
+    }
+
+    /// Get a human-readable description of this frequency.
+    pub fn description(&self) -> &'static str {
+        match self {
+            DataFrequency::Second1 => "1-second",
+            DataFrequency::Second5 => "5-second",
+            DataFrequency::Second10 => "10-second",
+            DataFrequency::Second15 => "15-second",
+            DataFrequency::Second30 => "30-second",
+            DataFrequency::Minute1 => "1-minute",
+            DataFrequency::Minute5 => "5-minute",
+            DataFrequency::Minute15 => "15-minute",
+            DataFrequency::Minute30 => "30-minute",
+            DataFrequency::Hour1 => "hourly",
+            DataFrequency::Hour4 => "4-hour",
+            DataFrequency::Day => "daily",
+            DataFrequency::Week => "weekly",
+            DataFrequency::Month => "monthly",
+        }
+    }
+}
+
+impl fmt::Display for DataFrequency {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.description())
     }
 }
 
@@ -1229,5 +1456,190 @@ mod tests {
         let json = serde_json::to_string(&verdict).unwrap();
         let deserialized: Verdict = serde_json::from_str(&json).unwrap();
         assert_eq!(verdict, deserialized);
+    }
+
+    // =========================================================================
+    // DataFrequency Tests
+    // =========================================================================
+
+    #[test]
+    fn test_data_frequency_default() {
+        assert_eq!(DataFrequency::default(), DataFrequency::Day);
+    }
+
+    #[test]
+    fn test_data_frequency_to_seconds() {
+        assert_eq!(DataFrequency::Second1.to_seconds(), 1);
+        assert_eq!(DataFrequency::Minute1.to_seconds(), 60);
+        assert_eq!(DataFrequency::Minute5.to_seconds(), 300);
+        assert_eq!(DataFrequency::Hour1.to_seconds(), 3600);
+        assert_eq!(DataFrequency::Hour4.to_seconds(), 14400);
+        assert_eq!(DataFrequency::Day.to_seconds(), 86400);
+        assert_eq!(DataFrequency::Week.to_seconds(), 604800);
+    }
+
+    #[test]
+    fn test_data_frequency_annualization_factor_traditional() {
+        // Traditional markets (stocks, futures, forex)
+        let factor = DataFrequency::Day.annualization_factor(false);
+        assert!((factor - 252.0).abs() < f64::EPSILON);
+
+        let factor = DataFrequency::Hour1.annualization_factor(false);
+        assert!((factor - 1638.0).abs() < f64::EPSILON);
+
+        let factor = DataFrequency::Minute1.annualization_factor(false);
+        assert!((factor - 98_280.0).abs() < f64::EPSILON);
+
+        let factor = DataFrequency::Week.annualization_factor(false);
+        assert!((factor - 52.0).abs() < f64::EPSILON);
+
+        let factor = DataFrequency::Month.annualization_factor(false);
+        assert!((factor - 12.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_data_frequency_annualization_factor_24h() {
+        // 24/7 markets (crypto)
+        let factor = DataFrequency::Day.annualization_factor(true);
+        assert!((factor - 365.0).abs() < f64::EPSILON);
+
+        let factor = DataFrequency::Hour1.annualization_factor(true);
+        assert!((factor - 8_760.0).abs() < f64::EPSILON);
+
+        let factor = DataFrequency::Minute1.annualization_factor(true);
+        assert!((factor - 525_600.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_data_frequency_detect_daily() {
+        let base = Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap();
+        let bars: Vec<Bar> = (0..10)
+            .map(|i| Bar::new(base + Duration::days(i), 100.0, 105.0, 95.0, 102.0, 1000.0))
+            .collect();
+
+        assert_eq!(DataFrequency::detect(&bars), DataFrequency::Day);
+    }
+
+    #[test]
+    fn test_data_frequency_detect_minute() {
+        let base = Utc.with_ymd_and_hms(2024, 1, 1, 9, 30, 0).unwrap();
+        let bars: Vec<Bar> = (0..100)
+            .map(|i| {
+                Bar::new(
+                    base + Duration::minutes(i),
+                    100.0,
+                    105.0,
+                    95.0,
+                    102.0,
+                    1000.0,
+                )
+            })
+            .collect();
+
+        assert_eq!(DataFrequency::detect(&bars), DataFrequency::Minute1);
+    }
+
+    #[test]
+    fn test_data_frequency_detect_5_minute() {
+        let base = Utc.with_ymd_and_hms(2024, 1, 1, 9, 30, 0).unwrap();
+        let bars: Vec<Bar> = (0..100)
+            .map(|i| {
+                Bar::new(
+                    base + Duration::minutes(i * 5),
+                    100.0,
+                    105.0,
+                    95.0,
+                    102.0,
+                    1000.0,
+                )
+            })
+            .collect();
+
+        assert_eq!(DataFrequency::detect(&bars), DataFrequency::Minute5);
+    }
+
+    #[test]
+    fn test_data_frequency_detect_hourly() {
+        let base = Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap();
+        let bars: Vec<Bar> = (0..50)
+            .map(|i| Bar::new(base + Duration::hours(i), 100.0, 105.0, 95.0, 102.0, 1000.0))
+            .collect();
+
+        assert_eq!(DataFrequency::detect(&bars), DataFrequency::Hour1);
+    }
+
+    #[test]
+    fn test_data_frequency_detect_insufficient_data() {
+        // With only 1 bar, should return default (Day)
+        let bars = vec![Bar::new(
+            Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap(),
+            100.0,
+            105.0,
+            95.0,
+            102.0,
+            1000.0,
+        )];
+
+        assert_eq!(DataFrequency::detect(&bars), DataFrequency::Day);
+
+        // Empty bars also returns Day
+        let empty: Vec<Bar> = vec![];
+        assert_eq!(DataFrequency::detect(&empty), DataFrequency::Day);
+    }
+
+    #[test]
+    fn test_data_frequency_is_likely_crypto() {
+        // Create bars with weekend data (crypto marker)
+        let base = Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap(); // Monday
+        let bars: Vec<Bar> = (0..30)
+            .map(|i| Bar::new(base + Duration::days(i), 100.0, 105.0, 95.0, 102.0, 1000.0))
+            .collect();
+
+        // This should have weekend bars (Jan 6-7, 13-14, 20-21, 27-28)
+        assert!(DataFrequency::is_likely_crypto(&bars));
+
+        // Create bars without weekend data (traditional market)
+        let weekday_bars: Vec<Bar> = (0..20)
+            .filter_map(|i| {
+                let dt = base + Duration::days(i);
+                let weekday = dt.weekday().num_days_from_sunday();
+                // Skip weekends
+                if weekday == 0 || weekday == 6 {
+                    None
+                } else {
+                    Some(Bar::new(dt, 100.0, 105.0, 95.0, 102.0, 1000.0))
+                }
+            })
+            .collect();
+
+        assert!(!DataFrequency::is_likely_crypto(&weekday_bars));
+    }
+
+    #[test]
+    fn test_data_frequency_description() {
+        assert_eq!(DataFrequency::Day.description(), "daily");
+        assert_eq!(DataFrequency::Minute1.description(), "1-minute");
+        assert_eq!(DataFrequency::Hour4.description(), "4-hour");
+        assert_eq!(DataFrequency::Week.description(), "weekly");
+    }
+
+    #[test]
+    fn test_data_frequency_display() {
+        assert_eq!(format!("{}", DataFrequency::Day), "daily");
+        assert_eq!(format!("{}", DataFrequency::Minute5), "5-minute");
+        assert_eq!(format!("{}", DataFrequency::Hour1), "hourly");
+    }
+
+    #[test]
+    fn test_data_frequency_serialization() {
+        let freq = DataFrequency::Minute15;
+        let json = serde_json::to_string(&freq).unwrap();
+        let deserialized: DataFrequency = serde_json::from_str(&json).unwrap();
+        assert_eq!(freq, deserialized);
+
+        // Test kebab-case serialization
+        let freq = DataFrequency::Hour4;
+        let json = serde_json::to_string(&freq).unwrap();
+        assert!(json.contains("hour4") || json.contains("Hour4"));
     }
 }

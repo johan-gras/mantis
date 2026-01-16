@@ -42,7 +42,7 @@ The Mantis backtesting framework has a solid core implementation with excellent 
 ## Test Status Summary
 
 **Last Run:** 2026-01-16
-- **Total Tests:** 558 passed
+- **Total Tests:** 571 passed (lib) + 5 (integration) + 28 (benchmarks) + 14 (doc tests)
 - **Failed:** 0 tests
 - **Status:** ALL TESTS PASSING
 
@@ -600,6 +600,140 @@ result.plot()  # Interactive Plotly in Jupyter
 
 ---
 
+## Newly Discovered Gaps (2026-01-16 Audit)
+
+### 19. Frequency Auto-Detection and Annualization [COMPLETE]
+**Status:** COMPLETE (2026-01-16)
+**Priority:** P1 (was HIGH IMPACT - now fixed)
+
+**Implementation details:**
+- Added `DataFrequency` enum to `src/types.rs` with 14 frequency variants (Second1 through Month)
+- `DataFrequency::detect(bars)` - Auto-detects frequency by analyzing timestamp gaps (uses median for robustness)
+- `DataFrequency::annualization_factor(trading_hours_24)` - Returns correct factor for both traditional markets (252 days) and 24/7 markets (365 days)
+- `DataFrequency::is_likely_crypto(bars)` - Heuristic to detect 24/7 markets by checking for weekend bars
+- Added `data_frequency: Option<DataFrequency>` to `BacktestConfig` for explicit override
+- Added `trading_hours_24: Option<bool>` to `BacktestConfig` for market type override
+- Engine now auto-detects frequency and uses proper annualization factor for Sharpe/Sortino calculations
+- 13 new unit tests for DataFrequency (all passing)
+
+**Annualization factors:**
+- Traditional markets: Day=252, Hour1=1638, Minute1=98280, etc.
+- 24/7 markets: Day=365, Hour1=8760, Minute1=525600, etc.
+
+**Files modified:**
+- `src/types.rs` - Added DataFrequency enum with all methods
+- `src/engine.rs` - Updated BacktestConfig, updated result calculation to use auto-detected frequency
+- `src/config.rs` - Updated BacktestConfig initialization
+- `src/lib.rs` - Added DataFrequency to public exports
+
+**Note:** Python bindings need exposure of `freq` and `trading_hours_24` parameters - tracked separately.
+
+**Effort:** Medium (completed)
+**Dependencies:** None
+
+---
+
+### 20. Python Benchmark Comparison [NOT EXPOSED]
+**Status:** PARTIAL (Rust complete, Python missing)
+**Priority:** P2
+
+**Issue:** BenchmarkMetrics is fully implemented in Rust analytics.rs (lines 11-228) but not exposed in Python bindings.
+
+**Specification requires:**
+- `benchmark=spy_data` parameter in `mt.backtest()`
+- `results.benchmark_return` property
+- `results.excess_return` property
+- `results.beta` property
+- `results.alpha` property
+
+**Rust implementation complete:**
+- `BenchmarkMetrics::calculate()` - alpha, beta, tracking_error, information_ratio, correlation, up_capture, down_capture
+- Fully tested in analytics.rs
+
+**Missing in Python:**
+- No benchmark parameter in backtest()
+- No benchmark properties on PyBacktestResult
+
+**Effort:** Small (1-2 days)
+**Dependencies:** None
+
+---
+
+### 21. Python Split/Dividend Adjustment [NOT EXPOSED]
+**Status:** PARTIAL (Rust complete, Python missing)
+**Priority:** P2
+
+**Issue:** Split/dividend adjustment functions exist in Rust data.rs but not exposed to Python.
+
+**Specification requires:**
+- `adjust=True` parameter in `mt.load()`
+- `mt.adjust(data, splits=splits_df, dividends=divs_df)` function
+
+**Rust implementation complete:**
+- `adjust_for_splits()` - lines 2019-2052
+- `adjust_for_dividends()` - lines 2068-2137 with 3 methods (Proportional, Absolute, None)
+- `apply_adjustment_factor()` - lines 2165-2189
+- `load_corporate_actions()` - lines 2252-2424
+
+**Missing in Python:**
+- No `adjust` parameter in load()
+- No `mt.adjust()` function
+- No `CorporateAction` type exposed
+
+**Effort:** Small (1-2 days)
+**Dependencies:** None
+
+---
+
+### 22. ATR-Based Stop-Loss/Take-Profit in Python [NOT EXPOSED]
+**Status:** PARTIAL (Rust complete, Python partial)
+**Priority:** P2
+
+**Issue:** Python API only accepts percentage-based stop-loss/take-profit. ATR-based variants exist in Rust but aren't exposed.
+
+**Specification requires:**
+- `stop_loss="2atr"` syntax for ATR-based stops
+- ATR-based take-profit
+
+**Rust implementation complete:**
+- `StopLoss::Atr { multiplier, atr_value }` variant
+- `StopLoss::Trailing` variant
+- `TakeProfit::Atr` variant
+- `TakeProfit::RiskReward` variant
+
+**Python API current:**
+- `stop_loss: float` - percentage only
+- `take_profit: float` - percentage only
+
+**Missing:**
+- String parsing for `"2atr"` syntax
+- Trailing stop exposure
+- Risk-reward take-profit exposure
+
+**Effort:** Small (1-2 days)
+**Dependencies:** None
+
+---
+
+### 23. Parallel Parameter Sweep [NOT IMPLEMENTED]
+**Status:** DOCUMENTED BUT NON-FUNCTIONAL
+**Priority:** P3
+
+**Issue:** The `n_jobs` parameter in `mt.sweep()` is accepted but ignored. Sweeps run sequentially.
+
+**Specification requires:**
+- "1000 parameter combinations: < 30 seconds (parallel via rayon)"
+- `n_jobs=-1` should use all cores
+
+**Current implementation:**
+- Pure Python sequential loop in `__init__.py` lines 746-799
+- No rayon integration for sweep
+
+**Effort:** Medium (2-3 days)
+**Dependencies:** None (could add rayon-based sweep in Rust or use Python multiprocessing)
+
+---
+
 ## Summary Table
 
 | ID | Item | Status | Priority | Effort | Dependencies |
@@ -627,6 +761,11 @@ result.plot()  # Interactive Plotly in Jupyter
 | 18d | Interactive Plotly charts | **COMPLETE** | P2 | Medium | None |
 | 18e | max_position/fill_price params | **COMPLETE** | P3 | Small | None |
 | 18f | Sensitivity analysis bindings | **COMPLETE** | P3 | Medium | None |
+| 19 | Frequency Auto-Detection | **COMPLETE** | P1 | Medium | None |
+| 20 | Python Benchmark Comparison | PARTIAL | P2 | Small | None |
+| 21 | Python Split/Dividend Adjustment | PARTIAL | P2 | Small | None |
+| 22 | ATR-Based Stop-Loss in Python | PARTIAL | P2 | Small | None |
+| 23 | Parallel Parameter Sweep | NOT FUNCTIONAL | P3 | Medium | None |
 
 ---
 
@@ -677,8 +816,9 @@ result.plot()  # Interactive Plotly in Jupyter
 | **Interactive Plotly Charts** | **COMPLETE**: plotly>=5.0.0 as optional dependency (`pip install mantis-bt[jupyter]`); results.plot() auto-detects Jupyter via IPython; returns interactive Plotly Figure with equity curve and drawdown subplots in Jupyter, ASCII sparkline fallback otherwise; validation.plot() also supports Plotly with IS vs OOS bar charts; _repr_html_() for rich Jupyter display; show_drawdown parameter; Files: pyproject.toml, python/mantis/__init__.py, python/mantis/__init__.pyi |
 | **Documentation Site** | **COMPLETE**: mkdocs.yml with material theme, dark/light mode, search; docs/ with quickstart.md, cookbook/ (6 recipe pages), concepts/ (4 pages), api/ (5 reference pages), playground.md; Custom CSS for styling; Full coverage of Quick Start, Cookbook, API Reference, Concepts |
 | **Python Sensitivity Analysis Bindings** | **COMPLETE**: src/python/sensitivity.rs (~1050 lines); mt.sensitivity() for parameter sensitivity on built-in strategies with stability scores, cliffs, plateaus, heatmaps; mt.cost_sensitivity() for cost robustness testing; parameter range functions (linear_range, log_range, discrete_range, centered_range); Plotly visualization in Jupyter; type stubs for IDE autocomplete |
+| **Frequency Auto-Detection** | **COMPLETE**: DataFrequency enum with 14 variants (Second1-Month); detect() analyzes timestamp gaps; annualization_factor(trading_hours_24) for traditional (252 days) or 24/7 (365 days) markets; is_likely_crypto() heuristic; BacktestConfig.data_frequency and .trading_hours_24 overrides; Engine auto-detects frequency for Sharpe/Sortino; 13 unit tests |
 | Codebase Cleanliness | **VERIFIED**: No TODOs/FIXMEs in codebase |
-| ALL TESTS | **PASSING**: 558 lib tests (0 failures) |
+| ALL TESTS | **PASSING**: 571 lib tests (0 failures) |
 | Python Bindings Build | **VERIFIED**: `cargo check --features python` compiles successfully (API drift fix 2026-01-16) |
 
 ---
