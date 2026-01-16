@@ -1270,7 +1270,7 @@ pub fn rolling_volatility(returns: &[f64], window: usize, annualization_factor: 
 
 /// Error function (erf) approximation for normal CDF calculation.
 /// Uses Abramowitz and Stegun approximation (max error: 1.5e-7).
-fn erf(x: f64) -> f64 {
+pub fn erf(x: f64) -> f64 {
     // Constants for approximation
     let a1 = 0.254829592;
     let a2 = -0.284496736;

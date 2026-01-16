@@ -193,3 +193,6 @@ The following items were resolved on 2026-01-16:
 - **README accuracy update (2026-01-16)** → Removed false claims about unimplemented modules (features.rs, streaming.rs, regime.rs), updated to Python-first positioning per marketing-positioning.md, corrected API examples to match actual implementation
 - **Comparison plot fix (2026-01-16)** → Fixed CompareResult.plot() Plotly table type error by adding specs parameter to make_subplots
 - **Python version update (2026-01-16)** → Updated minimum Python to 3.9+ (3.8 EOL, NumPy 2.x incompatible), added Python 3.13 to CI matrix
+- **Monte Carlo enhancements (2026-01-16)** → Added mc.sharpe_distribution and mc.drawdown_distribution properties, mc.plot() ASCII histogram, mc.percentile(metric, n) multi-metric syntax
+- **Results export (2026-01-16)** → Added BacktestResult.to_dataframe() for comparison DataFrames
+- **PSR validation (2026-01-16)** → Added validation.psr property and validation.psr_threshold(benchmark) method

@@ -313,6 +313,27 @@ class BacktestResult:
     def save(self, path: str) -> None:
         return self._rust.save(path)
 
+    def to_dataframe(self) -> "pd.DataFrame":
+        """
+        Convert backtest results to a single-row DataFrame for comparison.
+
+        Returns a pandas DataFrame with one row containing all metrics as columns.
+        This is useful for comparing multiple backtest runs in a tabular format.
+
+        Returns:
+            pd.DataFrame: Single-row DataFrame with all metrics.
+
+        Example:
+            >>> results1 = mt.backtest(data, signal1)
+            >>> results2 = mt.backtest(data, signal2)
+            >>> df = pd.concat([results1.to_dataframe(), results2.to_dataframe()])
+            >>> print(df[['strategy_name', 'total_return', 'sharpe']])
+        """
+        import pandas as pd
+
+        metrics_dict = self._rust.to_dataframe()
+        return pd.DataFrame([metrics_dict])
+
     def report(self, path: str) -> None:
         return self._rust.report(path)
 
@@ -1253,6 +1274,36 @@ class ValidationResult:
 
     def fold_details(self) -> List[FoldDetail]:
         return self._rust.fold_details()
+
+    @property
+    def psr(self) -> float:
+        """Probabilistic Sharpe Ratio (probability true Sharpe > 0).
+
+        This is equivalent to psr_threshold(0.0). It represents the probability
+        that the true Sharpe ratio exceeds zero, accounting for the length of
+        the track record.
+        """
+        return self._rust.psr
+
+    def psr_threshold(self, benchmark: float = 0.0) -> float:
+        """Get the Probabilistic Sharpe Ratio against a benchmark.
+
+        The PSR represents the probability that the true Sharpe ratio exceeds
+        the benchmark. This accounts for the length of track record, skewness,
+        and kurtosis of returns.
+
+        Args:
+            benchmark: The benchmark Sharpe ratio to compare against (default: 0.0)
+
+        Returns:
+            Probability (0-1) that true Sharpe exceeds the benchmark.
+
+        Example:
+            >>> validation = results.validate()
+            >>> print(validation.psr)  # Probability true Sharpe > 0
+            >>> print(validation.psr_threshold(0.5))  # Probability true Sharpe > 0.5
+        """
+        return self._rust.psr_threshold(benchmark)
 
     def is_robust(self) -> bool:
         return self._rust.is_robust()

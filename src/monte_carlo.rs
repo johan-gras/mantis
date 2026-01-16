@@ -173,6 +173,10 @@ pub struct MonteCarloResult {
     // Distribution data
     /// All simulated returns (sorted).
     pub return_distribution: Vec<f64>,
+    /// All simulated Sharpe ratios (sorted).
+    pub sharpe_distribution: Vec<f64>,
+    /// All simulated max drawdowns (sorted).
+    pub drawdown_distribution: Vec<f64>,
     /// Percentile returns (5th, 10th, 25th, 50th, 75th, 90th, 95th).
     pub return_percentiles: HashMap<String, f64>,
 }
@@ -494,6 +498,8 @@ impl MonteCarloSimulator {
             var,
             cvar,
             return_distribution: all_total_returns,
+            sharpe_distribution: all_sharpes,
+            drawdown_distribution: all_max_drawdowns,
             return_percentiles,
         }
     }
@@ -581,6 +587,8 @@ impl MonteCarloSimulator {
             var: 0.0,
             cvar: 0.0,
             return_distribution: vec![],
+            sharpe_distribution: vec![],
+            drawdown_distribution: vec![],
             return_percentiles: HashMap::new(),
         }
     }

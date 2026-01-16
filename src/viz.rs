@@ -673,6 +673,157 @@ pub fn export_heatmap_svg_with_config(
 }
 
 // ============================================================================
+// Monte Carlo Visualization
+// ============================================================================
+
+use crate::monte_carlo::MonteCarloResult;
+
+/// Generate an ASCII histogram of Monte Carlo simulation results.
+///
+/// Shows return, Sharpe, and drawdown distributions with key statistics.
+///
+/// # Arguments
+/// * `result` - The Monte Carlo simulation result.
+/// * `width` - Width of the histogram bars (default: 40).
+///
+/// # Returns
+/// A string containing the formatted Monte Carlo visualization.
+pub fn monte_carlo_chart(result: &MonteCarloResult, width: usize) -> String {
+    let mut output = String::new();
+
+    writeln!(output, "Monte Carlo Simulation ({} iterations)", result.num_simulations).unwrap();
+    writeln!(output, "{}", "═".repeat(60)).unwrap();
+
+    // Return distribution histogram
+    if !result.return_distribution.is_empty() {
+        writeln!(output, "\nReturn Distribution:").unwrap();
+        output.push_str(&histogram(&result.return_distribution, width, "%"));
+
+        writeln!(
+            output,
+            "  Mean: {:+.2}%  Median: {:+.2}%  Std: {:.2}%",
+            result.mean_return, result.median_return, result.return_std
+        )
+        .unwrap();
+        writeln!(
+            output,
+            "  95% CI: [{:+.2}%, {:+.2}%]  P(>0): {:.1}%",
+            result.return_ci.0,
+            result.return_ci.1,
+            result.prob_positive_return * 100.0
+        )
+        .unwrap();
+    }
+
+    // Sharpe distribution histogram
+    if !result.sharpe_distribution.is_empty() {
+        writeln!(output, "\nSharpe Ratio Distribution:").unwrap();
+        output.push_str(&histogram(&result.sharpe_distribution, width, ""));
+
+        writeln!(
+            output,
+            "  Mean: {:.2}  Median: {:.2}",
+            result.mean_sharpe, result.median_sharpe
+        )
+        .unwrap();
+        writeln!(
+            output,
+            "  95% CI: [{:.2}, {:.2}]  P(>0): {:.1}%",
+            result.sharpe_ci.0,
+            result.sharpe_ci.1,
+            result.prob_positive_sharpe * 100.0
+        )
+        .unwrap();
+    }
+
+    // Drawdown distribution histogram
+    if !result.drawdown_distribution.is_empty() {
+        writeln!(output, "\nMax Drawdown Distribution:").unwrap();
+        output.push_str(&histogram(&result.drawdown_distribution, width, "%"));
+
+        writeln!(
+            output,
+            "  Mean: {:.2}%  Median: {:.2}%  95th: {:.2}%",
+            result.mean_max_drawdown, result.median_max_drawdown, result.max_drawdown_95th
+        )
+        .unwrap();
+    }
+
+    // Risk metrics
+    writeln!(output, "\n{}", "─".repeat(60)).unwrap();
+    writeln!(
+        output,
+        "Risk: VaR(95%): {:.2}%  CVaR: {:.2}%",
+        result.var, result.cvar
+    )
+    .unwrap();
+    writeln!(
+        output,
+        "Robustness Score: {:.0}/100  Verdict: {}",
+        result.robustness_score(),
+        result.verdict().label().to_uppercase()
+    )
+    .unwrap();
+
+    output
+}
+
+/// Generate a simple ASCII histogram from distribution data.
+fn histogram(data: &[f64], width: usize, suffix: &str) -> String {
+    const NUM_BINS: usize = 10;
+
+    if data.is_empty() {
+        return String::new();
+    }
+
+    let min_val = data.iter().cloned().fold(f64::INFINITY, f64::min);
+    let max_val = data.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+    let range = max_val - min_val;
+
+    if range <= 0.0 {
+        return format!("  All values: {:.2}{}\n", min_val, suffix);
+    }
+
+    let bin_width = range / NUM_BINS as f64;
+
+    // Count values in each bin
+    let mut bins = [0usize; NUM_BINS];
+    for &val in data {
+        let bin_idx = ((val - min_val) / bin_width).floor() as usize;
+        let bin_idx = bin_idx.min(NUM_BINS - 1);
+        bins[bin_idx] += 1;
+    }
+
+    let max_count = *bins.iter().max().unwrap_or(&1);
+
+    let mut output = String::new();
+
+    for (i, &count) in bins.iter().enumerate() {
+        let bin_start = min_val + i as f64 * bin_width;
+        let bar_len = if max_count > 0 {
+            (count as f64 / max_count as f64 * width as f64) as usize
+        } else {
+            0
+        };
+        let bar: String = "█".repeat(bar_len);
+        let percentage = count as f64 / data.len() as f64 * 100.0;
+
+        writeln!(
+            output,
+            "  {:>7.1}{} |{:<width$}| {:>5.1}%",
+            bin_start,
+            suffix,
+            bar,
+            percentage,
+            width = width
+        )
+        .unwrap();
+    }
+
+    output
+}
+
+// ============================================================================
 // ASCII Heatmap (Terminal-friendly)
 // ============================================================================
 

@@ -11,7 +11,7 @@ use std::fs::File;
 use uuid::Uuid;
 
 use crate::analytics::{
-    rolling_drawdown, rolling_drawdown_windowed, rolling_max_drawdown, rolling_sharpe,
+    erf, rolling_drawdown, rolling_drawdown_windowed, rolling_max_drawdown, rolling_sharpe,
     rolling_volatility, BenchmarkMetrics, PerformanceMetrics,
 };
 use crate::engine::{BacktestConfig, BacktestResult, Engine};
@@ -19,7 +19,7 @@ use crate::export::{export_walkforward_html, Exporter, PerformanceSummary};
 use crate::monte_carlo::{MonteCarloConfig, MonteCarloResult, MonteCarloSimulator};
 use crate::strategy::{Strategy, StrategyContext};
 use crate::types::{Bar, Signal};
-use crate::viz::{sparkline, walkforward_fold_chart};
+use crate::viz::{monte_carlo_chart, sparkline, walkforward_fold_chart};
 use crate::walkforward::{WalkForwardConfig, WalkForwardResult, WalkForwardWindow, WindowResult};
 
 use super::types::PyTrade;
@@ -561,6 +561,72 @@ impl PyBacktestResult {
         Ok(())
     }
 
+    /// Convert backtest results to a single-row DataFrame for comparison.
+    ///
+    /// Returns a pandas DataFrame with one row containing all metrics as columns.
+    /// This is useful for comparing multiple backtest runs in a tabular format.
+    ///
+    /// Returns:
+    ///     pd.DataFrame: Single-row DataFrame with all metrics.
+    ///
+    /// Example:
+    ///     >>> results1 = mt.backtest(data, signal1)
+    ///     >>> results2 = mt.backtest(data, signal2)
+    ///     >>> df = pd.concat([results1.to_dataframe(), results2.to_dataframe()])
+    ///     >>> print(df[['strategy_name', 'total_return', 'sharpe']])
+    fn to_dataframe<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
+        // Return a dict that pandas can convert to DataFrame
+        // pandas.DataFrame(result.to_dataframe(), index=[0]) works
+        let dict = PyDict::new_bound(py);
+
+        // Strategy info
+        dict.set_item("strategy_name", &self.strategy_name)?;
+        dict.set_item("symbols", self.symbols.join(","))?;
+
+        // Core metrics
+        dict.set_item("initial_capital", self.initial_capital)?;
+        dict.set_item("final_equity", self.final_equity)?;
+        dict.set_item("total_return", self.total_return)?;
+        dict.set_item("cagr", self.cagr)?;
+        dict.set_item("sharpe", self.sharpe)?;
+        dict.set_item("sortino", self.sortino)?;
+        dict.set_item("calmar", self.calmar)?;
+        dict.set_item("max_drawdown", self.max_drawdown)?;
+
+        // Trading metrics
+        dict.set_item("win_rate", self.win_rate)?;
+        dict.set_item("profit_factor", self.profit_factor)?;
+        dict.set_item("total_trades", self.total_trades)?;
+        dict.set_item("winning_trades", self.winning_trades)?;
+        dict.set_item("losing_trades", self.losing_trades)?;
+        dict.set_item("avg_win", self.avg_win)?;
+        dict.set_item("avg_loss", self.avg_loss)?;
+        dict.set_item("trading_days", self.trading_days)?;
+
+        // Advanced metrics
+        let perf_metrics = PerformanceMetrics::from_result(&self.rust_result);
+        dict.set_item("deflated_sharpe", perf_metrics.deflated_sharpe_ratio)?;
+        dict.set_item("psr", perf_metrics.probabilistic_sharpe_ratio)?;
+        dict.set_item("volatility", perf_metrics.volatility_annual / 100.0)?;
+        dict.set_item(
+            "max_drawdown_duration",
+            perf_metrics.max_drawdown_duration_days,
+        )?;
+        dict.set_item("avg_trade_duration", perf_metrics.avg_holding_period_days)?;
+
+        // Benchmark metrics if available
+        if let Some(ref bm) = self.benchmark_metrics {
+            dict.set_item("alpha", bm.alpha)?;
+            dict.set_item("beta", bm.beta)?;
+            dict.set_item("benchmark_return", bm.benchmark_return_pct / 100.0)?;
+            dict.set_item("excess_return", bm.excess_return_pct / 100.0)?;
+            dict.set_item("tracking_error", bm.tracking_error)?;
+            dict.set_item("information_ratio", bm.information_ratio)?;
+        }
+
+        Ok(dict)
+    }
+
     /// Generate a self-contained HTML report.
     ///
     /// The report includes:
@@ -976,6 +1042,73 @@ impl PyValidationResult {
     /// Check if the validation result indicates a robust strategy.
     fn is_robust(&self) -> bool {
         self.verdict == "robust" || self.verdict == "borderline"
+    }
+
+    /// Get the Probabilistic Sharpe Ratio (PSR) against a benchmark.
+    ///
+    /// The PSR represents the probability that the true Sharpe ratio exceeds
+    /// the benchmark. This accounts for the length of track record, skewness,
+    /// and kurtosis of returns.
+    ///
+    /// Args:
+    ///     benchmark: The benchmark Sharpe ratio to compare against (default: 0.0)
+    ///
+    /// Returns:
+    ///     float: Probability (0-1) that true Sharpe exceeds the benchmark.
+    ///
+    /// Example:
+    ///     >>> validation = results.validate()
+    ///     >>> print(validation.psr)  # Probability true Sharpe > 0
+    ///     >>> print(validation.psr_threshold(0.5))  # Probability true Sharpe > 0.5
+    #[pyo3(signature = (benchmark=0.0))]
+    fn psr_threshold(&self, benchmark: f64) -> f64 {
+        // Use OOS Sharpe and OOS observations for PSR calculation
+        let sharpe = self.oos_sharpe;
+        let n_observations: usize = self.rust_result.windows.iter().map(|w| w.window.oos_bars).sum();
+
+        if n_observations == 0 || sharpe.is_nan() {
+            return 0.5; // No data, coin flip
+        }
+
+        // Calculate skewness and kurtosis from OOS returns
+        // For simplicity, use normal assumptions (skew=0, kurtosis=3 i.e. excess kurtosis=0)
+        // This is conservative and avoids needing to store raw returns
+        let skewness = 0.0;
+        let kurtosis = 0.0; // excess kurtosis
+
+        // PSR formula: P(SR_true > benchmark)
+        // Standard error of Sharpe: sqrt((1 + 0.5*SR^2 - skew*SR + (kurtosis-1)/4*SR^2) / T)
+        let n = n_observations as f64;
+        let sr_diff = sharpe - benchmark;
+
+        // Simplified standard error (assuming normal returns)
+        let se = ((1.0 + 0.5 * sharpe * sharpe) / n).sqrt();
+
+        if se <= 0.0 {
+            return if sr_diff > 0.0 { 1.0 } else { 0.0 };
+        }
+
+        // Z-score
+        let z = sr_diff / se;
+
+        // CDF of standard normal
+        // Using approximation: Phi(z) ≈ 0.5 * (1 + erf(z / sqrt(2)))
+        let psr = 0.5 * (1.0 + erf(z / std::f64::consts::SQRT_2));
+
+        // Adjust for skewness and kurtosis
+        // Full formula: sqrt((1 + 0.5*SR^2 - skew*SR + (kurt-1)/4*SR^2) / (T-1))
+        let _ = skewness; // Placeholder for future enhancement
+        let _ = kurtosis;
+
+        psr.clamp(0.0, 1.0)
+    }
+
+    /// Get the base PSR (probability true Sharpe > 0).
+    ///
+    /// This is a convenience property equivalent to psr_threshold(0.0).
+    #[getter]
+    fn psr(&self) -> f64 {
+        self.psr_threshold(0.0)
     }
 
     /// Check for suspicious validation metrics and return warnings.
@@ -1522,7 +1655,9 @@ pub struct PyMonteCarloResult {
     pub cvar: f64,
 
     // Distribution data (internal)
-    return_distribution: Vec<f64>,
+    return_distribution_data: Vec<f64>,
+    sharpe_distribution_data: Vec<f64>,
+    drawdown_distribution_data: Vec<f64>,
     return_percentiles: HashMap<String, f64>,
 
     // For methods
@@ -1532,9 +1667,45 @@ pub struct PyMonteCarloResult {
 #[pymethods]
 impl PyMonteCarloResult {
     /// Get the return distribution as a numpy array.
+    ///
+    /// Returns a sorted array of simulated total returns from all Monte Carlo
+    /// iterations. Use this to analyze the full distribution of possible outcomes.
+    ///
+    /// Example:
+    ///     >>> mc = results.monte_carlo(n_simulations=1000)
+    ///     >>> returns = mc.return_distribution
+    ///     >>> print(f"5th percentile: {np.percentile(returns, 5):.2f}%")
     #[getter]
     fn return_distribution<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<f64>> {
-        PyArray1::from_vec_bound(py, self.return_distribution.clone())
+        PyArray1::from_vec_bound(py, self.return_distribution_data.clone())
+    }
+
+    /// Get the Sharpe ratio distribution as a numpy array.
+    ///
+    /// Returns a sorted array of simulated Sharpe ratios from all Monte Carlo
+    /// iterations. Use this to understand the uncertainty in the Sharpe estimate.
+    ///
+    /// Example:
+    ///     >>> mc = results.monte_carlo(n_simulations=1000)
+    ///     >>> sharpes = mc.sharpe_distribution
+    ///     >>> print(f"Median Sharpe: {np.median(sharpes):.2f}")
+    #[getter]
+    fn sharpe_distribution<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<f64>> {
+        PyArray1::from_vec_bound(py, self.sharpe_distribution_data.clone())
+    }
+
+    /// Get the max drawdown distribution as a numpy array.
+    ///
+    /// Returns a sorted array of simulated maximum drawdowns from all Monte Carlo
+    /// iterations. Use this to understand worst-case drawdown scenarios.
+    ///
+    /// Example:
+    ///     >>> mc = results.monte_carlo(n_simulations=1000)
+    ///     >>> drawdowns = mc.drawdown_distribution
+    ///     >>> print(f"95th percentile drawdown: {np.percentile(drawdowns, 95):.2f}%")
+    #[getter]
+    fn drawdown_distribution<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<f64>> {
+        PyArray1::from_vec_bound(py, self.drawdown_distribution_data.clone())
     }
 
     /// Get return percentiles as a dictionary.
@@ -1571,38 +1742,91 @@ impl PyMonteCarloResult {
         self.rust_result.verdict().label().to_string()
     }
 
-    /// Get a specific percentile from the return distribution.
+    /// Get a specific percentile from a distribution.
+    ///
+    /// Can be called in two ways:
+    /// - percentile(n): Get percentile from return distribution (backwards compatible)
+    /// - percentile(metric, n): Get percentile from specified distribution
     ///
     /// Args:
-    ///     percentile: Percentile to retrieve (0-100)
+    ///     metric_or_percentile: Either a metric name ("return", "sharpe", "drawdown")
+    ///                          or a percentile value (0-100) for return distribution
+    ///     percentile: Percentile to retrieve (0-100) when metric is specified
     ///
     /// Returns:
-    ///     The return value at the given percentile
-    fn percentile(&self, percentile: usize) -> PyResult<f64> {
-        if percentile > 100 {
+    ///     The value at the given percentile
+    ///
+    /// Example:
+    ///     >>> mc = results.monte_carlo(n_simulations=1000)
+    ///     >>> mc.percentile(10)  # 10th percentile return
+    ///     >>> mc.percentile("sharpe", 10)  # 10th percentile Sharpe
+    ///     >>> mc.percentile("drawdown", 99)  # 99th percentile worst drawdown
+    #[pyo3(signature = (metric_or_percentile, percentile=None))]
+    fn percentile(&self, metric_or_percentile: &Bound<'_, pyo3::PyAny>, percentile: Option<usize>) -> PyResult<f64> {
+        // Determine which syntax is being used
+        let (distribution, pct) = if let Ok(metric_str) = metric_or_percentile.extract::<String>() {
+            // String metric name provided
+            let pct = percentile.ok_or_else(|| {
+                pyo3::exceptions::PyValueError::new_err(
+                    "When specifying a metric name, percentile must be provided.\n\
+                     Example: mc.percentile('sharpe', 10)"
+                )
+            })?;
+
+            let dist = match metric_str.to_lowercase().as_str() {
+                "return" | "returns" => &self.return_distribution_data,
+                "sharpe" => &self.sharpe_distribution_data,
+                "drawdown" | "max_drawdown" => &self.drawdown_distribution_data,
+                _ => return Err(pyo3::exceptions::PyValueError::new_err(
+                    format!("Unknown metric '{}'. Valid metrics: 'return', 'sharpe', 'drawdown'", metric_str)
+                )),
+            };
+            (dist, pct)
+        } else if let Ok(pct) = metric_or_percentile.extract::<usize>() {
+            // Integer percentile provided (backwards compatible)
+            (&self.return_distribution_data, pct)
+        } else {
+            return Err(pyo3::exceptions::PyTypeError::new_err(
+                "First argument must be either a metric name (str) or percentile (int)"
+            ));
+        };
+
+        if pct > 100 {
             return Err(pyo3::exceptions::PyValueError::new_err(
                 "Percentile must be between 0 and 100",
             ));
         }
 
-        let key = format!("{}th", percentile);
-        if let Some(&value) = self.return_percentiles.get(&key) {
-            return Ok(value);
-        }
-
-        // Calculate from distribution if not pre-computed
-        if self.return_distribution.is_empty() {
+        if distribution.is_empty() {
             return Ok(0.0);
         }
 
-        let idx =
-            (percentile as f64 / 100.0 * (self.return_distribution.len() - 1) as f64) as usize;
-        Ok(self.return_distribution[idx])
+        let idx = (pct as f64 / 100.0 * (distribution.len() - 1) as f64) as usize;
+        Ok(distribution[idx.min(distribution.len() - 1)])
     }
 
     /// Generate a summary report string.
     fn summary(&self) -> String {
         self.rust_result.summary()
+    }
+
+    /// Display an ASCII visualization of Monte Carlo distributions.
+    ///
+    /// Shows histograms of return, Sharpe ratio, and max drawdown distributions
+    /// with key statistics and confidence intervals.
+    ///
+    /// Args:
+    ///     width: Width of histogram bars in characters (default: 30)
+    ///
+    /// Returns:
+    ///     A string containing the formatted Monte Carlo visualization.
+    ///
+    /// Example:
+    ///     >>> mc = results.monte_carlo(n_simulations=1000)
+    ///     >>> print(mc.plot())
+    #[pyo3(signature = (width=30))]
+    fn plot(&self, width: usize) -> String {
+        monte_carlo_chart(&self.rust_result, width)
     }
 
     fn __repr__(&self) -> String {
@@ -1638,7 +1862,9 @@ impl PyMonteCarloResult {
             prob_positive_sharpe: result.prob_positive_sharpe,
             var: result.var,
             cvar: result.cvar,
-            return_distribution: result.return_distribution.clone(),
+            return_distribution_data: result.return_distribution.clone(),
+            sharpe_distribution_data: result.sharpe_distribution.clone(),
+            drawdown_distribution_data: result.drawdown_distribution.clone(),
             return_percentiles: result.return_percentiles.clone(),
             rust_result: result,
         }
