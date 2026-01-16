@@ -40,3 +40,5 @@ site/
 
 # Virtual environment
 .venv/
+.coverage
+htmlcov/

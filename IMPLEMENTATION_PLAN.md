@@ -11,7 +11,7 @@ Mantis is a high-performance Rust CLI backtest engine for quantitative trading w
 **Test Status:** 491 Rust tests ALL PASSING
 **Clippy Status:** CLEAN (0 warnings)
 **Benchmark Status:** Compiles and runs (6 benchmark groups active, including ONNX)
-**Python Tests:** 195 tests ALL PASSING
+**Python Tests:** 258 tests ALL PASSING (81% coverage)
 **Latest Tag:** v0.0.118
 
 ---
@@ -80,8 +80,9 @@ Per spec gap analysis on 2026-01-16, all items resolved:
 
 **4. Code Coverage Below Threshold**
 - [ ] Increase Rust coverage from 70.7% to >= 80%
-- [ ] Increase Python coverage from 48.2% to >= 80%
+- [x] Increase Python coverage from 68% to >= 80% - **DONE: now at 81%**
 - Required by specs/launch-requirements.md
+- Note: Python coverage was actually 68% (not 48.2%), now at 81% with 63 new tests
 
 ### Optional Future Enhancements
 
@@ -148,7 +149,7 @@ These modules are NOT required for production but noted for potential expansion:
 | Property (proptest) | 22 | PASS |
 | Doc tests | 18 | PASS |
 | **Total Rust** | **491** | **ALL PASS** |
-| **Python** | **195** | **ALL PASS** |
+| **Python** | **258** | **ALL PASS (81% coverage)** |
 
 ---
 
@@ -257,3 +258,4 @@ The following items were resolved on 2026-01-16:
 - **optimization_9param spec fix (2026-01-16)** → Fixed optimization_9param benchmark target from < 1ms (impossible for full execution) to < 10ms in specs/benchmarking.md and benches/backtest_bench.rs. The word "setup" in the original description was misleading - the benchmark measures full execution of 9 backtests (~5.4ms actual), which cannot complete in 1ms. Changed description to "9-parameter grid optimization (full execution)" for clarity.
 - **CI workflow fixes (2026-01-16)** → Fixed CI workflows to use `--features onnx` instead of `--all-features` (which caused issues with pyo3 extension-module feature). Added `--features onnx` to bench.yml for ONNX benchmarks. Fixed new clippy lints from Rust 1.92 (manual_range_contains, field_reassign_with_default, needless_range_loop, unnecessary_get_then_check).
 - **CI maturin venv fix (2026-01-16)** → Added virtual environment creation for `maturin develop` in python-test, docs-examples, and python-coverage jobs. `maturin develop` requires a venv to work correctly.
+- **Python coverage improvement (2026-01-16)** → Increased Python test coverage from 68% to 81% (above 80% threshold). Added 63 new tests in `tests/python/test_coverage_gaps.py` covering: Plotly visualization code paths (mocked Jupyter environment), ASCII plot save paths, result repr/str methods, Monte Carlo distribution methods, sensitivity/cost sensitivity methods, backtest configuration variants.
