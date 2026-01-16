@@ -1777,7 +1777,6 @@ mod tests {
     use crate::engine::BacktestConfig;
     use crate::types::{Side, Trade};
     use chrono::{Duration, TimeZone};
-    use std::collections::HashMap;
     use tempfile::NamedTempFile;
 
     fn create_test_result() -> BacktestResult {

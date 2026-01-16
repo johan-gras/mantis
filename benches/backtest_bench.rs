@@ -6,7 +6,6 @@ use chrono::{TimeZone, Utc};
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
 use mantis::data::{atr, bollinger_bands, ema, macd, rsi, sma};
 use mantis::engine::{BacktestConfig, Engine};
-use mantis::features::{FeatureConfig, FeatureExtractor};
 use mantis::strategies::{MacdStrategy, MomentumStrategy, RsiStrategy, SmaCrossover};
 use mantis::types::Bar;
 
@@ -142,46 +141,8 @@ fn bench_backtest(c: &mut Criterion) {
     group.finish();
 }
 
-/// Benchmark feature extraction.
-fn bench_features(c: &mut Criterion) {
-    let mut group = c.benchmark_group("features");
-
-    // Different data sizes
-    for size in [252, 500, 1000].iter() {
-        let bars = generate_bars(*size);
-
-        group.bench_with_input(
-            BenchmarkId::new("extract_minimal", size),
-            &bars,
-            |b, bars| {
-                let config = FeatureConfig::minimal();
-                let extractor = FeatureExtractor::new(config);
-                b.iter(|| extractor.extract(black_box(bars)))
-            },
-        );
-
-        group.bench_with_input(
-            BenchmarkId::new("extract_comprehensive", size),
-            &bars,
-            |b, bars| {
-                let config = FeatureConfig::comprehensive();
-                let extractor = FeatureExtractor::new(config);
-                b.iter(|| extractor.extract(black_box(bars)))
-            },
-        );
-    }
-
-    // CSV export
-    let bars = generate_bars(500);
-    let config = FeatureConfig::minimal();
-    let extractor = FeatureExtractor::new(config);
-
-    group.bench_function("to_csv_500", |b| {
-        b.iter(|| extractor.to_csv(black_box(&bars), Some(5)))
-    });
-
-    group.finish();
-}
+// NOTE: bench_features removed - mantis::features module not implemented
+// TODO: Re-add when FeatureConfig/FeatureExtractor are implemented
 
 /// Benchmark parameter optimization.
 fn bench_optimization(c: &mut Criterion) {
@@ -222,49 +183,8 @@ fn bench_optimization(c: &mut Criterion) {
     group.finish();
 }
 
-/// Benchmark streaming indicators.
-fn bench_streaming_indicators(c: &mut Criterion) {
-    use mantis::streaming::{StreamingEMA, StreamingIndicator, StreamingRSI, StreamingSMA};
-
-    let bars = generate_bars(1000);
-
-    let mut group = c.benchmark_group("streaming");
-
-    // Streaming SMA
-    group.bench_function("streaming_sma_20", |b| {
-        b.iter(|| {
-            let mut sma = StreamingSMA::new(20);
-            for bar in black_box(&bars) {
-                sma.update(bar.close);
-            }
-            sma.value()
-        })
-    });
-
-    // Streaming EMA
-    group.bench_function("streaming_ema_20", |b| {
-        b.iter(|| {
-            let mut ema = StreamingEMA::new(20);
-            for bar in black_box(&bars) {
-                ema.update(bar.close);
-            }
-            ema.value()
-        })
-    });
-
-    // Streaming RSI
-    group.bench_function("streaming_rsi_14", |b| {
-        b.iter(|| {
-            let mut rsi = StreamingRSI::new(14);
-            for bar in black_box(&bars) {
-                rsi.update(bar.close);
-            }
-            rsi.value()
-        })
-    });
-
-    group.finish();
-}
+// NOTE: bench_streaming_indicators removed - mantis::streaming module not implemented
+// TODO: Re-add when StreamingSMA/StreamingEMA/StreamingRSI are implemented
 
 /// Benchmark Monte Carlo simulation.
 fn bench_monte_carlo(c: &mut Criterion) {
@@ -309,25 +229,8 @@ fn bench_monte_carlo(c: &mut Criterion) {
     group.finish();
 }
 
-/// Benchmark regime detection.
-fn bench_regime_detection(c: &mut Criterion) {
-    use mantis::regime::{RegimeConfig, RegimeDetector};
-
-    let mut group = c.benchmark_group("regime");
-
-    // Different data sizes
-    for size in [252, 500, 1000].iter() {
-        let bars = generate_bars(*size);
-
-        group.bench_with_input(BenchmarkId::new("detect", size), &bars, |b, bars| {
-            let config = RegimeConfig::default();
-            let detector = RegimeDetector::new(config);
-            b.iter(|| detector.detect(black_box(bars)))
-        });
-    }
-
-    group.finish();
-}
+// NOTE: bench_regime_detection removed - mantis::regime module not implemented
+// TODO: Re-add when RegimeConfig/RegimeDetector are implemented
 
 /// Benchmark Parquet export.
 fn bench_parquet_export(c: &mut Criterion) {
@@ -365,11 +268,11 @@ criterion_group!(
     benches,
     bench_indicators,
     bench_backtest,
-    bench_features,
+    // bench_features,              // Removed: mantis::features not implemented
     bench_optimization,
-    bench_streaming_indicators,
+    // bench_streaming_indicators,  // Removed: mantis::streaming not implemented
     bench_monte_carlo,
-    bench_regime_detection,
+    // bench_regime_detection,      // Removed: mantis::regime not implemented
     bench_parquet_export,
 );
 
