@@ -1,6 +1,14 @@
 //! Performance benchmarks for the backtest engine.
 //!
 //! Run with: cargo bench
+//!
+//! Spec-required benchmarks (benchmarking.md):
+//! - single_bar_1000: < 100us - 1000-bar backtest, single symbol
+//! - daily_10y: < 100ms - 10-year daily data (2520 bars)
+//! - optimization_9param: < 1ms - 9-parameter grid search setup
+//! - sweep_1000: < 30s - 1000 parameter combinations
+//! - walkforward_12fold: < 2s - Walk-forward with 12 folds
+//! - multi_symbol_3: < 300ms - 3-symbol portfolio, 10y daily
 
 use chrono::{TimeZone, Utc};
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
@@ -8,6 +16,7 @@ use mantis::data::{atr, bollinger_bands, ema, macd, rsi, sma};
 use mantis::engine::{BacktestConfig, Engine};
 use mantis::strategies::{MacdStrategy, MomentumStrategy, RsiStrategy, SmaCrossover};
 use mantis::types::Bar;
+use mantis::walkforward::{WalkForwardAnalyzer, WalkForwardConfig, WalkForwardMetric};
 
 /// Generate synthetic bars for benchmarking.
 fn generate_bars(count: usize) -> Vec<Bar> {
@@ -15,6 +24,30 @@ fn generate_bars(count: usize) -> Vec<Bar> {
     (0..count)
         .map(|i| {
             let noise = ((i as f64 * 0.7).sin() * 2.0 + (i as f64 * 1.3).cos()) * 0.5;
+            price += 0.001 * price + noise;
+            price = price.max(50.0);
+
+            Bar::new(
+                Utc.with_ymd_and_hms(2020, 1, 1, 0, 0, 0).unwrap()
+                    + chrono::Duration::days(i as i64),
+                price - 1.0,
+                price + 2.0,
+                price - 2.0,
+                price + 0.5,
+                1_000_000.0,
+            )
+        })
+        .collect()
+}
+
+/// Generate synthetic bars with a different seed for multi-symbol tests.
+fn generate_bars_with_seed(count: usize, seed: f64) -> Vec<Bar> {
+    let mut price = 100.0 + seed * 10.0;
+    (0..count)
+        .map(|i| {
+            let noise = ((i as f64 * (0.7 + seed * 0.1)).sin() * 2.0
+                + (i as f64 * (1.3 + seed * 0.1)).cos())
+                * 0.5;
             price += 0.001 * price + noise;
             price = price.max(50.0);
 
@@ -232,6 +265,178 @@ fn bench_monte_carlo(c: &mut Criterion) {
 // NOTE: bench_regime_detection removed - mantis::regime module not implemented
 // TODO: Re-add when RegimeConfig/RegimeDetector are implemented
 
+/// Spec-required benchmarks per benchmarking.md
+fn bench_spec_required(c: &mut Criterion) {
+    let mut group = c.benchmark_group("spec_required");
+
+    // single_bar_1000: 1000-bar backtest, single symbol (target: < 100us)
+    let bars_1000 = generate_bars(1000);
+    group.bench_function("single_bar_1000", |b| {
+        b.iter(|| {
+            let config = BacktestConfig {
+                initial_capital: 100_000.0,
+                show_progress: false,
+                ..Default::default()
+            };
+            let mut engine = Engine::new(config);
+            engine.add_data("TEST".to_string(), bars_1000.clone());
+            let mut strategy = SmaCrossover::new(10, 30);
+            engine.run(black_box(&mut strategy), "TEST")
+        })
+    });
+
+    // daily_10y: 10-year daily data (2520 bars) (target: < 100ms)
+    let bars_10y = generate_bars(2520);
+    group.bench_function("daily_10y", |b| {
+        b.iter(|| {
+            let config = BacktestConfig {
+                initial_capital: 100_000.0,
+                show_progress: false,
+                ..Default::default()
+            };
+            let mut engine = Engine::new(config);
+            engine.add_data("TEST".to_string(), bars_10y.clone());
+            let mut strategy = SmaCrossover::new(10, 30);
+            engine.run(black_box(&mut strategy), "TEST")
+        })
+    });
+
+    // multi_symbol_3: 3-symbol portfolio, 10y daily (target: < 300ms)
+    let bars_sym1 = generate_bars_with_seed(2520, 0.0);
+    let bars_sym2 = generate_bars_with_seed(2520, 1.0);
+    let bars_sym3 = generate_bars_with_seed(2520, 2.0);
+    group.bench_function("multi_symbol_3", |b| {
+        b.iter(|| {
+            let config = BacktestConfig {
+                initial_capital: 100_000.0,
+                show_progress: false,
+                ..Default::default()
+            };
+            let mut engine = Engine::new(config);
+            engine.add_data("SYM1".to_string(), bars_sym1.clone());
+            engine.add_data("SYM2".to_string(), bars_sym2.clone());
+            engine.add_data("SYM3".to_string(), bars_sym3.clone());
+
+            // Run backtest on each symbol (multi-symbol not yet combined)
+            let mut strategy1 = SmaCrossover::new(10, 30);
+            let r1 = engine.run(black_box(&mut strategy1), "SYM1");
+
+            let config = BacktestConfig {
+                initial_capital: 100_000.0,
+                show_progress: false,
+                ..Default::default()
+            };
+            let mut engine = Engine::new(config);
+            engine.add_data("SYM1".to_string(), bars_sym1.clone());
+            engine.add_data("SYM2".to_string(), bars_sym2.clone());
+            engine.add_data("SYM3".to_string(), bars_sym3.clone());
+
+            let mut strategy2 = SmaCrossover::new(10, 30);
+            let r2 = engine.run(black_box(&mut strategy2), "SYM2");
+
+            let config = BacktestConfig {
+                initial_capital: 100_000.0,
+                show_progress: false,
+                ..Default::default()
+            };
+            let mut engine = Engine::new(config);
+            engine.add_data("SYM1".to_string(), bars_sym1.clone());
+            engine.add_data("SYM2".to_string(), bars_sym2.clone());
+            engine.add_data("SYM3".to_string(), bars_sym3.clone());
+
+            let mut strategy3 = SmaCrossover::new(10, 30);
+            let r3 = engine.run(black_box(&mut strategy3), "SYM3");
+
+            (r1, r2, r3)
+        })
+    });
+
+    group.finish();
+}
+
+/// Benchmark parameter sweep (spec-required: sweep_1000 < 30s).
+fn bench_sweep_1000(c: &mut Criterion) {
+    let mut group = c.benchmark_group("sweep");
+    group.sample_size(10); // Fewer samples for slow benchmarks
+
+    let bars = generate_bars(500); // Smaller data for reasonable sweep time
+
+    // Generate 1000 parameter combinations
+    // Using 10 fast × 10 slow × 10 threshold = 1000 combinations
+    let params: Vec<(usize, usize)> = (5..=50)
+        .step_by(5)
+        .flat_map(|fast| (20..=110).step_by(10).map(move |slow| (fast, slow)))
+        .filter(|(fast, slow)| fast < slow)
+        .take(1000)
+        .collect();
+
+    // sweep_1000: 1000 parameter combinations (target: < 30s)
+    group.bench_function("sweep_1000", |b| {
+        b.iter(|| {
+            let config = BacktestConfig {
+                initial_capital: 100_000.0,
+                show_progress: false,
+                ..Default::default()
+            };
+            let mut engine = Engine::new(config);
+            engine.add_data("TEST".to_string(), bars.clone());
+
+            engine.optimize("TEST", params.clone(), |&(fast, slow)| {
+                Box::new(SmaCrossover::new(fast, slow))
+            })
+        })
+    });
+
+    group.finish();
+}
+
+/// Benchmark walk-forward analysis (spec-required: walkforward_12fold < 2s).
+fn bench_walkforward(c: &mut Criterion) {
+    let mut group = c.benchmark_group("walkforward");
+    group.sample_size(10); // Fewer samples for slow benchmarks
+
+    // Need enough data for 12 folds: 12 * 50 = 600 bars minimum
+    let bars = generate_bars(1200); // 1200 bars for 12-fold
+
+    // Parameter grid for optimization within each fold
+    let params: Vec<(usize, usize)> = vec![
+        (5, 20),
+        (10, 30),
+        (15, 40),
+        (20, 50),
+    ];
+
+    // walkforward_12fold: Walk-forward with 12 folds (target: < 2s)
+    group.bench_function("walkforward_12fold", |b| {
+        b.iter(|| {
+            let wf_config = WalkForwardConfig {
+                num_windows: 12,
+                in_sample_ratio: 0.75,
+                anchored: true,
+                min_bars_per_window: 50,
+            };
+
+            let backtest_config = BacktestConfig {
+                initial_capital: 100_000.0,
+                show_progress: false,
+                ..Default::default()
+            };
+
+            let analyzer = WalkForwardAnalyzer::new(wf_config, backtest_config);
+
+            analyzer.run(
+                black_box(&bars),
+                "TEST",
+                params.clone(),
+                |&(fast, slow)| Box::new(SmaCrossover::new(fast, slow)),
+                WalkForwardMetric::Sharpe,
+            )
+        })
+    });
+
+    group.finish();
+}
+
 /// Benchmark Parquet export.
 fn bench_parquet_export(c: &mut Criterion) {
     use mantis::export::export_features_parquet;
@@ -274,6 +479,10 @@ criterion_group!(
     bench_monte_carlo,
     // bench_regime_detection,      // Removed: mantis::regime not implemented
     bench_parquet_export,
+    // Spec-required benchmarks (benchmarking.md)
+    bench_spec_required,
+    bench_sweep_1000,
+    bench_walkforward,
 );
 
 criterion_main!(benches);

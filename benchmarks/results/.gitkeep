@@ -1,0 +1,8 @@
+# Benchmark results directory
+#
+# This directory stores benchmark baselines for regression detection.
+#
+# Files:
+#   main.json - Latest main branch benchmark results
+#   v*.json   - Release-tagged benchmark results
+#   history/  - Optional daily snapshots

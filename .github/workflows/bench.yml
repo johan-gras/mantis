@@ -1,0 +1,100 @@
+name: Benchmarks
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  benchmark:
+    name: Benchmark Regression Check
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Needed for baseline comparison
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-bench-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-bench-
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Run benchmarks
+        run: cargo bench --bench backtest_bench
+
+      - name: Check for regressions
+        run: |
+          # Run regression check against baseline if it exists
+          if [ -f benchmarks/results/main.json ]; then
+            python scripts/check_bench_regression.py --threshold 0.10
+          else
+            echo "No baseline found, saving current results as reference"
+            python scripts/check_bench_regression.py --save benchmarks/results/current.json
+          fi
+
+      - name: Upload benchmark results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: benchmark-results
+          path: |
+            target/criterion/
+            benchmarks/results/
+
+  # Update baseline on main branch pushes
+  update-baseline:
+    name: Update Baseline
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    needs: benchmark
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-bench-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-bench-
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Run benchmarks and save baseline
+        run: |
+          cargo bench --bench backtest_bench
+          python scripts/check_bench_regression.py --save benchmarks/results/main.json
+
+      - name: Commit baseline update
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "chore: update benchmark baseline [skip ci]"
+          file_pattern: benchmarks/results/main.json

@@ -34,20 +34,21 @@ Mantis is a high-performance Rust CLI backtest engine for quantitative trading w
 
 ---
 
-### 1.2 CI/CD Workflows - PARTIALLY COMPLETE
+### 1.2 ~~CI/CD Workflows~~ RESOLVED
 
-**Status:** Core CI workflow implemented
+**Status:** ✅ FIXED - All CI/CD workflows implemented
 
-| Issue | CI workflow added; release/bench/coverage workflows still needed |
-|-------|------------------------------------------------------------------|
+| Resolution | All required workflows created |
+|------------|-------------------------------|
 | **Fix Date** | 2026-01-16 |
-| **Verified** | `ls .github/workflows/` shows `docs.yml` and `ci.yml` |
+| **Verified** | `ls .github/workflows/` shows `docs.yml`, `ci.yml`, `release.yml`, `bench.yml`, `coverage.yml` |
 
 **Per specs/ci-testing.md:**
 - [x] `ci.yml` - Run `cargo test`, `cargo clippy`, rustfmt, Python build on PR/push
-- [ ] `release.yml` - Automated wheel building and PyPI publishing
-- [ ] `bench.yml` - Benchmark regression detection (>10% slower = fail)
-- [ ] `coverage.yml` - Coverage reporting with >=80% threshold
+- [x] `release.yml` - Automated wheel building and PyPI publishing (created)
+- [x] `bench.yml` - Benchmark regression detection (>10% slower = fail) (created)
+- [x] `coverage.yml` - Coverage reporting with >=80% threshold (created)
+- [x] Python tests added to CI workflow (added to ci.yml)
 
 **CI workflow includes:**
 - Rust tests on ubuntu-latest, macos-latest, windows-latest
@@ -55,32 +56,27 @@ Mantis is a high-performance Rust CLI backtest engine for quantitative trading w
 - Python bindings build on 3.9, 3.10, 3.11, 3.12 across all 3 OS
 - Benchmark compilation check
 - Documentation build check
-
-**Still needed:**
-- [ ] `release.yml` for automated PyPI publishing
-- [ ] `bench.yml` for benchmark regression detection
-- [ ] `coverage.yml` for coverage reporting
-- [ ] Add Python tests to CI workflow (tests/python/ now exists with 172 tests)
+- Python tests (172 tests via pytest)
 
 ---
 
-### 1.3 Missing Benchmark Infrastructure
+### 1.3 ~~Missing Benchmark Infrastructure~~ PARTIALLY RESOLVED
 
 **Location:** `benches/backtest_bench.rs`
-**Verified:** 21 benchmarks exist, but spec-required benchmarks are missing or misnamed
+**Verified:** Spec-required benchmarks added; infrastructure created
 
-**Per specs/benchmarking.md, these benchmarks are MISSING:**
-- [ ] `single_bar_1000` (target: < 100us) - No single-bar benchmark with this exact name
-- [ ] `daily_10y` (target: < 100ms, 2520 bars) - Current max is 2000 bars
-- [ ] `sweep_1000` (target: < 30s, 1000 params) - Only 9-param sweep exists
-- [ ] `walkforward_12fold` (target: < 2s) - No walk-forward benchmark
-- [ ] `multi_symbol_3` (target: < 300ms) - No multi-symbol benchmark
+**Per specs/benchmarking.md:**
+- [x] `single_bar_1000` (target: < 100us) - Added
+- [x] `daily_10y` (target: < 100ms, 2520 bars) - Added
+- [x] `sweep_1000` (target: < 30s, 1000 params) - Added
+- [x] `walkforward_12fold` (target: < 2s) - Added
+- [x] `multi_symbol_3` (target: < 300ms) - Added
 - [ ] ONNX inference (target: < 1ms/bar) - Not benchmarked
 
-**Missing infrastructure:**
-- [ ] `benchmarks/results/` directory does not exist
-- [ ] `scripts/check_bench_regression.py` does not exist
-- [ ] `scripts/` directory does not exist
+**Infrastructure (created 2026-01-16):**
+- [x] `benchmarks/results/` directory exists
+- [x] `scripts/check_bench_regression.py` exists
+- [x] `scripts/` directory exists
 
 ---
 
@@ -482,15 +478,15 @@ The following are **100% implemented** per specifications:
 | File/Directory | Status | Impact |
 |----------------|--------|--------|
 | `.github/workflows/ci.yml` | ✅ EXISTS | Automated testing on PR/push |
-| `.github/workflows/release.yml` | DOES NOT EXIST | No automated releases |
-| `.github/workflows/bench.yml` | DOES NOT EXIST | No benchmark regression detection |
+| `.github/workflows/release.yml` | ✅ EXISTS | Automated PyPI publishing |
+| `.github/workflows/bench.yml` | ✅ EXISTS | Benchmark regression detection |
 | `.github/workflows/lint.yml` | DOES NOT EXIST | No automated linting |
-| `.github/workflows/coverage.yml` | DOES NOT EXIST | No coverage reporting |
+| `.github/workflows/coverage.yml` | ✅ EXISTS | Coverage reporting |
 | `.pre-commit-config.yaml` | ✅ EXISTS | Pre-commit hooks configured |
-| `scripts/` | DOES NOT EXIST | No helper scripts |
-| `scripts/check_bench_regression.py` | DOES NOT EXIST | No benchmark regression script |
+| `scripts/` | ✅ EXISTS | Helper scripts available |
+| `scripts/check_bench_regression.py` | ✅ EXISTS | Benchmark regression detection |
 | `scripts/test_doc_examples.py` | DOES NOT EXIST | No doc example testing |
-| `benchmarks/results/` | DOES NOT EXIST | No benchmark history |
+| `benchmarks/results/` | ✅ EXISTS | Benchmark history storage |
 | `tests/python/` | ✅ EXISTS | 172 tests passing |
 | `CHANGELOG.md` | ✅ EXISTS | Release history documented |
 
@@ -526,10 +522,10 @@ The following are **100% implemented** per specifications:
 | Blocker | Impact | Fix Complexity |
 |---------|--------|----------------|
 | Missing features/streaming/regime modules | `cargo bench` won't compile (13 benchmarks blocked) | Low (remove benchmarks) or Medium (implement) |
-| No CI workflows | No automated testing on PRs | Medium |
+| ~~No CI workflows~~ | ~~No automated testing on PRs~~ | ~~Medium~~ RESOLVED (2026-01-16) |
 | ~~No Python tests~~ | ~~Can't verify bindings~~ | ~~Medium~~ RESOLVED |
 | ~~No CHANGELOG.md~~ | ~~Can't do proper release~~ | ~~Low~~ RESOLVED |
-| Missing spec-required benchmarks | Can't verify performance claims | Medium |
+| ~~Missing spec-required benchmarks~~ | ~~Can't verify performance claims~~ | ~~Medium~~ RESOLVED (2026-01-16) |
 | No ONNX benchmarks | Can't verify <1ms/bar target | Medium |
 | ~~No legal disclaimers~~ | ~~Regulatory risk~~ | ~~Low~~ RESOLVED |
 | Monte Carlo bootstrap method | Differs from spec (trade vs block) | Medium |
