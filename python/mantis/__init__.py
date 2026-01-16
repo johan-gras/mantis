@@ -195,6 +195,57 @@ class BacktestResult:
     def psr(self) -> float:
         return self._rust.psr
 
+    # Benchmark comparison properties (only available if benchmark was provided)
+    @property
+    def alpha(self) -> Optional[float]:
+        """Jensen's alpha (risk-adjusted excess return). None if no benchmark was provided."""
+        return self._rust.alpha
+
+    @property
+    def beta(self) -> Optional[float]:
+        """Portfolio beta (sensitivity to benchmark). None if no benchmark was provided."""
+        return self._rust.beta
+
+    @property
+    def benchmark_return(self) -> Optional[float]:
+        """Benchmark total return for the period. None if no benchmark was provided."""
+        return self._rust.benchmark_return
+
+    @property
+    def excess_return(self) -> Optional[float]:
+        """Excess return (strategy - benchmark). None if no benchmark was provided."""
+        return self._rust.excess_return
+
+    @property
+    def tracking_error(self) -> Optional[float]:
+        """Annualized tracking error. None if no benchmark was provided."""
+        return self._rust.tracking_error
+
+    @property
+    def information_ratio(self) -> Optional[float]:
+        """Information ratio (alpha / tracking error). None if no benchmark was provided."""
+        return self._rust.information_ratio
+
+    @property
+    def benchmark_correlation(self) -> Optional[float]:
+        """Correlation with benchmark (-1 to 1). None if no benchmark was provided."""
+        return self._rust.benchmark_correlation
+
+    @property
+    def up_capture(self) -> Optional[float]:
+        """Up-capture ratio. None if no benchmark was provided."""
+        return self._rust.up_capture
+
+    @property
+    def down_capture(self) -> Optional[float]:
+        """Down-capture ratio. None if no benchmark was provided."""
+        return self._rust.down_capture
+
+    @property
+    def has_benchmark(self) -> bool:
+        """Whether benchmark comparison metrics are available."""
+        return self._rust.has_benchmark
+
     def metrics(self) -> Dict[str, Any]:
         return self._rust.metrics()
 
@@ -632,16 +683,23 @@ def backtest(
     borrow_cost: float = 0.03,
     max_position: float = 1.0,
     fill_price: str = "next_open",
+    benchmark: Optional[Any] = None,
 ) -> BacktestResult:
     """
     Run a backtest on historical data with a signal array.
 
     See module documentation for full details.
+
+    Args:
+        benchmark: Optional benchmark data (from load()) for performance comparison.
+                   When provided, the result will include alpha, beta, benchmark_return,
+                   excess_return, and other benchmark comparison metrics.
     """
     rust_result = _backtest_raw(
         data, signal, strategy, strategy_params, config,
         commission, slippage, size, cash, stop_loss,
-        take_profit, allow_short, borrow_cost, max_position, fill_price
+        take_profit, allow_short, borrow_cost, max_position, fill_price,
+        benchmark
     )
     return BacktestResult(rust_result)
 
@@ -1007,6 +1065,28 @@ class Backtest:
             Self for method chaining
         """
         self._config["fill_price"] = model
+        return self
+
+    def benchmark(self, data: Any) -> "Backtest":
+        """
+        Set benchmark data for performance comparison.
+
+        When benchmark is provided, the result will include alpha, beta,
+        benchmark_return, excess_return, and other comparison metrics.
+
+        Args:
+            data: Benchmark data dictionary from load() (e.g., SPY data)
+
+        Returns:
+            Self for method chaining
+
+        Example:
+            >>> spy = mt.load("SPY.csv")
+            >>> results = mt.Backtest(data, signal).benchmark(spy).run()
+            >>> print(results.alpha, results.beta)
+            0.05 1.2
+        """
+        self._config["benchmark"] = data
         return self
 
     def run(self) -> BacktestResult:

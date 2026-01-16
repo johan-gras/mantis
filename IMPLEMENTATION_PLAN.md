@@ -633,28 +633,34 @@ result.plot()  # Interactive Plotly in Jupyter
 
 ---
 
-### 20. Python Benchmark Comparison [NOT EXPOSED]
-**Status:** PARTIAL (Rust complete, Python missing)
+### 20. Python Benchmark Comparison [COMPLETE]
+**Status:** COMPLETE
 **Priority:** P2
 
-**Issue:** BenchmarkMetrics is fully implemented in Rust analytics.rs (lines 11-228) but not exposed in Python bindings.
+**Implementation details:**
+- Added `benchmark` parameter to `mt.backtest()` function
+- Added benchmark properties to `BacktestResult`:
+  - `alpha` - Jensen's alpha (risk-adjusted excess return)
+  - `beta` - Portfolio beta (sensitivity to benchmark)
+  - `benchmark_return` - Benchmark total return for period
+  - `excess_return` - Strategy return minus benchmark return
+  - `tracking_error` - Annualized tracking error
+  - `information_ratio` - Alpha per unit of active risk
+  - `benchmark_correlation` - Correlation with benchmark (-1 to 1)
+  - `up_capture` - Up-capture ratio
+  - `down_capture` - Down-capture ratio
+  - `has_benchmark` - Boolean indicating if benchmark metrics available
+- `metrics()` dict includes all benchmark metrics when available
+- Fluent API `Backtest` class supports `.benchmark(data)` method
+- Type stubs updated in `__init__.pyi` for IDE autocomplete
 
-**Specification requires:**
-- `benchmark=spy_data` parameter in `mt.backtest()`
-- `results.benchmark_return` property
-- `results.excess_return` property
-- `results.beta` property
-- `results.alpha` property
+**Files modified:**
+- `src/python/backtest.rs` - Added benchmark parameter, BenchmarkMetrics calculation
+- `src/python/results.rs` - Added benchmark properties and metrics, updated constructors
+- `python/mantis/__init__.py` - Added benchmark wrapper properties and method
+- `python/mantis/__init__.pyi` - Updated type stubs
 
-**Rust implementation complete:**
-- `BenchmarkMetrics::calculate()` - alpha, beta, tracking_error, information_ratio, correlation, up_capture, down_capture
-- Fully tested in analytics.rs
-
-**Missing in Python:**
-- No benchmark parameter in backtest()
-- No benchmark properties on PyBacktestResult
-
-**Effort:** Small (1-2 days)
+**Effort:** Small (completed)
 **Dependencies:** None
 
 ---
@@ -762,7 +768,7 @@ result.plot()  # Interactive Plotly in Jupyter
 | 18e | max_position/fill_price params | **COMPLETE** | P3 | Small | None |
 | 18f | Sensitivity analysis bindings | **COMPLETE** | P3 | Medium | None |
 | 19 | Frequency Auto-Detection | **COMPLETE** | P1 | Medium | None |
-| 20 | Python Benchmark Comparison | PARTIAL | P2 | Small | None |
+| 20 | Python Benchmark Comparison | **COMPLETE** | P2 | Small | None |
 | 21 | Python Split/Dividend Adjustment | PARTIAL | P2 | Small | None |
 | 22 | ATR-Based Stop-Loss in Python | PARTIAL | P2 | Small | None |
 | 23 | Parallel Parameter Sweep | NOT FUNCTIONAL | P3 | Medium | None |

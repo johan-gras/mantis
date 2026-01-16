@@ -6,6 +6,7 @@ use numpy::PyReadonlyArray1;
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
+use crate::analytics::BenchmarkMetrics;
 use crate::data::{load_csv, load_parquet, DataConfig};
 use crate::engine::{BacktestConfig, BacktestResult, Engine};
 use crate::portfolio::CostModel;
@@ -63,6 +64,7 @@ impl PyBacktestConfig {
         max_position=1.0,
         fill_price="next_open"
     ))]
+    #[allow(clippy::too_many_arguments)]
     fn new(
         initial_capital: f64,
         commission: f64,
@@ -161,9 +163,11 @@ impl From<&PyBacktestConfig> for BacktestConfig {
 ///     allow_short: Whether to allow short positions (default True)
 ///     max_position: Maximum position size as fraction of equity (default 1.0 = 100%)
 ///     fill_price: Execution price model ("next_open", "close", "vwap", "twap", "midpoint")
+///     benchmark: Optional benchmark data for performance comparison (data dict from load())
 ///
 /// Returns:
 ///     BacktestResult object with metrics, equity curve, and trades.
+///     If benchmark is provided, also includes alpha, beta, benchmark_return, excess_return.
 ///
 /// Example:
 ///     >>> data = load("AAPL.csv")
@@ -171,6 +175,11 @@ impl From<&PyBacktestConfig> for BacktestConfig {
 ///     >>> results = backtest(data, signal)
 ///     >>> print(results.sharpe)
 ///     1.24
+///     >>> # With benchmark comparison
+///     >>> spy = load("SPY.csv")
+///     >>> results = backtest(data, signal, benchmark=spy)
+///     >>> print(results.alpha, results.beta)
+///     0.05 1.2
 #[pyfunction]
 #[pyo3(signature = (
     data,
@@ -187,8 +196,10 @@ impl From<&PyBacktestConfig> for BacktestConfig {
     allow_short=true,
     borrow_cost=0.03,
     max_position=1.0,
-    fill_price="next_open"
+    fill_price="next_open",
+    benchmark=None
 ))]
+#[allow(clippy::too_many_arguments)]
 pub fn backtest(
     py: Python<'_>,
     data: PyObject,
@@ -206,6 +217,7 @@ pub fn backtest(
     borrow_cost: f64,
     max_position: f64,
     fill_price: &str,
+    benchmark: Option<PyObject>,
 ) -> PyResult<PyBacktestResult> {
     // Build or use provided config
     let bt_config = if let Some(cfg) = config {
@@ -277,12 +289,57 @@ pub fn backtest(
         ));
     };
 
+    // Calculate benchmark metrics if benchmark data is provided
+    let benchmark_metrics = if let Some(ref bench_data) = benchmark {
+        let bench_bars = extract_bars(py, bench_data)?;
+
+        if bench_bars.is_empty() {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "Benchmark data is empty.",
+            ));
+        }
+
+        // Calculate returns from the backtest equity curve
+        let portfolio_returns: Vec<f64> = result
+            .equity_curve
+            .windows(2)
+            .map(|w| (w[1].equity - w[0].equity) / w[0].equity)
+            .collect();
+
+        // Calculate benchmark returns from close prices
+        let benchmark_returns: Vec<f64> = bench_bars
+            .windows(2)
+            .map(|w| (w[1].close - w[0].close) / w[0].close)
+            .collect();
+
+        // Align the return series (use minimum length)
+        let min_len = portfolio_returns.len().min(benchmark_returns.len());
+        if min_len < 2 {
+            None
+        } else {
+            let portfolio_slice = &portfolio_returns[..min_len];
+            let benchmark_slice = &benchmark_returns[..min_len];
+
+            // Calculate benchmark metrics using the existing Rust implementation
+            // Signature: calculate(benchmark_name, portfolio_returns, benchmark_returns, risk_free_rate)
+            BenchmarkMetrics::calculate(
+                "benchmark",
+                portfolio_slice,
+                benchmark_slice,
+                0.0, // risk-free rate (can be made configurable later)
+            )
+        }
+    } else {
+        None
+    };
+
     // Return result with stored data for validation support
-    Ok(PyBacktestResult::from_result_with_data(
+    Ok(PyBacktestResult::from_result_with_data_and_benchmark(
         &result,
         Some(bars),
         stored_signal,
         Some(config_for_result),
+        benchmark_metrics,
     ))
 }
 
@@ -390,13 +447,12 @@ pub fn signal_check(
     result.set_item("warnings", warnings.clone())?;
 
     // Overall status
-    let status = if nan_count > 0 || inf_count > 0 || !shape_ok {
-        "warning"
-    } else if long_count == 0 && short_count == 0 {
-        "warning"
-    } else {
-        "passed"
-    };
+    let status =
+        if nan_count > 0 || inf_count > 0 || !shape_ok || (long_count == 0 && short_count == 0) {
+            "warning"
+        } else {
+            "passed"
+        };
     result.set_item("status", status)?;
 
     // Tip based on signal characteristics
@@ -1054,6 +1110,7 @@ fn run_builtin_strategy(
     size=0.10,
     cash=100_000.0
 ))]
+#[allow(clippy::too_many_arguments)]
 pub fn validate(
     py: Python<'_>,
     data: PyObject,

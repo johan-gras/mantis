@@ -10,7 +10,7 @@ use std::collections::HashMap;
 use std::fs::File;
 use uuid::Uuid;
 
-use crate::analytics::PerformanceMetrics;
+use crate::analytics::{BenchmarkMetrics, PerformanceMetrics};
 use crate::engine::{BacktestConfig, BacktestResult, Engine};
 use crate::export::{export_walkforward_html, Exporter, PerformanceSummary};
 use crate::strategy::{Strategy, StrategyContext};
@@ -75,6 +75,9 @@ pub struct PyBacktestResult {
     bars: Option<Vec<Bar>>,
     signal: Option<Vec<f64>>,
     backtest_config: Option<BacktestConfig>,
+
+    // Benchmark comparison metrics (optional, only present when benchmark is provided)
+    benchmark_metrics: Option<BenchmarkMetrics>,
 }
 
 #[pymethods]
@@ -131,6 +134,117 @@ impl PyBacktestResult {
         metrics.probabilistic_sharpe_ratio
     }
 
+    /// Get Jensen's alpha (risk-adjusted excess return).
+    ///
+    /// Alpha represents the strategy's return that is not explained by
+    /// exposure to the benchmark. A positive alpha indicates the strategy
+    /// outperforms the benchmark on a risk-adjusted basis.
+    ///
+    /// Returns None if no benchmark was provided to backtest().
+    #[getter]
+    fn alpha(&self) -> Option<f64> {
+        self.benchmark_metrics.as_ref().map(|m| m.alpha)
+    }
+
+    /// Get portfolio beta (sensitivity to benchmark movements).
+    ///
+    /// Beta measures how much the strategy's returns move relative to
+    /// the benchmark. A beta of 1.0 means the strategy moves 1:1 with
+    /// the benchmark. Beta > 1 indicates higher volatility than benchmark.
+    ///
+    /// Returns None if no benchmark was provided to backtest().
+    #[getter]
+    fn beta(&self) -> Option<f64> {
+        self.benchmark_metrics.as_ref().map(|m| m.beta)
+    }
+
+    /// Get the benchmark's total return for the backtest period.
+    ///
+    /// Returns None if no benchmark was provided to backtest().
+    #[getter]
+    fn benchmark_return(&self) -> Option<f64> {
+        self.benchmark_metrics
+            .as_ref()
+            .map(|m| m.benchmark_return_pct / 100.0)
+    }
+
+    /// Get the excess return (strategy return minus benchmark return).
+    ///
+    /// Returns None if no benchmark was provided to backtest().
+    #[getter]
+    fn excess_return(&self) -> Option<f64> {
+        self.benchmark_metrics
+            .as_ref()
+            .map(|m| m.excess_return_pct / 100.0)
+    }
+
+    /// Get the tracking error (annualized standard deviation of excess returns).
+    ///
+    /// Tracking error measures how consistently the strategy tracks or
+    /// deviates from the benchmark. Lower values indicate the strategy
+    /// closely follows the benchmark.
+    ///
+    /// Returns None if no benchmark was provided to backtest().
+    #[getter]
+    fn tracking_error(&self) -> Option<f64> {
+        self.benchmark_metrics.as_ref().map(|m| m.tracking_error)
+    }
+
+    /// Get the information ratio (alpha per unit of active risk).
+    ///
+    /// Information ratio = Alpha / Tracking Error
+    /// Higher values indicate better risk-adjusted performance relative
+    /// to the benchmark. > 0.5 is considered good, > 1.0 is excellent.
+    ///
+    /// Returns None if no benchmark was provided to backtest().
+    #[getter]
+    fn information_ratio(&self) -> Option<f64> {
+        self.benchmark_metrics.as_ref().map(|m| m.information_ratio)
+    }
+
+    /// Get the correlation with the benchmark.
+    ///
+    /// Returns a value between -1 and 1:
+    /// - 1: Perfect positive correlation
+    /// - 0: No correlation
+    /// - -1: Perfect negative correlation
+    ///
+    /// Returns None if no benchmark was provided to backtest().
+    #[getter]
+    fn benchmark_correlation(&self) -> Option<f64> {
+        self.benchmark_metrics.as_ref().map(|m| m.correlation)
+    }
+
+    /// Get the up-capture ratio.
+    ///
+    /// Up-capture measures the percentage of benchmark gains captured
+    /// when the benchmark is positive. > 100% means outperforming in
+    /// up markets, < 100% means lagging in up markets.
+    ///
+    /// Returns None if no benchmark was provided to backtest().
+    #[getter]
+    fn up_capture(&self) -> Option<f64> {
+        self.benchmark_metrics.as_ref().map(|m| m.up_capture)
+    }
+
+    /// Get the down-capture ratio.
+    ///
+    /// Down-capture measures the percentage of benchmark losses captured
+    /// when the benchmark is negative. < 100% is good (losing less in
+    /// down markets), > 100% means losing more than the benchmark.
+    ///
+    /// Returns None if no benchmark was provided to backtest().
+    #[getter]
+    fn down_capture(&self) -> Option<f64> {
+        self.benchmark_metrics.as_ref().map(|m| m.down_capture)
+    }
+
+    /// Check if benchmark comparison metrics are available.
+    #[getter]
+    fn has_benchmark(&self) -> bool {
+        self.benchmark_metrics.is_some()
+    }
+
     /// Get all metrics as a dictionary.
     fn metrics<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
         let dict = PyDict::new_bound(py);
@@ -154,6 +268,18 @@ impl PyBacktestResult {
         let perf_metrics = PerformanceMetrics::from_result(&self.rust_result);
         dict.set_item("deflated_sharpe", perf_metrics.deflated_sharpe_ratio)?;
         dict.set_item("psr", perf_metrics.probabilistic_sharpe_ratio)?;
+        // Add benchmark metrics if available
+        if let Some(ref bm) = self.benchmark_metrics {
+            dict.set_item("alpha", bm.alpha)?;
+            dict.set_item("beta", bm.beta)?;
+            dict.set_item("benchmark_return", bm.benchmark_return_pct / 100.0)?;
+            dict.set_item("excess_return", bm.excess_return_pct / 100.0)?;
+            dict.set_item("tracking_error", bm.tracking_error)?;
+            dict.set_item("information_ratio", bm.information_ratio)?;
+            dict.set_item("benchmark_correlation", bm.correlation)?;
+            dict.set_item("up_capture", bm.up_capture)?;
+            dict.set_item("down_capture", bm.down_capture)?;
+        }
         Ok(dict)
     }
 
@@ -162,7 +288,7 @@ impl PyBacktestResult {
         let mut s = String::new();
         s.push_str(&format!("Backtest Results: {}\n", self.strategy_name));
         s.push_str(&"-".repeat(50));
-        s.push_str("\n");
+        s.push('\n');
         s.push_str(&format!(
             "Period          {} trading days\n",
             self.trading_days
@@ -466,6 +592,7 @@ impl PyBacktestResult {
             bars: None,
             signal: None,
             backtest_config: None,
+            benchmark_metrics: None,
         }
     }
 
@@ -475,6 +602,17 @@ impl PyBacktestResult {
         bars: Option<Vec<Bar>>,
         signal: Option<Vec<f64>>,
         config: Option<BacktestConfig>,
+    ) -> Self {
+        Self::from_result_with_data_and_benchmark(result, bars, signal, config, None)
+    }
+
+    /// Create from a Rust BacktestResult with validation data and optional benchmark metrics.
+    pub fn from_result_with_data_and_benchmark(
+        result: &BacktestResult,
+        bars: Option<Vec<Bar>>,
+        signal: Option<Vec<f64>>,
+        config: Option<BacktestConfig>,
+        benchmark_metrics: Option<BenchmarkMetrics>,
     ) -> Self {
         let equity_values: Vec<f64> = result.equity_curve.iter().map(|e| e.equity).collect();
         let equity_timestamps: Vec<i64> = result
@@ -510,6 +648,7 @@ impl PyBacktestResult {
             bars,
             signal,
             backtest_config: config,
+            benchmark_metrics,
         }
     }
 }
@@ -586,7 +725,7 @@ impl PyValidationResult {
         let mut s = String::new();
         s.push_str(&format!("Walk-Forward Analysis ({} folds)\n", self.folds));
         s.push_str(&"-".repeat(40));
-        s.push_str("\n");
+        s.push('\n');
         s.push_str(&format!("In-sample Sharpe:    {:.2}\n", self.is_sharpe));
         s.push_str(&format!(
             "Out-of-sample:       {:.2}  ({:.0}% of IS)\n",
@@ -823,8 +962,8 @@ fn run_walkforward_validation(
     bt_config: &BacktestConfig,
     wf_config: &WalkForwardConfig,
 ) -> PyResult<WalkForwardResult> {
-    let windows = calculate_windows(bars, wf_config)
-        .map_err(|e| pyo3::exceptions::PyValueError::new_err(e))?;
+    let windows =
+        calculate_windows(bars, wf_config).map_err(pyo3::exceptions::PyValueError::new_err)?;
 
     if windows.is_empty() {
         return Err(pyo3::exceptions::PyValueError::new_err(

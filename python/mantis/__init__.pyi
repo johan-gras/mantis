@@ -117,6 +117,90 @@ class BacktestResult:
         - < 0.80: Low confidence, results may be due to chance
         """
         ...
+    @property
+    def alpha(self) -> Optional[float]:
+        """
+        Get Jensen's alpha (risk-adjusted excess return).
+
+        Alpha represents the strategy's return that is not explained by
+        exposure to the benchmark. A positive alpha indicates the strategy
+        outperforms the benchmark on a risk-adjusted basis.
+
+        Returns None if no benchmark was provided to backtest().
+        """
+        ...
+    @property
+    def beta(self) -> Optional[float]:
+        """
+        Get portfolio beta (sensitivity to benchmark movements).
+
+        Beta measures how much the strategy's returns move relative to
+        the benchmark. A beta of 1.0 means the strategy moves 1:1 with
+        the benchmark. Beta > 1 indicates higher volatility than benchmark.
+
+        Returns None if no benchmark was provided to backtest().
+        """
+        ...
+    @property
+    def benchmark_return(self) -> Optional[float]:
+        """
+        Get the benchmark's total return for the backtest period.
+
+        Returns None if no benchmark was provided to backtest().
+        """
+        ...
+    @property
+    def excess_return(self) -> Optional[float]:
+        """
+        Get the excess return (strategy return minus benchmark return).
+
+        Returns None if no benchmark was provided to backtest().
+        """
+        ...
+    @property
+    def tracking_error(self) -> Optional[float]:
+        """
+        Get the tracking error (annualized standard deviation of excess returns).
+
+        Returns None if no benchmark was provided to backtest().
+        """
+        ...
+    @property
+    def information_ratio(self) -> Optional[float]:
+        """
+        Get the information ratio (alpha per unit of active risk).
+
+        Returns None if no benchmark was provided to backtest().
+        """
+        ...
+    @property
+    def benchmark_correlation(self) -> Optional[float]:
+        """
+        Get the correlation with the benchmark (-1 to 1).
+
+        Returns None if no benchmark was provided to backtest().
+        """
+        ...
+    @property
+    def up_capture(self) -> Optional[float]:
+        """
+        Get the up-capture ratio.
+
+        Returns None if no benchmark was provided to backtest().
+        """
+        ...
+    @property
+    def down_capture(self) -> Optional[float]:
+        """
+        Get the down-capture ratio.
+
+        Returns None if no benchmark was provided to backtest().
+        """
+        ...
+    @property
+    def has_benchmark(self) -> bool:
+        """Whether benchmark comparison metrics are available."""
+        ...
     def metrics(self) -> Dict[str, Any]: ...
     def summary(self) -> str: ...
     def warnings(self) -> List[str]: ...
@@ -405,6 +489,7 @@ def backtest(
     borrow_cost: float = 0.03,
     max_position: float = 1.0,
     fill_price: str = "next_open",
+    benchmark: Optional[Union[Dict[str, Any], str, _DataFrame]] = None,
 ) -> BacktestResult:
     """
     Run a backtest on historical data with a signal array.
@@ -426,9 +511,13 @@ def backtest(
         borrow_cost: Annual borrow rate for shorts (default 3%)
         max_position: Maximum position size as fraction of equity (default 1.0 = 100%)
         fill_price: Execution price model ("next_open", "close", "vwap", "twap", "midpoint")
+        benchmark: Optional benchmark data for performance comparison (data dict from load()).
+                   When provided, the result will include alpha, beta, benchmark_return,
+                   excess_return, and other benchmark comparison metrics.
 
     Returns:
         BacktestResult object with metrics, equity curve, and trades.
+        If benchmark is provided, also includes alpha, beta, benchmark_return, excess_return.
 
     Example:
         >>> # Using load() dictionary
@@ -450,6 +539,12 @@ def backtest(
 
         >>> # With max position and fill price
         >>> results = mt.backtest(data, signal, max_position=0.25, fill_price="vwap")
+
+        >>> # With benchmark comparison
+        >>> spy = mt.load("SPY.csv")
+        >>> results = mt.backtest(data, signal, benchmark=spy)
+        >>> print(results.alpha, results.beta)
+        0.05 1.2
     """
     ...
 
@@ -643,6 +738,19 @@ class Backtest:
         Set the execution price model.
 
         Options: "next_open" (default), "close", "vwap", "twap", "midpoint"
+        """
+        ...
+    def benchmark(self, data: Union[Dict[str, Any], str, _DataFrame]) -> "Backtest":
+        """
+        Set benchmark data for performance comparison.
+
+        When benchmark is provided, the result will include alpha, beta,
+        benchmark_return, excess_return, and other comparison metrics.
+
+        Example:
+            >>> spy = mt.load("SPY.csv")
+            >>> results = mt.Backtest(data, signal).benchmark(spy).run()
+            >>> print(results.alpha, results.beta)
         """
         ...
     def run(self) -> BacktestResult:

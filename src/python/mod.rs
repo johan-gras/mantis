@@ -4,6 +4,10 @@
 //! functionality of Mantis to Python users, enabling seamless integration
 //! with pandas, polars, and numpy workflows.
 
+// PyO3 PyResult<T> types trigger false positive "useless conversion" warnings.
+// The angle brackets are required for the return type to work with Python bindings.
+#![allow(clippy::useless_conversion)]
+
 mod backtest;
 mod data;
 mod results;

@@ -746,6 +746,7 @@ impl PyCostSensitivityResult {
     cash=100_000.0,
     parallel=true
 ))]
+#[allow(clippy::too_many_arguments)]
 pub fn sensitivity(
     py: Python<'_>,
     data: PyObject,
@@ -762,8 +763,7 @@ pub fn sensitivity(
     let symbol = "SYMBOL";
 
     // Parse metric
-    let sens_metric =
-        parse_metric(metric).map_err(|e| pyo3::exceptions::PyValueError::new_err(e))?;
+    let sens_metric = parse_metric(metric).map_err(pyo3::exceptions::PyValueError::new_err)?;
 
     // Build parameter ranges
     let mut param_ranges: HashMap<String, ParameterRange> = HashMap::new();
@@ -798,11 +798,13 @@ pub fn sensitivity(
     }
 
     // Build backtest config
-    let mut bt_config = BacktestConfig::default();
-    bt_config.initial_capital = cash;
+    let mut bt_config = BacktestConfig {
+        initial_capital: cash,
+        show_progress: false,
+        ..Default::default()
+    };
     bt_config.cost_model.commission_pct = commission;
     bt_config.cost_model.slippage_pct = slippage;
-    bt_config.show_progress = false;
 
     // Run analysis based on strategy type
     let analysis = match strategy {
@@ -897,6 +899,7 @@ pub fn sensitivity(
     cash=100_000.0,
     include_zero_cost=true
 ))]
+#[allow(clippy::too_many_arguments)]
 pub fn cost_sensitivity(
     py: Python<'_>,
     data: PyObject,
@@ -914,11 +917,13 @@ pub fn cost_sensitivity(
     let symbol = "SYMBOL";
 
     // Build backtest config
-    let mut bt_config = BacktestConfig::default();
-    bt_config.initial_capital = cash;
+    let mut bt_config = BacktestConfig {
+        initial_capital: cash,
+        show_progress: false,
+        ..Default::default()
+    };
     bt_config.cost_model.commission_pct = commission;
     bt_config.cost_model.slippage_pct = slippage;
-    bt_config.show_progress = false;
 
     // Build cost sensitivity config
     let mults = multipliers.unwrap_or_else(|| {
