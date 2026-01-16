@@ -242,6 +242,26 @@ pub fn validate_signal(
 ) -> Result<SignalValidationResult> {
     let mut result = SignalValidationResult::default();
 
+    // Check for empty signal
+    if signal.is_empty() {
+        return Err(BacktestError::InvalidSignal {
+            index: 0,
+            value_description: "Signal array is empty (0 elements)".to_string(),
+            help: crate::error::ErrorHelp {
+                common_causes: vec![
+                    "Model returned empty predictions",
+                    "Signal array was not populated",
+                    "Filter removed all data points",
+                ],
+                quick_fixes: vec![
+                    "Ensure your signal has at least one value for each bar in the data",
+                    "Check that your model's predict() method returns values",
+                    "Verify that filtering conditions don't exclude all data",
+                ],
+            },
+        });
+    }
+
     // Check length mismatch
     if config.allow_shorter_signal {
         if signal.len() > data_len {
@@ -351,10 +371,30 @@ pub fn validate_signals<S: AsRef<str>>(
     Ok(results)
 }
 
-/// Quick validation that only checks for fatal issues (NaN, infinity, length mismatch).
+/// Quick validation that only checks for fatal issues (NaN, infinity, length mismatch, empty).
 ///
 /// Use this for performance-critical paths where you want minimal overhead.
 pub fn validate_signal_quick(signal: &[f64], data_len: usize) -> Result<()> {
+    // Empty signal check
+    if signal.is_empty() {
+        return Err(BacktestError::InvalidSignal {
+            index: 0,
+            value_description: "Signal array is empty (0 elements)".to_string(),
+            help: crate::error::ErrorHelp {
+                common_causes: vec![
+                    "Model returned empty predictions",
+                    "Signal array was not populated",
+                    "Filter removed all data points",
+                ],
+                quick_fixes: vec![
+                    "Ensure your signal has at least one value for each bar in the data",
+                    "Check that your model's predict() method returns values",
+                    "Verify that filtering conditions don't exclude all data",
+                ],
+            },
+        });
+    }
+
     // Length check
     if signal.len() != data_len {
         return Err(BacktestError::signal_shape_mismatch(signal.len(), data_len));
@@ -434,6 +474,19 @@ mod tests {
         let err = result.unwrap_err();
         let msg = format!("{}", err);
         assert!(msg.contains("negative infinity"));
+    }
+
+    #[test]
+    fn test_empty_signal_detection() {
+        let signal: Vec<f64> = vec![];
+        let result = validate_signal(&signal, 0, &SignalValidationConfig::default());
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(matches!(err, BacktestError::InvalidSignal { .. }));
+        let msg = format!("{}", err);
+        assert!(msg.contains("empty"));
+        assert!(msg.contains("Common causes"));
+        assert!(msg.contains("Quick fix"));
     }
 
     #[test]

@@ -1136,6 +1136,20 @@ pub fn backtest(
         // Signal-based backtest
         let signal_vec: Vec<f64> = signal_arr.as_slice()?.to_vec();
 
+        // Validate empty signal
+        if signal_vec.is_empty() {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "InvalidSignalError: Signal array is empty (0 rows).\n\n\
+                 An empty signal cannot be used for backtesting.\n\n\
+                 Common causes:\n\
+                   - Model returned empty predictions\n\
+                   - Signal array was not populated\n\
+                   - Filter removed all data points\n\n\
+                 Quick fix:\n\
+                   Ensure your signal has at least one value for each bar in the data.",
+            ));
+        }
+
         // Validate signal length
         if signal_vec.len() != bars.len() {
             return Err(pyo3::exceptions::PyValueError::new_err(format!(
