@@ -2,6 +2,9 @@
 
 Functions for running backtests.
 
+!!! warning "Disclaimer"
+    **Past performance does not guarantee future results.** Backtest results are hypothetical and do not represent actual trading. Real trading involves risk of loss. All performance metrics shown are based on historical simulations with assumptions that may not reflect actual market conditions.
+
 ## backtest
 
 Run a backtest on historical data.

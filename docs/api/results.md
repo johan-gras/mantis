@@ -2,6 +2,9 @@
 
 Classes and functions for working with backtest results.
 
+!!! warning "Disclaimer"
+    **Past performance does not guarantee future results.** Backtest results are hypothetical and do not represent actual trading. Real trading involves risk of loss. All performance metrics shown are based on historical simulations with assumptions that may not reflect actual market conditions.
+
 ## BacktestResult
 
 Results from running a backtest.
