@@ -3,6 +3,9 @@
 **Status:** ALL ITEMS COMPLETE
 **Last Updated:** 2026-01-16
 
+**Recent Additions:**
+- Jupyter notebooks for Google Colab: `notebooks/quickstart.ipynb`, `notebooks/validation.ipynb`, `notebooks/multi_symbol.ipynb`
+
 ---
 
 ## Executive Summary
@@ -48,7 +51,7 @@ The Mantis backtesting framework implementation is **complete**. All 37 planned 
 ## Test Status Summary
 
 **Last Run:** 2026-01-16
-- **Total Tests:** 571 passed (lib) + 5 (integration) + 28 (benchmarks) + 14 (doc tests)
+- **Total Tests:** 576 passed (lib) + 28 (integration) + 14 (doc tests)
 - **Failed:** 0 tests
 - **Status:** ALL TESTS PASSING
 
@@ -101,6 +104,7 @@ The Mantis backtesting framework implementation is **complete**. All 37 planned 
 | 35 | Position Sizing String Modes | P1 | size="volatility", "signal", "risk" in Python API |
 | 36 | max_leverage Parameter | P1 | max_leverage parameter exposed in Python backtest() |
 | 37 | Deflated Sharpe trials | P1 | trials parameter for deflated Sharpe in validate() |
+| 38 | Jupyter Notebooks | P2 | quickstart.ipynb, validation.ipynb, multi_symbol.ipynb for Colab/Binder |
 
 ---
 

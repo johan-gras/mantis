@@ -662,7 +662,9 @@ impl PyBacktestResult {
         // Run walk-forward validation
         let wf_result = run_walkforward_validation(bars, signal_vec, &bt_config, &wf_config)?;
 
-        Ok(PyValidationResult::from_wf_result_with_trials(&wf_result, trials))
+        Ok(PyValidationResult::from_wf_result_with_trials(
+            &wf_result, trials,
+        ))
     }
 
     fn __repr__(&self) -> String {
@@ -1102,7 +1104,8 @@ impl PyValidationResult {
 
             // Expected maximum of t standard normal random variables
             let gamma = 0.5772156649; // Euler-Mascheroni constant
-            let e_max = ((2.0 * t.ln()).sqrt()) - ((gamma + (4.0 * t.ln()).ln()) / (2.0 * (2.0 * t.ln()).sqrt()));
+            let e_max = ((2.0 * t.ln()).sqrt())
+                - ((gamma + (4.0 * t.ln()).ln()) / (2.0 * (2.0 * t.ln()).sqrt()));
 
             // Variance of maximum
             let std_max = (std::f64::consts::PI / 6.0).sqrt() / (2.0 * t.ln()).sqrt();

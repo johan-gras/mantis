@@ -282,10 +282,7 @@ pub enum SizingSpec {
     /// Fixed dollar amount per trade
     FixedDollar(f64),
     /// Volatility-targeted sizing: scale inversely with asset volatility
-    Volatility {
-        target_vol: f64,
-        lookback: usize,
-    },
+    Volatility { target_vol: f64, lookback: usize },
     /// Signal-scaled sizing: use signal magnitude to scale position size
     Signal { base_size: f64 },
     /// Risk-based sizing using ATR for stop-loss distance
@@ -679,23 +676,20 @@ impl PyBacktestConfig {
         match &self.sizing_spec {
             SizingSpec::Percent(p) => p.into_py(py),
             SizingSpec::FixedDollar(amt) => format!("fixed:{}", amt).into_py(py),
-            SizingSpec::Volatility { target_vol, lookback } => {
-                format!("volatility(target={}, lookback={})", target_vol, lookback).into_py(py)
-            }
-            SizingSpec::Signal { base_size } => {
-                format!("signal(base={})", base_size).into_py(py)
-            }
+            SizingSpec::Volatility {
+                target_vol,
+                lookback,
+            } => format!("volatility(target={}, lookback={})", target_vol, lookback).into_py(py),
+            SizingSpec::Signal { base_size } => format!("signal(base={})", base_size).into_py(py),
             SizingSpec::Risk {
                 risk_per_trade,
                 stop_atr,
                 atr_period,
-            } => {
-                format!(
-                    "risk(per_trade={}, stop_atr={}, period={})",
-                    risk_per_trade, stop_atr, atr_period
-                )
-                .into_py(py)
-            }
+            } => format!(
+                "risk(per_trade={}, stop_atr={}, period={})",
+                risk_per_trade, stop_atr, atr_period
+            )
+            .into_py(py),
         }
     }
 
@@ -754,17 +748,16 @@ impl PyBacktestConfig {
         config.position_sizing_method = match &self.sizing_spec {
             SizingSpec::Percent(pct) => Some(PositionSizingMethod::PercentOfEquity(*pct)),
             SizingSpec::FixedDollar(amount) => Some(PositionSizingMethod::FixedDollar(*amount)),
-            SizingSpec::Volatility { target_vol, lookback } => {
-                Some(PositionSizingMethod::VolatilityTargeted {
-                    target_vol: *target_vol,
-                    lookback: *lookback,
-                })
-            }
-            SizingSpec::Signal { base_size } => {
-                Some(PositionSizingMethod::SignalScaled {
-                    base_size: *base_size,
-                })
-            }
+            SizingSpec::Volatility {
+                target_vol,
+                lookback,
+            } => Some(PositionSizingMethod::VolatilityTargeted {
+                target_vol: *target_vol,
+                lookback: *lookback,
+            }),
+            SizingSpec::Signal { base_size } => Some(PositionSizingMethod::SignalScaled {
+                base_size: *base_size,
+            }),
             SizingSpec::Risk {
                 risk_per_trade,
                 stop_atr,
@@ -2148,10 +2141,7 @@ pub fn validate(
     // Build WalkForwardResult
     let wf_result = build_wf_result(wf_config, window_results);
 
-    Ok(super::results::PyValidationResult::from_wf_result_with_trials(
-        &wf_result,
-        trials,
-    ))
+    Ok(super::results::PyValidationResult::from_wf_result_with_trials(&wf_result, trials))
 }
 
 /// Internal window structure with indices.
