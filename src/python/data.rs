@@ -286,3 +286,58 @@ pub fn load_sample(py: Python<'_>, name: &str) -> PyResult<PyObject> {
 
     Ok(dict.into())
 }
+
+/// Load previously saved backtest results from a JSON file.
+///
+/// This allows you to reload results that were saved with `results.save()`.
+/// Note: Loaded results cannot use `validate()` since the original data/signal
+/// are not stored in the JSON file. Use `mt.validate(data, signal)` instead.
+///
+/// Args:
+///     path: Path to the JSON file created by `results.save()`
+///
+/// Returns:
+///     BacktestResult object with the loaded metrics.
+///
+/// Raises:
+///     FileNotFoundError: If the file does not exist
+///     ValueError: If the file is not valid JSON or missing required fields
+///
+/// Example:
+///     >>> results = mt.backtest(data, signal)
+///     >>> results.save("experiment.json")
+///     >>> # Later...
+///     >>> loaded = mt.load_results("experiment.json")
+///     >>> print(loaded.sharpe)
+///     1.24
+#[pyfunction]
+pub fn load_results(path: &str) -> PyResult<super::results::PyBacktestResult> {
+    use crate::export::PerformanceSummary;
+    use std::fs;
+
+    // Read and parse the JSON file
+    let content = fs::read_to_string(path).map_err(|e| {
+        if e.kind() == std::io::ErrorKind::NotFound {
+            pyo3::exceptions::PyFileNotFoundError::new_err(format!(
+                "Results file not found: {}",
+                path
+            ))
+        } else {
+            pyo3::exceptions::PyIOError::new_err(format!(
+                "Failed to read results file '{}': {}",
+                path, e
+            ))
+        }
+    })?;
+
+    let summary: PerformanceSummary = serde_json::from_str(&content).map_err(|e| {
+        pyo3::exceptions::PyValueError::new_err(format!(
+            "Invalid results file '{}': {}.\n\n\
+             Make sure this file was created with results.save().",
+            path, e
+        ))
+    })?;
+
+    // Convert to PyBacktestResult
+    Ok(super::results::PyBacktestResult::from_summary(&summary))
+}

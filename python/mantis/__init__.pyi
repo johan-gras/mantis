@@ -163,6 +163,40 @@ class BacktestResult:
             >>> results.report("experiment_042.html")
         """
         ...
+    def validate(
+        self,
+        folds: int = 12,
+        train_ratio: float = 0.75,
+        anchored: bool = True,
+    ) -> "ValidationResult":
+        """
+        Run walk-forward validation on the backtest.
+
+        This is the key method for detecting overfitting. It splits the data
+        into multiple folds, trains on in-sample data, and tests on out-of-sample
+        data to measure performance degradation.
+
+        Args:
+            folds: Number of walk-forward folds (default: 12)
+            train_ratio: Fraction of each window used for in-sample (default: 0.75)
+            anchored: Whether to use anchored (expanding) windows (default: True)
+
+        Returns:
+            ValidationResult with IS/OOS metrics and verdict.
+
+        Raises:
+            RuntimeError: If the backtest was not run with validation data
+                (e.g., loaded from a file or run with a built-in strategy).
+
+        Example:
+            >>> results = mt.backtest(data, signal)
+            >>> validation = results.validate()
+            >>> print(validation.verdict)
+            'borderline'
+            >>> print(validation.oos_degradation)
+            0.71
+        """
+        ...
 
 class FoldDetail:
     """Details for a single fold in walk-forward validation."""
@@ -501,5 +535,33 @@ def sweep(
 
     Returns:
         Dictionary with results for each parameter combination
+    """
+    ...
+
+def load_results(path: str) -> BacktestResult:
+    """
+    Load previously saved backtest results from a JSON file.
+
+    This allows you to reload results that were saved with `results.save()`.
+    Note: Loaded results cannot use `validate()` since the original data/signal
+    are not stored in the JSON file. Use `mt.validate(data, signal)` instead.
+
+    Args:
+        path: Path to the JSON file created by `results.save()`
+
+    Returns:
+        BacktestResult object with the loaded metrics.
+
+    Raises:
+        FileNotFoundError: If the file does not exist
+        ValueError: If the file is not valid JSON or missing required fields
+
+    Example:
+        >>> results = mt.backtest(data, signal)
+        >>> results.save("experiment.json")
+        >>> # Later...
+        >>> loaded = mt.load_results("experiment.json")
+        >>> print(loaded.sharpe)
+        1.24
     """
     ...

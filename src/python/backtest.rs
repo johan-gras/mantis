@@ -206,12 +206,13 @@ pub fn backtest(
         ));
     }
 
-    // Create engine
+    // Create engine (clone config so we can store it for validation)
+    let config_for_result = bt_config.clone();
     let mut engine = Engine::new(bt_config);
     engine.add_data("SYMBOL", bars.clone());
 
     // Run backtest based on signal or strategy
-    let result = if let Some(signal_arr) = signal {
+    let (result, stored_signal) = if let Some(signal_arr) = signal {
         // Signal-based backtest
         let signal_vec: Vec<f64> = signal_arr.as_slice()?.to_vec();
 
@@ -231,20 +232,28 @@ pub fn backtest(
         }
 
         // Create a signal-based strategy wrapper
-        let mut strategy = SignalStrategy::new(signal_vec);
-        engine.run(&mut strategy, "SYMBOL").map_err(|e| {
+        let mut strategy = SignalStrategy::new(signal_vec.clone());
+        let result = engine.run(&mut strategy, "SYMBOL").map_err(|e| {
             pyo3::exceptions::PyRuntimeError::new_err(format!("Backtest failed: {}", e))
-        })?
+        })?;
+        (result, Some(signal_vec))
     } else if let Some(strat_name) = strategy {
-        // Built-in strategy
-        run_builtin_strategy(&mut engine, strat_name, strategy_params)?
+        // Built-in strategy - cannot store signal for validation
+        let result = run_builtin_strategy(&mut engine, strat_name, strategy_params)?;
+        (result, None)
     } else {
         return Err(pyo3::exceptions::PyValueError::new_err(
             "Either 'signal' array or 'strategy' name must be provided.",
         ));
     };
 
-    Ok(PyBacktestResult::from_result(&result))
+    // Return result with stored data for validation support
+    Ok(PyBacktestResult::from_result_with_data(
+        &result,
+        Some(bars),
+        stored_signal,
+        Some(config_for_result),
+    ))
 }
 
 /// Check a signal for common issues before running a backtest.

@@ -456,6 +456,48 @@ mantis portfolio -d ./data/stocks/ -p "*.csv" --strategy risk-parity --rebalance
 
 ---
 
+### 18. Python API Spec Gaps [PARTIAL]
+**Status:** Gaps discovered 2026-01-16
+
+**Missing per python-api.md specification:**
+
+#### 18a. `results.validate()` Method [COMPLETE]
+- Added validate() method to PyBacktestResult in src/python/results.rs
+- Stores bars, signal, and config when creating result from backtest()
+- Performs walk-forward validation using stored data
+- Parameters: folds (default 12), train_ratio (default 0.75), anchored (default true)
+- Returns ValidationResult with IS/OOS metrics and verdict
+- Type stubs updated in python/mantis/__init__.pyi
+- **Priority:** P1 (core UX feature)
+- **Effort:** Small (completed)
+
+#### 18b. `mt.load_results()` Function [COMPLETE]
+- Added load_results() function to src/python/data.rs
+- Loads PerformanceSummary from JSON file
+- Creates PyBacktestResult from loaded data
+- Added from_summary() constructor to PyBacktestResult
+- Proper error handling for missing/invalid files
+- Type stubs updated in python/mantis/__init__.pyi
+- **Priority:** P2
+- **Effort:** Small (completed)
+
+#### 18c. `mt.Backtest` Fluent API Class [MISSING]
+- Spec shows fluent API: `mt.Backtest(data, signal).commission(0.001).run()`
+- Current: Only functional API `mt.backtest(data, signal, commission=0.001)`
+- **Priority:** P3 (nice-to-have, functional API works)
+- **Effort:** Medium
+
+#### 18d. Interactive Plotly Charts [MISSING]
+- Spec requires: `results.plot()` shows interactive Plotly in Jupyter
+- Current: ASCII sparkline only (terminal fallback)
+- **Priority:** P2 (visualization spec)
+- **Effort:** Medium (add plotly dependency, Jupyter detection)
+
+**Dependencies:** None
+**Effort:** Medium total
+
+---
+
 ## Summary Table
 
 | ID | Item | Status | Priority | Effort | Dependencies |
@@ -477,6 +519,10 @@ mantis portfolio -d ./data/stocks/ -p "*.csv" --strategy risk-parity --rebalance
 | 15 | Polars Backend | **COMPLETE** | P3 | Small | None |
 | 16 | Sample Data Bundling | **COMPLETE** | P3 | Small | None |
 | 17 | Documentation Site | MISSING | P3 | Medium | None |
+| 18a | results.validate() method | **COMPLETE** | P1 | Small | None |
+| 18b | mt.load_results() | **COMPLETE** | P2 | Small | None |
+| 18c | mt.Backtest fluent API | MISSING | P3 | Medium | None |
+| 18d | Interactive Plotly charts | MISSING | P2 | Medium | None |
 
 ---
 
