@@ -112,19 +112,20 @@ Mantis is a high-performance Rust CLI backtest engine for quantitative trading w
 
 ---
 
-### 2.2 Multi-Platform Wheel Building
+### 2.2 ~~Multi-Platform Wheel Building~~ RESOLVED
 
-| Issue | Only macOS ARM64 wheel exists |
-|-------|------------------------------|
-| **Location** | `target/wheels/mantis_bt-1.0.0-cp38-abi3-macosx_11_0_arm64.whl` |
+| Status | ✅ FIXED - All platform wheels configured in release workflow |
+|--------|-------------------------------------------------------------|
+| **Fix Date** | 2026-01-16 (verified) |
 
-**Required per specs/release-packaging.md:**
-- [ ] Linux x86_64 wheel (manylinux_2_17_x86_64)
-- [ ] Linux aarch64 wheel (manylinux_2_17_aarch64)
-- [ ] macOS x86_64 wheel (macosx_10_12_x86_64)
-- [ ] Windows x86_64 wheel (win_amd64)
+**Implemented in `.github/workflows/release.yml`:**
+- [x] Linux x86_64 wheel (`x86_64-unknown-linux-gnu`)
+- [x] Linux aarch64 wheel (`aarch64-unknown-linux-gnu`)
+- [x] macOS x86_64 wheel (`x86_64-apple-darwin`)
+- [x] macOS ARM64 wheel (`aarch64-apple-darwin`)
+- [x] Windows x86_64 wheel (`x86_64-pc-windows-msvc`)
 
-**Solution:** Add `maturin-action` to release workflow
+**Note:** Local builds only produce the native architecture wheel. The release workflow builds all platforms using `maturin-action` with cross-compilation. Wheel testing runs on Python 3.9, 3.10, 3.11, 3.12 across all 3 OS before PyPI publish.
 
 ---
 
