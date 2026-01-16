@@ -14,7 +14,7 @@ use crate::strategies::{
     BreakoutStrategy, MacdStrategy, MeanReversion, MomentumStrategy, RsiStrategy, SmaCrossover,
 };
 use crate::strategy::Strategy;
-use crate::types::{Bar, Signal, Verdict};
+use crate::types::{Bar, ExecutionPrice, Signal, Verdict};
 use crate::walkforward::{WalkForwardConfig, WalkForwardResult, WalkForwardWindow, WindowResult};
 
 use super::results::PyBacktestResult;
@@ -41,6 +41,10 @@ pub struct PyBacktestConfig {
     pub take_profit: Option<f64>,
     #[pyo3(get, set)]
     pub borrow_cost: f64,
+    #[pyo3(get, set)]
+    pub max_position: f64,
+    #[pyo3(get, set)]
+    pub fill_price: String,
 }
 
 #[pymethods]
@@ -55,7 +59,9 @@ impl PyBacktestConfig {
         fractional_shares=true,
         stop_loss=None,
         take_profit=None,
-        borrow_cost=0.03
+        borrow_cost=0.03,
+        max_position=1.0,
+        fill_price="next_open"
     ))]
     fn new(
         initial_capital: f64,
@@ -67,6 +73,8 @@ impl PyBacktestConfig {
         stop_loss: Option<f64>,
         take_profit: Option<f64>,
         borrow_cost: f64,
+        max_position: f64,
+        fill_price: &str,
     ) -> Self {
         Self {
             initial_capital,
@@ -78,13 +86,15 @@ impl PyBacktestConfig {
             stop_loss,
             take_profit,
             borrow_cost,
+            max_position,
+            fill_price: fill_price.to_string(),
         }
     }
 
     fn __repr__(&self) -> String {
         format!(
-            "BacktestConfig(capital={:.0}, commission={:.4}, slippage={:.4}, size={:.2})",
-            self.initial_capital, self.commission, self.slippage, self.position_size
+            "BacktestConfig(capital={:.0}, commission={:.4}, slippage={:.4}, size={:.2}, max_position={:.2})",
+            self.initial_capital, self.commission, self.slippage, self.position_size, self.max_position
         )
     }
 }
@@ -109,12 +119,24 @@ impl From<&PyBacktestConfig> for BacktestConfig {
         };
 
         // Set risk config
+        config.risk_config.max_position_size = py_config.max_position;
         if let Some(sl) = py_config.stop_loss {
             config.risk_config.stop_loss = StopLoss::Percentage(sl);
         }
         if let Some(tp) = py_config.take_profit {
             config.risk_config.take_profit = TakeProfit::Percentage(tp);
         }
+
+        // Set execution price model
+        config.execution_price = match py_config.fill_price.to_lowercase().as_str() {
+            "open" | "next_open" => ExecutionPrice::Open,
+            "close" => ExecutionPrice::Close,
+            "vwap" => ExecutionPrice::Vwap,
+            "twap" => ExecutionPrice::Twap,
+            "midpoint" => ExecutionPrice::Midpoint,
+            "random" | "random_in_range" => ExecutionPrice::RandomInRange,
+            _ => ExecutionPrice::Open, // Default to open (prevents lookahead)
+        };
 
         config
     }
@@ -137,6 +159,8 @@ impl From<&PyBacktestConfig> for BacktestConfig {
 ///     stop_loss: Optional stop loss percentage (e.g., 0.05 for 5%)
 ///     take_profit: Optional take profit percentage
 ///     allow_short: Whether to allow short positions (default True)
+///     max_position: Maximum position size as fraction of equity (default 1.0 = 100%)
+///     fill_price: Execution price model ("next_open", "close", "vwap", "twap", "midpoint")
 ///
 /// Returns:
 ///     BacktestResult object with metrics, equity curve, and trades.
@@ -161,7 +185,9 @@ impl From<&PyBacktestConfig> for BacktestConfig {
     stop_loss=None,
     take_profit=None,
     allow_short=true,
-    borrow_cost=0.03
+    borrow_cost=0.03,
+    max_position=1.0,
+    fill_price="next_open"
 ))]
 pub fn backtest(
     py: Python<'_>,
@@ -178,6 +204,8 @@ pub fn backtest(
     take_profit: Option<f64>,
     allow_short: bool,
     borrow_cost: f64,
+    max_position: f64,
+    fill_price: &str,
 ) -> PyResult<PyBacktestResult> {
     // Build or use provided config
     let bt_config = if let Some(cfg) = config {
@@ -193,6 +221,8 @@ pub fn backtest(
             stop_loss,
             take_profit,
             borrow_cost,
+            max_position,
+            fill_price,
         );
         BacktestConfig::from(&py_config)
     };

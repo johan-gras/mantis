@@ -536,6 +536,36 @@ mantis portfolio -d ./data/stocks/ -p "*.csv" --strategy risk-parity --rebalance
 **Dependencies:** None (plotly is optional)
 **Effort:** Medium (completed)
 
+#### 18e. Python API max_position and fill_price Parameters [COMPLETE]
+**Status:** COMPLETE
+
+**Implementation details:**
+- Added `max_position` parameter to Python backtest API (default 1.0 = 100% of equity)
+- Added `fill_price` parameter to Python backtest API (default "next_open")
+- fill_price options: "next_open", "close", "vwap", "twap", "midpoint", "random"
+- Parameters work in both functional API and fluent Backtest class
+- Type stubs updated in __init__.pyi
+
+**Files modified:**
+- src/python/backtest.rs - Added parameters to PyBacktestConfig and backtest()
+- python/mantis/__init__.py - Added to backtest() function and Backtest fluent API class
+- python/mantis/__init__.pyi - Type stubs updated
+
+**Dependencies:** None
+**Effort:** Small (completed)
+
+#### 18f. Python Sensitivity Analysis Bindings [NOT STARTED]
+**Status:** NOT STARTED
+
+**Description:** The Rust sensitivity and cost_sensitivity modules are fully implemented but not exposed to Python.
+
+**Required:**
+- Add mt.sensitivity() Python binding (src/sensitivity.rs has full implementation)
+- Add mt.cost_sensitivity() Python binding (src/cost_sensitivity.rs has full implementation)
+
+**Dependencies:** None
+**Effort:** Medium (2-3 days)
+
 ---
 
 ## Summary Table
@@ -563,6 +593,8 @@ mantis portfolio -d ./data/stocks/ -p "*.csv" --strategy risk-parity --rebalance
 | 18b | mt.load_results() | **COMPLETE** | P2 | Small | None |
 | 18c | mt.Backtest fluent API | **COMPLETE** | P3 | Medium | None |
 | 18d | Interactive Plotly charts | **COMPLETE** | P2 | Medium | None |
+| 18e | max_position/fill_price params | **COMPLETE** | P3 | Small | None |
+| 18f | Sensitivity analysis bindings | NOT STARTED | P3 | Medium | None |
 
 ---
 

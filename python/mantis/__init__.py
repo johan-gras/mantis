@@ -615,6 +615,8 @@ def backtest(
     take_profit: Optional[float] = None,
     allow_short: bool = True,
     borrow_cost: float = 0.03,
+    max_position: float = 1.0,
+    fill_price: str = "next_open",
 ) -> BacktestResult:
     """
     Run a backtest on historical data with a signal array.
@@ -624,7 +626,7 @@ def backtest(
     rust_result = _backtest_raw(
         data, signal, strategy, strategy_params, config,
         commission, slippage, size, cash, stop_loss,
-        take_profit, allow_short, borrow_cost
+        take_profit, allow_short, borrow_cost, max_position, fill_price
     )
     return BacktestResult(rust_result)
 
@@ -838,6 +840,8 @@ class Backtest:
             "take_profit": None,
             "allow_short": True,
             "borrow_cost": 0.03,
+            "max_position": 1.0,
+            "fill_price": "next_open",
         }
 
     def commission(self, rate: float) -> "Backtest":
@@ -942,6 +946,37 @@ class Backtest:
             Self for method chaining
         """
         self._config["borrow_cost"] = rate
+        return self
+
+    def max_position(self, fraction: float) -> "Backtest":
+        """
+        Set the maximum position size as a fraction of equity.
+
+        Args:
+            fraction: Maximum position size (e.g., 0.25 = 25% of equity)
+
+        Returns:
+            Self for method chaining
+        """
+        self._config["max_position"] = fraction
+        return self
+
+    def fill_price(self, model: str) -> "Backtest":
+        """
+        Set the execution price model.
+
+        Args:
+            model: Execution price model. Options:
+                - "next_open" (default): Fill at next bar's open price
+                - "close": Fill at bar's close price
+                - "vwap": Volume-weighted average price approximation
+                - "twap": Time-weighted average price approximation
+                - "midpoint": Average of high and low
+
+        Returns:
+            Self for method chaining
+        """
+        self._config["fill_price"] = model
         return self
 
     def run(self) -> BacktestResult:

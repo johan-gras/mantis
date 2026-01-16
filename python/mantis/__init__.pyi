@@ -39,6 +39,8 @@ class BacktestConfig:
     stop_loss: Optional[float]
     take_profit: Optional[float]
     borrow_cost: float
+    max_position: float
+    fill_price: str
 
     def __init__(
         self,
@@ -51,6 +53,8 @@ class BacktestConfig:
         stop_loss: Optional[float] = None,
         take_profit: Optional[float] = None,
         borrow_cost: float = 0.03,
+        max_position: float = 1.0,
+        fill_price: str = "next_open",
     ) -> None: ...
 
 class BacktestResult:
@@ -399,6 +403,8 @@ def backtest(
     take_profit: Optional[float] = None,
     allow_short: bool = True,
     borrow_cost: float = 0.03,
+    max_position: float = 1.0,
+    fill_price: str = "next_open",
 ) -> BacktestResult:
     """
     Run a backtest on historical data with a signal array.
@@ -418,6 +424,8 @@ def backtest(
         take_profit: Optional take profit percentage
         allow_short: Whether to allow short positions
         borrow_cost: Annual borrow rate for shorts (default 3%)
+        max_position: Maximum position size as fraction of equity (default 1.0 = 100%)
+        fill_price: Execution price model ("next_open", "close", "vwap", "twap", "midpoint")
 
     Returns:
         BacktestResult object with metrics, equity curve, and trades.
@@ -439,6 +447,9 @@ def backtest(
         >>> import polars as pl
         >>> df = pl.read_csv("AAPL.csv")
         >>> results = mt.backtest(df, signal)
+
+        >>> # With max position and fill price
+        >>> results = mt.backtest(data, signal, max_position=0.25, fill_price="vwap")
     """
     ...
 
@@ -623,6 +634,16 @@ class Backtest:
         ...
     def borrow_cost(self, rate: float) -> "Backtest":
         """Set the annual borrow cost for short positions (e.g., 0.03 = 3%)."""
+        ...
+    def max_position(self, fraction: float) -> "Backtest":
+        """Set the maximum position size as a fraction of equity (e.g., 0.25 = 25%)."""
+        ...
+    def fill_price(self, model: str) -> "Backtest":
+        """
+        Set the execution price model.
+
+        Options: "next_open" (default), "close", "vwap", "twap", "midpoint"
+        """
         ...
     def run(self) -> BacktestResult:
         """Execute the backtest with the configured parameters."""
