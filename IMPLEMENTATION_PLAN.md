@@ -42,7 +42,7 @@ The Mantis backtesting framework has a solid core implementation with excellent 
 ## Test Status Summary
 
 **Last Run:** 2026-01-16
-- **Total Tests:** 567 passed
+- **Total Tests:** 578 passed
 - **Failed:** 0 tests
 - **Status:** ALL TESTS PASSING
 
@@ -258,17 +258,22 @@ All 3 previously failing tests now pass:
 
 ## P2 - Medium Priority (Enhanced Functionality)
 
-### 11. Parameter Sensitivity Analysis [PARTIAL]
-**Status:** Walk-forward has parameter stability, no dedicated sweep module
+### 11. Parameter Sensitivity Analysis [COMPLETE]
+**Status:** COMPLETE
 
-**Current state:**
-- `src/walkforward.rs` - `parameter_stability` field (line 426)
-- CLI has Optimize command for grid search
-- No dedicated sensitivity analysis/heatmap generation
-
-**Files affected:**
-- `src/sensitivity.rs` (new) - Parameter sweep analysis
-- `src/cli.rs` - Add sensitivity command
+**Implementation details:**
+- Created `src/sensitivity.rs` module with ~1100 lines
+- `ParameterRange` enum with Linear, Logarithmic, Discrete, Centered variants
+- `SensitivityConfig` for configuring parameter grids with constraints
+- `SensitivityAnalysis` struct with parallel execution via rayon
+- `HeatmapData` for 2D visualization-ready exports
+- Cliff detection (sharp performance drops between adjacent values)
+- Plateau detection (stable parameter regions)
+- Parameter importance ranking
+- Stability score calculation
+- CLI command `mantis sensitivity` with options for metric, steps, heatmap output
+- Supports all 6 built-in strategies with predefined parameter ranges
+- 10 unit tests added
 
 **Dependencies:** None
 **Effort:** Medium (3-4 days)
@@ -393,7 +398,7 @@ All 3 previously failing tests now pass:
 | 8 | Cost Sensitivity CLI | **COMPLETE** | P1 | Small | None |
 | 9 | Position Sizing Integration | **COMPLETE** | P1 | Medium | None |
 | 10 | Multi-Symbol Documentation | DOC GAP | P1 | Small | None |
-| 11 | Parameter Sensitivity | PARTIAL | P2 | Medium | None |
+| 11 | Parameter Sensitivity | **COMPLETE** | P2 | Medium | None |
 | 12 | Visualization Module | MISSING | P2 | Medium | Item 2 |
 | 13 | HTML Reports | MISSING | P2 | Small | Item 12 |
 | 14 | Verdict System | **COMPLETE** | P2 | Small | None |
@@ -439,8 +444,9 @@ All 3 previously failing tests now pass:
 | **Short Borrow Costs** | **COMPLETE**: borrow_cost_rate field in CostModel (3% default), accrue_borrow_costs() method, charges daily for short equity positions, CostSettings integration, CLI --borrow-cost flag, scale_cost_model() support, 4 unit tests |
 | **Position Sizing Integration** | **COMPLETE**: PositionSizingMethod enum (PercentOfEquity, FixedDollar, VolatilityTargeted, SignalScaled, RiskBased), new PositionSizer methods (size_fixed_dollar, size_by_signal, size_by_volatility_target, size_percent_of_equity), BacktestConfig integration, signal_to_order() updated with ATR/volatility calculations, CLI options (--sizing-method, --fixed-dollar, --target-vol, --vol-lookback, --risk-per-trade, --stop-atr, --atr-period), 7 unit tests |
 | **Verdict System** | **COMPLETE**: Verdict enum (Robust, Borderline, LikelyOverfit), verdict() methods in WalkForwardResult and MonteCarloResult, from_degradation_ratio() and from_criteria() classification, CLI color-coded verdict display, is_acceptable(), description(), label() helpers, exported from lib.rs, 12 unit tests |
+| **Parameter Sensitivity** | **COMPLETE**: src/sensitivity.rs (~1100 lines), ParameterRange enum (Linear, Logarithmic, Discrete, Centered), SensitivityConfig with constraints, SensitivityAnalysis with parallel rayon execution, HeatmapData for 2D visualization exports, cliff detection, plateau detection, parameter importance ranking, stability scores, CLI `mantis sensitivity` command with metric/steps/heatmap options, supports all 6 built-in strategies, 10 unit tests |
 | Codebase Cleanliness | **VERIFIED**: No TODOs/FIXMEs in codebase |
-| ALL TESTS | **PASSING**: 567 tests (0 failures) |
+| ALL TESTS | **PASSING**: 578 tests (0 failures) |
 
 ---
 

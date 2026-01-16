@@ -193,7 +193,11 @@ impl WalkForwardResult {
         let degradation_ratio = self.oos_sharpe_ratio();
         let oos_positive = self.avg_oos_return > 0.0;
 
-        Verdict::from_criteria(degradation_ratio, oos_positive, self.walk_forward_efficiency)
+        Verdict::from_criteria(
+            degradation_ratio,
+            oos_positive,
+            self.walk_forward_efficiency,
+        )
     }
 }
 

@@ -16,6 +16,9 @@ use mantis::experiments::{
 use mantis::features::{FeatureConfig, FeatureExtractor, TimeSeriesSplitter};
 use mantis::monte_carlo::{MonteCarloConfig, MonteCarloResult, MonteCarloSimulator};
 use mantis::portfolio::{CostModel, MarginConfig};
+use mantis::sensitivity::{
+    ParameterRange, SensitivityAnalysis, SensitivityConfig, SensitivityMetric,
+};
 use mantis::strategies::{
     BreakoutStrategy, MacdStrategy, MeanReversion, MomentumStrategy, RsiStrategy, SmaCrossover,
 };
@@ -599,6 +602,53 @@ pub enum Commands {
         format: DataFormatArg,
     },
 
+    /// Run parameter sensitivity analysis to detect fragile strategies
+    Sensitivity {
+        /// Path to data file (CSV or Parquet)
+        #[arg(short, long)]
+        data: PathBuf,
+
+        /// Symbol name
+        #[arg(short, long, default_value = "SYMBOL")]
+        symbol: String,
+
+        /// Strategy to use
+        #[arg(short = 'S', long, value_enum, default_value = "sma-crossover")]
+        strategy: StrategyType,
+
+        /// Initial capital
+        #[arg(short, long, default_value = "100000")]
+        capital: f64,
+
+        /// Position size as fraction of equity (0.0-1.0)
+        #[arg(short, long, default_value = "0.1")]
+        position_size: f64,
+
+        /// Commission percentage (e.g., 0.1 for 0.1%)
+        #[arg(long, default_value = "0.1")]
+        commission: f64,
+
+        /// Slippage percentage (e.g., 0.1 for 0.1%)
+        #[arg(long, default_value = "0.1")]
+        slippage: f64,
+
+        /// Metric to analyze (sharpe, sortino, return, calmar, profit-factor, win-rate, max-drawdown)
+        #[arg(long, value_enum, default_value = "sharpe")]
+        metric: SensitivityMetricArg,
+
+        /// Number of steps for parameter ranges
+        #[arg(long, default_value = "5")]
+        steps: usize,
+
+        /// Export heatmap to CSV file
+        #[arg(long)]
+        heatmap_output: Option<PathBuf>,
+
+        /// Data file format (auto-detects from extension if not specified)
+        #[arg(short, long, value_enum, default_value = "auto")]
+        format: DataFormatArg,
+    },
+
     /// Experiment tracking and management
     #[command(subcommand)]
     Experiments(ExperimentsCommands),
@@ -643,7 +693,7 @@ pub enum LotSelectionArg {
     LowestCost,
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, ValueEnum)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, ValueEnum)]
 pub enum StrategyType {
     SmaCrossover,
     Momentum,
@@ -659,6 +709,32 @@ pub enum OptimizeMetric {
     Sortino,
     Return,
     Calmar,
+}
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq, ValueEnum)]
+#[value(rename_all = "kebab-case")]
+pub enum SensitivityMetricArg {
+    Sharpe,
+    Sortino,
+    Return,
+    Calmar,
+    ProfitFactor,
+    WinRate,
+    MaxDrawdown,
+}
+
+impl From<SensitivityMetricArg> for SensitivityMetric {
+    fn from(arg: SensitivityMetricArg) -> Self {
+        match arg {
+            SensitivityMetricArg::Sharpe => SensitivityMetric::Sharpe,
+            SensitivityMetricArg::Sortino => SensitivityMetric::Sortino,
+            SensitivityMetricArg::Return => SensitivityMetric::Return,
+            SensitivityMetricArg::Calmar => SensitivityMetric::Calmar,
+            SensitivityMetricArg::ProfitFactor => SensitivityMetric::ProfitFactor,
+            SensitivityMetricArg::WinRate => SensitivityMetric::WinRate,
+            SensitivityMetricArg::MaxDrawdown => SensitivityMetric::MaxDrawdown,
+        }
+    }
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, ValueEnum)]
@@ -1221,6 +1297,33 @@ pub fn run() -> Result<()> {
             *slow_period,
             *rsi_period,
             *lookback,
+            *format,
+            cli.output,
+        ),
+
+        Commands::Sensitivity {
+            data,
+            symbol,
+            strategy,
+            capital,
+            position_size,
+            commission,
+            slippage,
+            metric,
+            steps,
+            heatmap_output,
+            format,
+        } => run_sensitivity(
+            data,
+            symbol,
+            *strategy,
+            *capital,
+            *position_size,
+            *commission,
+            *slippage,
+            *metric,
+            *steps,
+            heatmap_output.clone(),
             *format,
             cli.output,
         ),
@@ -2703,6 +2806,311 @@ fn print_cost_sensitivity_csv(analysis: &CostSensitivityAnalysis) {
     println!("# is_robust,{}", analysis.is_robust(0.5));
 }
 
+/// Run parameter sensitivity analysis
+#[allow(clippy::too_many_arguments)]
+fn run_sensitivity(
+    data_path: &PathBuf,
+    symbol: &str,
+    strategy_type: StrategyType,
+    capital: f64,
+    position_size: f64,
+    commission: f64,
+    slippage: f64,
+    metric_arg: SensitivityMetricArg,
+    steps: usize,
+    heatmap_output: Option<PathBuf>,
+    format: DataFormatArg,
+    output: OutputFormat,
+) -> Result<()> {
+    info!("Loading data from: {}", data_path.display());
+    let bars = load_data_with_format(data_path, &DataConfig::default(), format)?;
+
+    let cost_model = CostModel {
+        commission_pct: commission / 100.0,
+        slippage_pct: slippage / 100.0,
+        ..Default::default()
+    };
+
+    let config = BacktestConfig {
+        initial_capital: capital,
+        cost_model,
+        position_size,
+        show_progress: false,
+        ..Default::default()
+    };
+
+    let metric: SensitivityMetric = metric_arg.into();
+
+    // Build sensitivity config based on strategy type
+    let sensitivity_config = build_sensitivity_config(strategy_type, steps, metric);
+
+    println!("{}", "Parameter Sensitivity Analysis".bold().underline());
+    println!("Strategy: {:?}", strategy_type);
+    println!("Symbol: {}", symbol);
+    println!("Metric: {}", metric.display_name());
+    println!(
+        "Parameters: {} combinations\n",
+        sensitivity_config.num_combinations()
+    );
+
+    // Run analysis based on strategy type
+    let analysis =
+        run_strategy_sensitivity(&config, &sensitivity_config, &bars, symbol, strategy_type)?;
+
+    // Output results
+    match output {
+        OutputFormat::Text => print_sensitivity_text(&analysis),
+        OutputFormat::Json => {
+            let json = serde_json::to_string_pretty(&analysis)?;
+            println!("{}", json);
+        }
+        OutputFormat::Csv => {
+            println!("{}", analysis.to_csv());
+        }
+    }
+
+    // Export heatmap if requested
+    if let Some(ref heatmap_path) = heatmap_output {
+        export_heatmap(&analysis, strategy_type, heatmap_path)?;
+    }
+
+    Ok(())
+}
+
+/// Build sensitivity config based on strategy type
+fn build_sensitivity_config(
+    strategy_type: StrategyType,
+    steps: usize,
+    metric: SensitivityMetric,
+) -> SensitivityConfig {
+    match strategy_type {
+        StrategyType::SmaCrossover => SensitivityConfig::new()
+            .add_parameter("fast_period", ParameterRange::linear_int(5, 20, steps))
+            .add_parameter("slow_period", ParameterRange::linear_int(20, 60, steps))
+            .metric(metric)
+            .with_constraint(|params| {
+                params.get("fast_period").unwrap() < params.get("slow_period").unwrap()
+            }),
+        StrategyType::Momentum => SensitivityConfig::new()
+            .add_parameter("lookback", ParameterRange::linear_int(5, 30, steps))
+            .add_parameter("threshold", ParameterRange::linear(0.0, 0.05, steps))
+            .metric(metric),
+        StrategyType::MeanReversion => SensitivityConfig::new()
+            .add_parameter("period", ParameterRange::linear_int(10, 30, steps))
+            .add_parameter("entry_std", ParameterRange::linear(1.5, 3.0, steps))
+            .metric(metric),
+        StrategyType::Rsi => SensitivityConfig::new()
+            .add_parameter("period", ParameterRange::linear_int(7, 21, steps))
+            .add_parameter("oversold", ParameterRange::linear(20.0, 35.0, steps))
+            .add_parameter("overbought", ParameterRange::linear(65.0, 80.0, steps))
+            .metric(metric),
+        StrategyType::Breakout => SensitivityConfig::new()
+            .add_parameter("entry_period", ParameterRange::linear_int(20, 50, steps))
+            .add_parameter("exit_period", ParameterRange::linear_int(10, 25, steps))
+            .metric(metric)
+            .with_constraint(|params| {
+                params.get("exit_period").unwrap() < params.get("entry_period").unwrap()
+            }),
+        StrategyType::Macd => SensitivityConfig::new()
+            .add_parameter("fast_period", ParameterRange::linear_int(8, 16, steps))
+            .add_parameter("slow_period", ParameterRange::linear_int(20, 30, steps))
+            .metric(metric)
+            .with_constraint(|params| {
+                params.get("fast_period").unwrap() < params.get("slow_period").unwrap()
+            }),
+    }
+}
+
+/// Run sensitivity analysis for a specific strategy type
+fn run_strategy_sensitivity(
+    config: &BacktestConfig,
+    sensitivity_config: &SensitivityConfig,
+    bars: &[mantis::types::Bar],
+    symbol: &str,
+    strategy_type: StrategyType,
+) -> Result<SensitivityAnalysis> {
+    let analysis = match strategy_type {
+        StrategyType::SmaCrossover => {
+            SensitivityAnalysis::run(config, sensitivity_config, bars, symbol, |params| {
+                SmaCrossover::new(
+                    *params.get("fast_period").unwrap() as usize,
+                    *params.get("slow_period").unwrap() as usize,
+                )
+            })
+        }
+        StrategyType::Momentum => {
+            SensitivityAnalysis::run(config, sensitivity_config, bars, symbol, |params| {
+                MomentumStrategy::new(
+                    *params.get("lookback").unwrap() as usize,
+                    *params.get("threshold").unwrap(),
+                )
+            })
+        }
+        StrategyType::MeanReversion => {
+            SensitivityAnalysis::run(config, sensitivity_config, bars, symbol, |params| {
+                MeanReversion::new(
+                    *params.get("period").unwrap() as usize,
+                    2.0, // num_std (fixed)
+                    *params.get("entry_std").unwrap(),
+                    0.5, // Fixed exit_std
+                )
+            })
+        }
+        StrategyType::Rsi => {
+            SensitivityAnalysis::run(config, sensitivity_config, bars, symbol, |params| {
+                RsiStrategy::new(
+                    *params.get("period").unwrap() as usize,
+                    *params.get("oversold").unwrap(),
+                    *params.get("overbought").unwrap(),
+                )
+            })
+        }
+        StrategyType::Breakout => {
+            SensitivityAnalysis::run(config, sensitivity_config, bars, symbol, |params| {
+                BreakoutStrategy::new(
+                    *params.get("entry_period").unwrap() as usize,
+                    *params.get("exit_period").unwrap() as usize,
+                )
+            })
+        }
+        StrategyType::Macd => {
+            SensitivityAnalysis::run(config, sensitivity_config, bars, symbol, |params| {
+                MacdStrategy::new(
+                    *params.get("fast_period").unwrap() as usize,
+                    *params.get("slow_period").unwrap() as usize,
+                    9, // Fixed signal period
+                )
+            })
+        }
+    };
+
+    analysis.map_err(|e| {
+        mantis::BacktestError::ConfigError(format!("Sensitivity analysis failed: {}", e))
+    })
+}
+
+/// Print sensitivity analysis results in text format
+fn print_sensitivity_text(analysis: &SensitivityAnalysis) {
+    let summary = analysis.summary();
+    println!("{}", summary);
+
+    // Print best parameters
+    if let Some(best) = analysis.best_result() {
+        println!("{}", "Best Parameters".bold());
+        println!("{}", "-".repeat(40));
+        for (name, value) in &best.params {
+            println!("  {}: {:.2}", name, value);
+        }
+        println!(
+            "\n  {} = {:.4}",
+            analysis.config.metric.display_name(),
+            best.metric_value
+        );
+        println!("  Sharpe: {:.3}", best.result.sharpe_ratio);
+        println!("  Return: {:.2}%", best.result.total_return_pct);
+        println!("  Max DD: {:.2}%", best.result.max_drawdown_pct);
+    }
+
+    // Print cliffs (sharp drops)
+    if !analysis.cliffs.is_empty() {
+        println!(
+            "\n{}",
+            "⚠️  Detected Cliffs (Sharp Performance Drops)"
+                .yellow()
+                .bold()
+        );
+        println!("{}", "-".repeat(50));
+        for cliff in &analysis.cliffs {
+            println!(
+                "  {}: {} → {} causes {:.1}% drop",
+                cliff.parameter, cliff.value_before, cliff.value_after, cliff.drop_pct
+            );
+        }
+    }
+
+    // Print plateaus (stable regions)
+    if !analysis.plateaus.is_empty() {
+        println!(
+            "\n{}",
+            "✓ Detected Plateaus (Stable Regions)".green().bold()
+        );
+        println!("{}", "-".repeat(50));
+        for plateau in &analysis.plateaus {
+            println!(
+                "  {}: {:.2} to {:.2} (avg metric: {:.3})",
+                plateau.parameter, plateau.start_value, plateau.end_value, plateau.avg_metric
+            );
+        }
+    }
+
+    // Print parameter importance
+    let importance = analysis.parameter_importance();
+    if !importance.is_empty() {
+        println!("\n{}", "Parameter Importance".bold());
+        println!("{}", "-".repeat(40));
+        for (name, imp) in importance {
+            let bar_len = (imp * 20.0).round() as usize;
+            let bar = "█".repeat(bar_len);
+            println!("  {:15} {:5.1}% {}", name, imp * 100.0, bar);
+        }
+    }
+
+    // Print verdict
+    println!("\n{}", "Verdict".bold());
+    println!("{}", "-".repeat(40));
+    if analysis.is_fragile(0.5) {
+        println!(
+            "{}",
+            "  ⚠️  Strategy appears FRAGILE - performance varies significantly with parameter changes"
+                .yellow()
+        );
+        println!(
+            "{}",
+            "  Consider: Using parameters from stable plateau regions, or simplifying strategy"
+                .yellow()
+                .dimmed()
+        );
+    } else {
+        println!(
+            "{}",
+            "  ✓ Strategy appears ROBUST - consistent performance across parameter space".green()
+        );
+    }
+}
+
+/// Export heatmap to CSV file
+fn export_heatmap(
+    analysis: &SensitivityAnalysis,
+    _strategy_type: StrategyType,
+    path: &PathBuf,
+) -> Result<()> {
+    // Get the first two parameters for heatmap
+    let params: Vec<&String> = analysis.config.parameters.keys().collect();
+    if params.len() < 2 {
+        println!("Note: Heatmap requires at least 2 parameters. Exporting full results instead.");
+        fs::write(path, analysis.to_csv())?;
+        return Ok(());
+    }
+
+    let x_param = params[0];
+    let y_param = params[1];
+
+    if let Some(heatmap) = analysis.heatmap(x_param, y_param) {
+        fs::write(path, heatmap.to_csv())?;
+        println!(
+            "\nHeatmap exported to: {} ({} vs {})",
+            path.display(),
+            x_param,
+            y_param
+        );
+    } else {
+        println!("Could not generate heatmap for {} vs {}", x_param, y_param);
+        fs::write(path, analysis.to_csv())?;
+    }
+
+    Ok(())
+}
+
 fn print_monte_carlo_text(result: &MonteCarloResult) {
     println!("\n{}", "Monte Carlo Simulation Results".bold().underline());
     println!("{}", "=".repeat(50));
@@ -2849,10 +3257,7 @@ fn print_monte_carlo_text(result: &MonteCarloResult) {
             print_monte_carlo_warnings(result);
         }
         Verdict::LikelyOverfit => {
-            println!(
-                "{}",
-                "Strategy may not be robust. Consider:".red().dimmed()
-            );
+            println!("{}", "Strategy may not be robust. Consider:".red().dimmed());
             print_monte_carlo_warnings(result);
         }
     }

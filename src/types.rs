@@ -1127,35 +1127,17 @@ mod tests {
     #[test]
     fn test_verdict_from_degradation_ratio_robust() {
         // > 0.80 should be Robust
-        assert_eq!(
-            Verdict::from_degradation_ratio(0.85),
-            Verdict::Robust
-        );
-        assert_eq!(
-            Verdict::from_degradation_ratio(0.95),
-            Verdict::Robust
-        );
-        assert_eq!(
-            Verdict::from_degradation_ratio(1.2),
-            Verdict::Robust
-        );
+        assert_eq!(Verdict::from_degradation_ratio(0.85), Verdict::Robust);
+        assert_eq!(Verdict::from_degradation_ratio(0.95), Verdict::Robust);
+        assert_eq!(Verdict::from_degradation_ratio(1.2), Verdict::Robust);
     }
 
     #[test]
     fn test_verdict_from_degradation_ratio_borderline() {
         // 0.60-0.80 should be Borderline
-        assert_eq!(
-            Verdict::from_degradation_ratio(0.60),
-            Verdict::Borderline
-        );
-        assert_eq!(
-            Verdict::from_degradation_ratio(0.70),
-            Verdict::Borderline
-        );
-        assert_eq!(
-            Verdict::from_degradation_ratio(0.80),
-            Verdict::Borderline
-        );
+        assert_eq!(Verdict::from_degradation_ratio(0.60), Verdict::Borderline);
+        assert_eq!(Verdict::from_degradation_ratio(0.70), Verdict::Borderline);
+        assert_eq!(Verdict::from_degradation_ratio(0.80), Verdict::Borderline);
     }
 
     #[test]
@@ -1169,10 +1151,7 @@ mod tests {
             Verdict::from_degradation_ratio(0.30),
             Verdict::LikelyOverfit
         );
-        assert_eq!(
-            Verdict::from_degradation_ratio(0.0),
-            Verdict::LikelyOverfit
-        );
+        assert_eq!(Verdict::from_degradation_ratio(0.0), Verdict::LikelyOverfit);
         assert_eq!(
             Verdict::from_degradation_ratio(-0.5),
             Verdict::LikelyOverfit
@@ -1200,10 +1179,7 @@ mod tests {
     #[test]
     fn test_verdict_from_criteria_robust() {
         // High degradation ratio and good efficiency should be Robust
-        assert_eq!(
-            Verdict::from_criteria(0.85, true, 0.70),
-            Verdict::Robust
-        );
+        assert_eq!(Verdict::from_criteria(0.85, true, 0.70), Verdict::Robust);
     }
 
     #[test]

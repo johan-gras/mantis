@@ -94,6 +94,7 @@
 //! - [`risk`]: Risk management (stop-loss, take-profit, position sizing)
 //! - [`walkforward`]: Walk-forward optimization analysis
 //! - [`cost_sensitivity`]: Transaction cost sensitivity analysis for robustness testing
+//! - [`sensitivity`]: Parameter sensitivity analysis with heatmaps and stability detection
 //! - [`options`]: Options pricing (Black-Scholes), Greeks, and derivatives support
 //! - [`config`]: TOML configuration file support
 //! - [`features`]: Feature extraction for ML/DL workflows
@@ -118,6 +119,7 @@ pub mod options;
 pub mod portfolio;
 pub mod regime;
 pub mod risk;
+pub mod sensitivity;
 pub mod strategies;
 pub mod strategy;
 pub mod streaming;
@@ -142,8 +144,8 @@ pub use options::{
 pub use strategy::Strategy;
 pub use types::{
     AssetClass, AssetConfig, Bar, CorporateAction, CorporateActionType, DividendAdjustMethod,
-    DividendType, ExecutionPrice, LotSelectionMethod, Order, Side, Signal, TaxLot, Trade,
-    Verdict, VolumeProfile,
+    DividendType, ExecutionPrice, LotSelectionMethod, Order, Side, Signal, TaxLot, Trade, Verdict,
+    VolumeProfile,
 };
 
 // Data handling re-exports
@@ -167,4 +169,10 @@ pub use validation::{
 // Risk management and position sizing
 pub use risk::{
     PositionSizer, PositionSizingMethod, RiskConfig, RiskManager, StopLoss, TakeProfit,
+};
+
+// Parameter sensitivity analysis
+pub use sensitivity::{
+    Cliff, HeatmapData, ParameterRange, ParameterResult, Plateau, SensitivityAnalysis,
+    SensitivityConfig, SensitivityMetric, SensitivitySummary,
 };
