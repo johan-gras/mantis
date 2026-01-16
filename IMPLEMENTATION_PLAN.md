@@ -410,6 +410,16 @@ The following edge case fixes were implemented to match specification requiremen
 
 ---
 
+### Empty Signal Array Validation (2026-01-16)
+
+- Per spec (core-engine.md line 159), empty signal arrays now raise InvalidSignalError
+- Validation added to: Python backtest() function, validate_signal(), validate_signal_quick()
+- Error includes helpful message with common causes and quick fixes
+- Files modified: src/python/backtest.rs, src/validation.rs
+- Test added: test_empty_signal_detection
+
+---
+
 ## Completed Items - GitHub Pages Deployment (2026-01-16)
 
 ### Item 39: GitHub Pages Deployment
