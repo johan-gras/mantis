@@ -159,6 +159,8 @@ struct PendingOrder {
     created_at: DateTime<Utc>,
     expires_at: Option<DateTime<Utc>>,
     remaining_quantity: f64,
+    /// Original signal that generated this order (for entry tracking)
+    signal: Option<Signal>,
 }
 
 impl PendingOrder {
@@ -301,6 +303,8 @@ impl Engine {
         let mut entry_prices: HashMap<String, f64> = HashMap::new();
         let mut trailing_stops: HashMap<String, TrailingStop> = HashMap::new();
         let mut pending_orders: Vec<PendingOrder> = Vec::new();
+        // Track symbols with pending exit orders to avoid double-buffering
+        let mut pending_exits: std::collections::HashSet<String> = std::collections::HashSet::new();
 
         // Main backtest loop
         for i in 0..bars.len() {
@@ -347,8 +351,11 @@ impl Engine {
                         false
                     };
 
-                    // Execute exit if any stop/target is hit
-                    if stop_triggered || take_profit_triggered || trailing_triggered {
+                    // Buffer exit order if any stop/target is hit (fills at next bar open)
+                    // Only buffer if no exit is already pending for this symbol
+                    if (stop_triggered || take_profit_triggered || trailing_triggered)
+                        && !pending_exits.contains(symbol)
+                    {
                         let exit_reason = if stop_triggered {
                             "stop-loss"
                         } else if take_profit_triggered {
@@ -365,18 +372,18 @@ impl Engine {
                         let exit_order =
                             Order::market(symbol, exit_side, position.quantity, bar.timestamp);
 
-                        if let Ok(Some(_)) = portfolio.execute_with_fill_probability(
-                            &exit_order,
-                            bar,
-                            self.config.fill_probability,
-                        ) {
-                            debug!(
-                                "Position closed due to {}: {} @ {:.2}",
-                                exit_reason, symbol, current_price
-                            );
-                            entry_prices.remove(symbol);
-                            trailing_stops.remove(symbol);
-                        }
+                        // Buffer exit for next bar to prevent lookahead bias
+                        self.buffer_order_for_next_bar(&mut pending_orders, exit_order, None, &bars, i);
+                        pending_exits.insert(symbol.to_string());
+
+                        debug!(
+                            "{} triggered for {}: buffered exit for next bar @ {:.2}",
+                            exit_reason, symbol, current_price
+                        );
+
+                        // Clean up entry tracking (will be stale but harmless)
+                        entry_prices.remove(symbol);
+                        trailing_stops.remove(symbol);
 
                         if let Some(ref pb) = progress {
                             pb.inc(1);
@@ -398,85 +405,22 @@ impl Engine {
                 timeframe_manager: timeframe_manager.as_ref(),
             };
 
-            self.handle_pending_orders(&mut pending_orders, bar, strategy, &ctx, &mut portfolio)?;
+            self.handle_pending_orders(&mut pending_orders, &mut pending_exits, &mut entry_prices, &mut trailing_stops, bar, strategy, &ctx, &mut portfolio)?;
 
             // Check for custom orders first
             if let Some(orders) = strategy.generate_orders(&ctx) {
+                // Buffer orders for execution at next bar's open (prevents lookahead bias)
                 for order in orders {
-                    match portfolio.execute_with_fill_probability(
-                        &order,
-                        bar,
-                        self.config.fill_probability,
-                    ) {
-                        Ok(Some(fill)) => {
-                            self.enqueue_pending_if_needed(
-                                &mut pending_orders,
-                                &order,
-                                fill.remaining_quantity,
-                                &bars,
-                                i,
-                            );
-                        }
-                        Ok(None) => {
-                            debug!("Order not filled (limit/stop not triggered)");
-                        }
-                        Err(e) => {
-                            debug!("Order execution failed: {}", e);
-                        }
-                    }
+                    self.buffer_order_for_next_bar(&mut pending_orders, order, None, &bars, i);
                 }
             } else {
                 // Get signal and convert to order
                 let signal = strategy.on_bar(&ctx);
                 if let Some(order) = self.signal_to_order(signal, symbol, bar, &portfolio) {
-                    match portfolio.execute_with_fill_probability(
-                        &order,
-                        bar,
-                        self.config.fill_probability,
-                    ) {
-                        Ok(Some(fill)) => {
-                            if let Some(trade) = fill.trade.as_ref() {
-                                strategy.on_trade(&ctx, &order);
-                                debug!("Trade executed: {:?}", trade);
-                            }
-
-                            if matches!(signal, Signal::Long | Signal::Short) {
-                                if let Some(trade) = fill.trade.as_ref() {
-                                    entry_prices.insert(symbol.to_string(), trade.entry_price);
-
-                                    if let StopLoss::Trailing(trail_pct) =
-                                        self.config.risk_config.stop_loss
-                                    {
-                                        let ts = TrailingStop::new(
-                                            trade.entry_price,
-                                            trade.side,
-                                            trail_pct,
-                                        );
-                                        trailing_stops.insert(symbol.to_string(), ts);
-                                    }
-                                }
-                            } else if matches!(signal, Signal::Exit)
-                                && portfolio.position(symbol).is_none()
-                            {
-                                entry_prices.remove(symbol);
-                                trailing_stops.remove(symbol);
-                            }
-
-                            self.enqueue_pending_if_needed(
-                                &mut pending_orders,
-                                &order,
-                                fill.remaining_quantity,
-                                &bars,
-                                i,
-                            );
-                        }
-                        Ok(None) => {
-                            debug!("Order not filled (limit/stop not triggered)");
-                        }
-                        Err(e) => {
-                            debug!("Order execution failed: {}", e);
-                        }
-                    }
+                    // Buffer order for execution at next bar's open (prevents lookahead bias)
+                    // Entry tracking (entry_prices, trailing_stops) will be handled in
+                    // handle_pending_orders when the order actually fills
+                    self.buffer_order_for_next_bar(&mut pending_orders, order, Some(signal), &bars, i);
                 }
             }
 
@@ -577,9 +521,13 @@ impl Engine {
         None
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn handle_pending_orders(
         &self,
         pending_orders: &mut Vec<PendingOrder>,
+        pending_exits: &mut std::collections::HashSet<String>,
+        entry_prices: &mut HashMap<String, f64>,
+        trailing_stops: &mut HashMap<String, TrailingStop>,
         bar: &Bar,
         strategy: &mut dyn Strategy,
         ctx: &StrategyContext,
@@ -596,11 +544,14 @@ impl Engine {
                     "Pending order expired after {:?}",
                     bar.timestamp - pending.created_at
                 );
+                // Clear pending exit tracking for expired orders
+                pending_exits.remove(&pending.order.symbol);
                 continue;
             }
 
             let mut pending_order = pending.order.clone();
             pending_order.quantity = pending.remaining_quantity;
+            let signal = pending.signal;
             match portfolio.execute_with_fill_probability(
                 &pending_order,
                 bar,
@@ -610,11 +561,30 @@ impl Engine {
                     if let Some(trade) = fill.trade.as_ref() {
                         strategy.on_trade(ctx, &pending_order);
                         debug!("Trade executed: {:?}", trade);
+
+                        // Handle entry tracking for Long/Short signals
+                        if matches!(signal, Some(Signal::Long) | Some(Signal::Short)) {
+                            entry_prices.insert(pending_order.symbol.clone(), trade.entry_price);
+
+                            if let StopLoss::Trailing(trail_pct) = self.config.risk_config.stop_loss
+                            {
+                                let ts = TrailingStop::new(trade.entry_price, trade.side, trail_pct);
+                                trailing_stops.insert(pending_order.symbol.clone(), ts);
+                            }
+                        } else if matches!(signal, Some(Signal::Exit))
+                            && portfolio.position(&pending_order.symbol).is_none()
+                        {
+                            entry_prices.remove(&pending_order.symbol);
+                            trailing_stops.remove(&pending_order.symbol);
+                        }
                     }
 
                     if fill.partial && fill.remaining_quantity > f64::EPSILON {
                         pending.remaining_quantity = fill.remaining_quantity;
                         still_pending.push(pending);
+                    } else {
+                        // Order fully filled, clear pending exit tracking
+                        pending_exits.remove(&pending_order.symbol);
                     }
                 }
                 None => still_pending.push(pending),
@@ -625,33 +595,30 @@ impl Engine {
         Ok(())
     }
 
-    fn enqueue_pending_if_needed(
+    /// Buffer an order for execution at the next bar's open.
+    /// This prevents lookahead bias by ensuring orders generated from bar[i]
+    /// data fill at bar[i+1].open, not bar[i].open.
+    fn buffer_order_for_next_bar(
         &self,
         pending_orders: &mut Vec<PendingOrder>,
-        order: &Order,
-        remaining: f64,
+        order: Order,
+        signal: Option<Signal>,
         bars: &[Bar],
         index: usize,
     ) {
-        if remaining <= f64::EPSILON {
-            return;
-        }
+        // Market orders get no expiry (execute at next bar)
+        // Limit orders get TTL-based expiry
+        let expires_at = match order.order_type {
+            OrderType::Market => None,
+            _ => self.pending_expiry_for(bars, index),
+        };
 
-        if !matches!(
-            order.order_type,
-            OrderType::Limit(_) | OrderType::StopLimit { .. }
-        ) {
-            return;
-        }
-
-        let mut pending_order = order.clone();
-        pending_order.quantity = remaining;
-        let expires_at = self.pending_expiry_for(bars, index);
         pending_orders.push(PendingOrder {
-            order: pending_order,
+            order: order.clone(),
             created_at: bars[index].timestamp,
             expires_at,
-            remaining_quantity: remaining,
+            remaining_quantity: order.quantity,
+            signal,
         });
     }
 
@@ -961,24 +928,30 @@ mod tests {
     }
 
     #[test]
-    fn test_enqueue_pending_limit_order() {
+    fn test_buffer_order_for_next_bar() {
+        use crate::types::Signal;
+
         let mut config = BacktestConfig::default();
         config.limit_order_ttl_bars = Some(3);
         config.show_progress = false;
         let engine = Engine::new(config);
         let bars = create_test_bars();
-        let order = Order::limit("TEST", Side::Buy, 10.0, 99.0, bars[0].timestamp);
         let mut pending = Vec::new();
 
-        engine.enqueue_pending_if_needed(&mut pending, &order, 4.0, &bars, 0);
+        // Limit order should be buffered with TTL-based expiry
+        let limit_order = Order::limit("TEST", Side::Buy, 10.0, 99.0, bars[0].timestamp);
+        engine.buffer_order_for_next_bar(&mut pending, limit_order.clone(), Some(Signal::Long), &bars, 0);
         assert_eq!(pending.len(), 1);
-        assert!((pending[0].remaining_quantity - 4.0).abs() < f64::EPSILON);
+        assert!((pending[0].remaining_quantity - 10.0).abs() < f64::EPSILON);
         assert!(pending[0].expires_at.is_some());
+        assert!(matches!(pending[0].signal, Some(Signal::Long)));
 
-        // Market order should not create pending entry
+        // Market order should be buffered with no expiry (executes next bar)
         let market = Order::market("TEST", Side::Buy, 5.0, bars[0].timestamp);
-        engine.enqueue_pending_if_needed(&mut pending, &market, 2.0, &bars, 0);
-        assert_eq!(pending.len(), 1);
+        engine.buffer_order_for_next_bar(&mut pending, market, Some(Signal::Long), &bars, 0);
+        assert_eq!(pending.len(), 2);
+        assert!((pending[1].remaining_quantity - 5.0).abs() < f64::EPSILON);
+        assert!(pending[1].expires_at.is_none()); // Market orders have no expiry
     }
 
     #[test]
