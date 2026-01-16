@@ -191,3 +191,5 @@ The following items were resolved on 2026-01-16:
 - **ONNX integration tests → 15 tests covering model loading, inference, batching, stats**
 - **Test ONNX models → Created scripts/generate_test_onnx.py and data/models/**
 - **README accuracy update (2026-01-16)** → Removed false claims about unimplemented modules (features.rs, streaming.rs, regime.rs), updated to Python-first positioning per marketing-positioning.md, corrected API examples to match actual implementation
+- **Comparison plot fix (2026-01-16)** → Fixed CompareResult.plot() Plotly table type error by adding specs parameter to make_subplots
+- **Python version update (2026-01-16)** → Updated minimum Python to 3.9+ (3.8 EOL, NumPy 2.x incompatible), added Python 3.13 to CI matrix
