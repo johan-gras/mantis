@@ -165,7 +165,8 @@ fn test_backtest_with_costs() {
     let cost_model = CostModel {
         commission_flat: 5.0,
         commission_pct: 0.001, // 0.1%
-        slippage_pct: 0.001,   // 0.1%
+        commission_per_share: 0.0,
+        slippage_pct: 0.001, // 0.1%
         min_commission: 1.0,
         futures: FuturesCost::default(),
         crypto: CryptoCost::default(),

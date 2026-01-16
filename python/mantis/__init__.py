@@ -2183,6 +2183,25 @@ class Backtest:
         self._config["commission"] = rate
         return self
 
+    def commission_per_share(self, rate: float) -> "Backtest":
+        """
+        Set the per-share commission rate.
+
+        Use this with commission=0 for per-share pricing models.
+
+        Args:
+            rate: Commission per share (e.g., 0.005 = $0.005/share)
+
+        Returns:
+            Self for method chaining
+
+        Example:
+            >>> # Per-share commission of $0.005/share
+            >>> results = mt.Backtest(data, signal).commission(0).commission_per_share(0.005).run()
+        """
+        self._config["commission_per_share"] = rate
+        return self
+
     def slippage(self, rate: float) -> "Backtest":
         """
         Set the slippage rate.

@@ -161,6 +161,9 @@ pub struct CostModel {
     pub commission_flat: f64,
     /// Commission as percentage of trade value.
     pub commission_pct: f64,
+    /// Commission per share (e.g., $0.005 per share).
+    #[serde(default)]
+    pub commission_per_share: f64,
     /// Slippage as percentage of price.
     pub slippage_pct: f64,
     /// Minimum commission per trade.
@@ -193,7 +196,8 @@ impl Default for CostModel {
         Self {
             commission_flat: 0.0,
             commission_pct: 0.001, // 0.1% (10 bps)
-            slippage_pct: 0.001,   // 0.1% (10 bps)
+            commission_per_share: 0.0,
+            slippage_pct: 0.001, // 0.1% (10 bps)
             min_commission: 0.0,
             futures: FuturesCost::default(),
             crypto: CryptoCost::default(),
@@ -211,6 +215,7 @@ impl CostModel {
         Self {
             commission_flat: 0.0,
             commission_pct: 0.0,
+            commission_per_share: 0.0,
             slippage_pct: 0.0,
             min_commission: 0.0,
             futures: FuturesCost::default(),
@@ -223,8 +228,22 @@ impl CostModel {
     }
 
     /// Calculate commission for a trade.
+    ///
+    /// Commission is calculated as: flat + (trade_value × pct) + (shares × per_share)
+    /// The result is clamped to the minimum commission.
     pub fn calculate_commission(&self, trade_value: f64) -> f64 {
         let commission = self.commission_flat + trade_value * self.commission_pct;
+        commission.max(self.min_commission)
+    }
+
+    /// Calculate commission for a trade with quantity.
+    ///
+    /// Commission is calculated as: flat + (trade_value × pct) + (shares × per_share)
+    /// The result is clamped to the minimum commission.
+    pub fn calculate_commission_with_quantity(&self, trade_value: f64, quantity: f64) -> f64 {
+        let commission = self.commission_flat
+            + trade_value * self.commission_pct
+            + quantity.abs() * self.commission_per_share;
         commission.max(self.min_commission)
     }
 
@@ -1069,7 +1088,9 @@ impl Portfolio {
 
         let exec_price = asset.normalize_price(exec_price);
         let notional = exec_price * quantity * asset.notional_multiplier();
-        let mut commission = self.cost_model.calculate_commission(notional);
+        let mut commission = self
+            .cost_model
+            .calculate_commission_with_quantity(notional, quantity);
         commission +=
             self.cost_model
                 .additional_fees(&asset, quantity, notional, &order.order_type);
@@ -1864,6 +1885,40 @@ mod tests {
 
         let exec_price = cost_model.execution_price(100.0, Side::Buy);
         assert!(exec_price > 100.0); // Should add slippage for buy
+    }
+
+    #[test]
+    fn test_commission_per_share() {
+        // Test per-share commission calculation
+        let mut cost_model = CostModel::zero();
+        cost_model.commission_per_share = 0.005; // $0.005 per share
+
+        // Buy 100 shares: commission = 100 * $0.005 = $0.50
+        let commission = cost_model.calculate_commission_with_quantity(10000.0, 100.0);
+        assert!((commission - 0.50).abs() < 0.01);
+
+        // Buy 1000 shares: commission = 1000 * $0.005 = $5.00
+        let commission = cost_model.calculate_commission_with_quantity(100000.0, 1000.0);
+        assert!((commission - 5.0).abs() < 0.01);
+
+        // Combined: flat + percentage + per-share
+        let mut combined_model = CostModel {
+            commission_flat: 1.0,        // $1 flat
+            commission_pct: 0.001,       // 0.1%
+            commission_per_share: 0.005, // $0.005/share
+            min_commission: 0.0,
+            ..Default::default()
+        };
+
+        // $10,000 trade of 100 shares:
+        // flat: $1 + pct: $10 (0.1% of 10000) + per_share: $0.50 (100 * 0.005) = $11.50
+        let commission = combined_model.calculate_commission_with_quantity(10000.0, 100.0);
+        assert!((commission - 11.50).abs() < 0.01);
+
+        // Test minimum commission
+        combined_model.min_commission = 15.0;
+        let commission = combined_model.calculate_commission_with_quantity(10000.0, 100.0);
+        assert!((commission - 15.0).abs() < 0.01); // Should be clamped to min
     }
 
     #[test]

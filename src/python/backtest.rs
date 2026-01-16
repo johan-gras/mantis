@@ -28,6 +28,10 @@ pub struct PyBacktestConfig {
     pub initial_capital: f64,
     #[pyo3(get, set)]
     pub commission: f64,
+    /// Commission per share (e.g., 0.005 for $0.005/share).
+    /// Use with `commission=0` to switch to per-share pricing.
+    #[pyo3(get, set)]
+    pub commission_per_share: f64,
     #[pyo3(get, set)]
     pub slippage: f64,
     #[pyo3(get, set)]
@@ -253,6 +257,7 @@ impl PyBacktestConfig {
     #[pyo3(signature = (
         initial_capital=100_000.0,
         commission=0.001,
+        commission_per_share=0.0,
         slippage=0.001,
         position_size=0.10,
         allow_short=true,
@@ -273,6 +278,7 @@ impl PyBacktestConfig {
         py: Python<'_>,
         initial_capital: f64,
         commission: f64,
+        commission_per_share: f64,
         slippage: f64,
         position_size: f64,
         allow_short: bool,
@@ -317,6 +323,7 @@ impl PyBacktestConfig {
         Ok(Self {
             initial_capital,
             commission,
+            commission_per_share,
             slippage,
             position_size,
             allow_short,
@@ -393,6 +400,7 @@ impl PyBacktestConfig {
         // Set cost model
         config.cost_model = CostModel {
             commission_pct: self.commission,
+            commission_per_share: self.commission_per_share,
             slippage_pct: self.slippage,
             borrow_cost_rate: self.borrow_cost,
             max_volume_participation: self.max_volume_participation,
@@ -525,6 +533,7 @@ impl From<&PyBacktestConfig> for BacktestConfig {
     strategy_params=None,
     config=None,
     commission=0.001,
+    commission_per_share=0.0,
     slippage=0.001,
     size=0.10,
     cash=100_000.0,
@@ -555,6 +564,7 @@ pub fn backtest(
     strategy_params: Option<&Bound<'_, PyDict>>,
     config: Option<&PyBacktestConfig>,
     commission: f64,
+    commission_per_share: f64,
     slippage: f64,
     size: f64,
     cash: f64,
@@ -593,6 +603,7 @@ pub fn backtest(
             py,
             cash,
             commission,
+            commission_per_share,
             slippage,
             size,
             allow_short,
@@ -1578,6 +1589,7 @@ pub fn validate(
         let py_config = PyBacktestConfig {
             initial_capital: cash,
             commission,
+            commission_per_share: 0.0,
             slippage,
             position_size: size,
             allow_short: true,

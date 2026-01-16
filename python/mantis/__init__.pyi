@@ -32,6 +32,8 @@ class BacktestConfig:
 
     initial_capital: float
     commission: float
+    commission_per_share: float
+    """Commission per share (e.g., 0.005 for $0.005/share). Use with commission=0 for per-share pricing."""
     slippage: float
     position_size: float
     allow_short: bool
@@ -58,6 +60,7 @@ class BacktestConfig:
         self,
         initial_capital: float = 100_000.0,
         commission: float = 0.001,
+        commission_per_share: float = 0.0,
         slippage: float = 0.001,
         position_size: float = 0.10,
         allow_short: bool = True,
@@ -947,6 +950,7 @@ def backtest(
     strategy_params: Optional[Dict[str, Any]] = None,
     config: Optional[BacktestConfig] = None,
     commission: float = 0.001,
+    commission_per_share: float = 0.0,
     slippage: float = 0.001,
     size: float = 0.10,
     cash: float = 100_000.0,
@@ -979,6 +983,8 @@ def backtest(
         strategy_params: Dictionary of strategy parameters
         config: Optional BacktestConfig object
         commission: Commission rate (default 0.001 = 0.1%)
+        commission_per_share: Commission per share (default 0.0). Use with
+            commission=0 for per-share pricing (e.g., 0.005 for $0.005/share).
         slippage: Slippage rate (default 0.001 = 0.1%)
         size: Position size as fraction of equity (default 0.10 = 10%)
         cash: Initial capital (default 100,000)

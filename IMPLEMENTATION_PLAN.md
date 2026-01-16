@@ -7,7 +7,7 @@
 
 ## Executive Summary
 
-The Mantis backtesting framework implementation is **complete**. All 31 planned items have been verified and implemented.
+The Mantis backtesting framework implementation is **complete**. All 32 planned items have been verified and implemented.
 
 **Core Features:**
 - Core backtest engine with comprehensive cost modeling
@@ -41,6 +41,7 @@ The Mantis backtesting framework implementation is **complete**. All 31 planned 
 - LOOKAHEAD BUG: FIXED - Orders now buffer and fill at bar[i+1].open
 - Statistical tests (ADF, autocorrelation, Ljung-Box): FIXED in commit 0b67bff
 - FRACTIONAL SHARES DEFAULT: FIXED - Now defaults to whole shares per spec
+- PER-SHARE COMMISSION: ADDED - commission_per_share field with calculate_commission_with_quantity() method
 
 ---
 
@@ -94,6 +95,7 @@ The Mantis backtesting framework implementation is **complete**. All 31 planned 
 | 29 | Additional Metrics/Plots | P2 | volatility, duration, plot_drawdown, etc. |
 | 30 | mt.compare() Visualization | P2 | CompareResult with Plotly equity curve overlay |
 | 31 | Fractional Shares Default | P1 | fractional=False per spec, whole shares by default |
+| 32 | Per-Share Commission Model | P1 | commission_per_share field, commission_type="per_share" support |
 
 ---
 
@@ -140,6 +142,22 @@ All API drift issues between core library and PyO3 bindings have been resolved:
 - Native speed, proper types, Jupyter integration
 - Package: `mantis-bt`
 - ABI3 stable Python ABI (Python 3.8+)
+
+### Per-Share Commission Model (2026-01-16)
+
+Per spec (`specs/execution-realism.md`), added support for per-share commission model (`commission_type="per_share"`):
+- Added `commission_per_share` field to CostModel struct
+- Added `calculate_commission_with_quantity()` method that applies per-share commission when set
+- Updated trade execution to use the new method
+- Commission calculation: `quantity * commission_per_share` (when set), otherwise falls back to flat commission
+
+**Files modified:**
+- `src/portfolio.rs`: Added commission_per_share field and calculate_commission_with_quantity() method
+- `src/python/backtest.rs`: Added commission_per_share parameter to backtest() and BacktestConfig
+- `src/python/fluent.rs`: Added commission_per_share() method to fluent API
+- `python/mantis/__init__.pyi`: Updated type stubs
+
+---
 
 ### Fractional Shares Default Fix (2026-01-16)
 

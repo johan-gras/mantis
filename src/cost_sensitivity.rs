@@ -392,6 +392,7 @@ fn scale_cost_model(base: &CostModel, multiplier: f64) -> CostModel {
     // Scale commission components
     scaled.commission_flat *= multiplier;
     scaled.commission_pct *= multiplier;
+    scaled.commission_per_share *= multiplier;
     scaled.min_commission *= multiplier;
 
     // Scale slippage
@@ -485,6 +486,7 @@ mod tests {
         let base = CostModel {
             commission_flat: 5.0,
             commission_pct: 0.001,
+            commission_per_share: 0.0,
             slippage_pct: 0.001,
             min_commission: 1.0,
             futures: FuturesCost {

@@ -380,6 +380,7 @@ impl BacktestFileConfig {
         let cost_model = CostModel {
             commission_flat: self.costs.commission_flat,
             commission_pct: self.costs.commission_pct / 100.0,
+            commission_per_share: 0.0, // Per-share commission not exposed in TOML config
             slippage_pct: self.costs.slippage_pct / 100.0,
             min_commission: self.costs.min_commission,
             futures: FuturesCost::default(),
