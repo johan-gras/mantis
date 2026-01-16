@@ -1191,9 +1191,11 @@ mod tests {
 
     #[test]
     fn test_simple_backtest() {
-        let mut config = BacktestConfig::default();
-        config.show_progress = false;
-        config.cost_model = CostModel::zero();
+        let config = BacktestConfig {
+            show_progress: false,
+            cost_model: CostModel::zero(),
+            ..Default::default()
+        };
 
         let mut engine = Engine::new(config);
         engine.add_data("TEST", create_test_bars());
@@ -1214,9 +1216,11 @@ mod tests {
     fn test_buffer_order_for_next_bar() {
         use crate::types::Signal;
 
-        let mut config = BacktestConfig::default();
-        config.limit_order_ttl_bars = Some(3);
-        config.show_progress = false;
+        let config = BacktestConfig {
+            limit_order_ttl_bars: Some(3),
+            show_progress: false,
+            ..Default::default()
+        };
         let engine = Engine::new(config);
         let bars = create_test_bars();
         let mut pending = Vec::new();

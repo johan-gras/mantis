@@ -229,7 +229,7 @@ proptest! {
         position_size in 0.01..1.0f64
     ) {
         // Position size must be between 0 and 1
-        prop_assert!(position_size >= 0.0 && position_size <= 1.0);
+        prop_assert!((0.0..=1.0).contains(&position_size));
 
         // Max position value should not exceed capital
         let max_position_value = initial_capital * position_size;

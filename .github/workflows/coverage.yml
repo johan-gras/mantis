@@ -38,7 +38,7 @@ jobs:
 
       - name: Generate Rust coverage
         run: |
-          cargo llvm-cov --all-features --lcov --output-path rust-coverage.lcov
+          cargo llvm-cov --features onnx --lcov --output-path rust-coverage.lcov
 
       - name: Upload Rust coverage
         uses: actions/upload-artifact@v4

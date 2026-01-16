@@ -41,6 +41,25 @@ Per spec gap analysis on 2026-01-16, all items resolved:
 - [x] ONNX integration tests (15 tests covering all functionality)
 - [ ] CUDA support logs warning but isn't functional (low priority - CPU inference sufficient)
 
+### CI Issues (Priority: High) - RESOLVED 2026-01-16
+
+**Location:** `.github/workflows/`
+**Status:** Fixed
+
+- [x] Investigate and fix CI issues on GitHub Actions
+- [x] Ensure all workflows pass (ci.yml, release.yml, bench.yml, coverage.yml, docs.yml)
+- [x] Verify CI matrix works across all platforms and Python versions
+
+**Issues Found & Fixed:**
+1. CI workflows used `--all-features` which caused issues with the `python` feature (pyo3/extension-module)
+2. Benchmark workflow didn't include `--features onnx`, so ONNX benchmarks weren't running
+3. Coverage workflow also used `--all-features`
+4. New clippy lints (Rust 1.92) required code fixes:
+   - `manual_range_contains` → use `.contains()` instead of `>= &&<=`
+   - `field_reassign_with_default` → use struct update syntax
+   - `needless_range_loop` → use iterator with `.iter().skip(n)`
+   - `unnecessary_get_then_check` → use `contains_key()` instead of `get().is_none()`
+
 ### Optional Future Enhancements
 
 These modules are NOT required for production but noted for potential expansion:
@@ -213,3 +232,4 @@ The following items were resolved on 2026-01-16:
 - **Benchmark spec fix (2026-01-16)** → Fixed single_bar_1000 target from < 100us (typo) to < 10ms in benchmark comments, aligning with corrected benchmarking.md spec
 - **Benchmark regression check enabled (2026-01-16)** → Created initial benchmark baseline (benchmarks/results/main.json) with 21 benchmarks. CI will now fail PRs with >10% regression. All spec-required benchmarks pass targets: single_bar_1000 ~1.5ms (<10ms), daily_10y ~1.7ms (<100ms), multi_symbol_3 ~5ms (<300ms), sweep_1000 ~45ms (<30s), walkforward_12fold ~39ms (<2s)
 - **optimization_9param spec fix (2026-01-16)** → Fixed optimization_9param benchmark target from < 1ms (impossible for full execution) to < 10ms in specs/benchmarking.md and benches/backtest_bench.rs. The word "setup" in the original description was misleading - the benchmark measures full execution of 9 backtests (~5.4ms actual), which cannot complete in 1ms. Changed description to "9-parameter grid optimization (full execution)" for clarity.
+- **CI workflow fixes (2026-01-16)** → Fixed CI workflows to use `--features onnx` instead of `--all-features` (which caused issues with pyo3 extension-module feature). Added `--features onnx` to bench.yml for ONNX benchmarks. Fixed new clippy lints from Rust 1.92 (manual_range_contains, field_reassign_with_default, needless_range_loop, unnecessary_get_then_check).

@@ -674,8 +674,10 @@ mod tests {
         use crate::strategies::SmaCrossover;
 
         let config = create_test_config();
-        let mut sensitivity_config = CostSensitivityConfig::default();
-        sensitivity_config.multipliers = vec![0.0, 1.0];
+        let sensitivity_config = CostSensitivityConfig {
+            multipliers: vec![0.0, 1.0],
+            ..Default::default()
+        };
         let bars = create_test_bars();
         let mut strategy = SmaCrossover::new(5, 15); // Shorter periods to generate signals faster
 

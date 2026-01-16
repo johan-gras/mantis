@@ -4373,7 +4373,7 @@ mod tests {
             benchmark_sr,
         );
 
-        assert!(psr >= 0.0 && psr <= 1.0, "PSR should be between 0 and 1");
+        assert!((0.0..=1.0).contains(&psr), "PSR should be between 0 and 1");
         assert!(
             (psr - 0.5).abs() < 0.05,
             "PSR should be close to 0.5 for SR=0: {}",
@@ -4398,7 +4398,7 @@ mod tests {
             benchmark_sr,
         );
 
-        assert!(psr >= 0.0 && psr <= 1.0, "PSR should be between 0 and 1");
+        assert!((0.0..=1.0).contains(&psr), "PSR should be between 0 and 1");
         assert!(psr > 0.95, "PSR should be > 0.95 for high SR: {}", psr);
     }
 
@@ -4419,7 +4419,7 @@ mod tests {
             benchmark_sr,
         );
 
-        assert!(psr >= 0.0 && psr <= 1.0, "PSR should be between 0 and 1");
+        assert!((0.0..=1.0).contains(&psr), "PSR should be between 0 and 1");
         assert!(psr < 0.05, "PSR should be < 0.05 for negative SR: {}", psr);
     }
 
@@ -4720,7 +4720,7 @@ mod tests {
             .map(|(i, f)| {
                 let noise = (i as f64 * 0.7).sin() * 0.002; // Small noise
                 f.rf + alpha
-                    + betas.get(0).unwrap_or(&0.0) * f.mkt_rf
+                    + betas.first().unwrap_or(&0.0) * f.mkt_rf
                     + betas.get(1).unwrap_or(&0.0) * f.smb
                     + betas.get(2).unwrap_or(&0.0) * f.hml
                     + betas.get(3).unwrap_or(&0.0) * f.rmw
@@ -5628,8 +5628,8 @@ mod tests {
         assert!(max_dds[2].is_finite());
 
         // All max drawdown values should be <= 0
-        for i in 2..max_dds.len() {
-            assert!(max_dds[i] <= 0.0);
+        for dd in max_dds.iter().skip(2) {
+            assert!(*dd <= 0.0);
         }
     }
 

@@ -38,7 +38,7 @@ jobs:
           python-version: '3.11'
 
       - name: Run benchmarks
-        run: cargo bench --bench backtest_bench
+        run: cargo bench --features onnx --bench backtest_bench
 
       - name: Check for regressions
         run: |
@@ -90,7 +90,7 @@ jobs:
 
       - name: Run benchmarks and save baseline
         run: |
-          cargo bench --bench backtest_bench
+          cargo bench --features onnx --bench backtest_bench
           python scripts/check_bench_regression.py --save benchmarks/results/main.json
 
       - name: Commit baseline update

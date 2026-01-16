@@ -2677,7 +2677,7 @@ mod tests {
         let bars = create_test_bars();
         let rsi_val = rsi(&bars, 3).unwrap();
         // RSI should be between 0 and 100
-        assert!(rsi_val >= 0.0 && rsi_val <= 100.0);
+        assert!((0.0..=100.0).contains(&rsi_val));
     }
 
     #[test]
@@ -2713,7 +2713,7 @@ mod tests {
         let bars = create_test_bars();
         let wr = williams_r(&bars, 5).unwrap();
         // Williams %R should be between -100 and 0
-        assert!(wr >= -100.0 && wr <= 0.0);
+        assert!((-100.0..=0.0).contains(&wr));
     }
 
     #[test]
@@ -2723,8 +2723,8 @@ mod tests {
         assert!(result.is_some());
         let (k, d) = result.unwrap();
         // Stochastic should be between 0 and 100
-        assert!(k >= 0.0 && k <= 100.0);
-        assert!(d >= 0.0 && d <= 100.0);
+        assert!((0.0..=100.0).contains(&k));
+        assert!((0.0..=100.0).contains(&d));
     }
 
     #[test]

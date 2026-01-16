@@ -87,7 +87,7 @@ fn test_single_inference() {
     let prediction = result.unwrap();
     // Model uses Tanh activation, so output should be in [-1, 1]
     assert!(
-        prediction >= -1.0 && prediction <= 1.0,
+        (-1.0..=1.0).contains(&prediction),
         "Prediction {} out of expected range [-1, 1]",
         prediction
     );
@@ -121,7 +121,7 @@ fn test_batch_inference() {
     // All predictions should be in [-1, 1] (Tanh output)
     for (i, &pred) in predictions.iter().enumerate() {
         assert!(
-            pred >= -1.0 && pred <= 1.0,
+            (-1.0..=1.0).contains(&pred),
             "Prediction {} at index {} out of range",
             pred,
             i
@@ -212,7 +212,7 @@ fn test_batch_faster_than_sequential() {
     let mut model = OnnxModel::from_file(&model_path, config).unwrap();
 
     // Warm up
-    let _ = model.predict_batch(&batch[..10].to_vec());
+    let _ = model.predict_batch(&batch[..10]);
 
     let start_batch = std::time::Instant::now();
     let _ = model.predict_batch(&batch);
@@ -322,7 +322,7 @@ fn test_model_with_normalization() {
 
     let prediction = result.unwrap();
     assert!(
-        prediction >= -1.0 && prediction <= 1.0,
+        (-1.0..=1.0).contains(&prediction),
         "Normalized prediction {} out of range",
         prediction
     );
@@ -413,7 +413,7 @@ fn test_larger_model_20_inputs() {
 
     let prediction = result.unwrap();
     assert!(
-        prediction >= -1.0 && prediction <= 1.0,
+        (-1.0..=1.0).contains(&prediction),
         "Larger model prediction {} out of range",
         prediction
     );

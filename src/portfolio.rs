@@ -2358,7 +2358,7 @@ mod tests {
         portfolio.execute_order(&sell_order, &exit_bar).unwrap();
 
         assert!(!portfolio.has_position("ES"));
-        assert!(portfolio.margin_reserve.get("ES").is_none());
+        assert!(!portfolio.margin_reserve.contains_key("ES"));
         assert!((portfolio.cash - 100500.0).abs() < 1e-6);
     }
 
