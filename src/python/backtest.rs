@@ -58,6 +58,16 @@ pub struct PyBacktestConfig {
     /// Prevents unrealistic fills in illiquid markets. None means no limit (default).
     #[pyo3(get, set)]
     pub max_volume_participation: Option<f64>,
+    /// Order type for signal-generated orders: "market" (default) or "limit".
+    /// When "limit", uses limit_offset to calculate limit price from close.
+    #[pyo3(get, set)]
+    pub order_type: String,
+    /// Limit order offset as a fraction of close price (e.g., 0.01 for 1%).
+    /// For buys: limit_price = close * (1 - limit_offset) (below close)
+    /// For sells: limit_price = close * (1 + limit_offset) (above close)
+    /// Only used when order_type="limit".
+    #[pyo3(get, set)]
+    pub limit_offset: f64,
 }
 
 /// Specification for stop loss - can be percentage or ATR-based.
@@ -254,7 +264,9 @@ impl PyBacktestConfig {
         fill_price="next_open",
         freq=None,
         trading_hours_24=None,
-        max_volume_participation=None
+        max_volume_participation=None,
+        order_type="market",
+        limit_offset=0.0
     ))]
     #[allow(clippy::too_many_arguments)]
     fn new(
@@ -273,6 +285,8 @@ impl PyBacktestConfig {
         freq: Option<&str>,
         trading_hours_24: Option<bool>,
         max_volume_participation: Option<f64>,
+        order_type: &str,
+        limit_offset: f64,
     ) -> PyResult<Self> {
         let sl_spec = if let Some(ref obj) = stop_loss {
             parse_stop_loss(py, obj)?
@@ -291,6 +305,15 @@ impl PyBacktestConfig {
             None
         };
 
+        // Validate order_type
+        let order_type_lower = order_type.to_lowercase();
+        if order_type_lower != "market" && order_type_lower != "limit" {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "Invalid order_type: '{}'. Must be 'market' or 'limit'.",
+                order_type
+            )));
+        }
+
         Ok(Self {
             initial_capital,
             commission,
@@ -306,6 +329,8 @@ impl PyBacktestConfig {
             freq: freq_parsed,
             trading_hours_24,
             max_volume_participation,
+            order_type: order_type_lower,
+            limit_offset,
         })
     }
 
@@ -433,6 +458,10 @@ impl PyBacktestConfig {
         // Set 24/7 trading hours if specified
         config.trading_hours_24 = self.trading_hours_24;
 
+        // Set order type (limit vs market)
+        config.use_limit_orders = self.order_type == "limit";
+        config.limit_offset = self.limit_offset;
+
         config
     }
 }
@@ -506,7 +535,9 @@ impl From<&PyBacktestConfig> for BacktestConfig {
     benchmark=None,
     freq=None,
     trading_hours_24=None,
-    max_volume_participation=None
+    max_volume_participation=None,
+    order_type="market",
+    limit_offset=0.0
 ))]
 #[allow(clippy::too_many_arguments)]
 pub fn backtest(
@@ -530,6 +561,8 @@ pub fn backtest(
     freq: Option<&str>,
     trading_hours_24: Option<bool>,
     max_volume_participation: Option<f64>,
+    order_type: &str,
+    limit_offset: f64,
 ) -> PyResult<PyBacktestResult> {
     // Extract bars from data first (needed for ATR calculation)
     let bars = extract_bars(py, &data)?;
@@ -560,6 +593,8 @@ pub fn backtest(
             freq,
             trading_hours_24,
             max_volume_participation,
+            order_type,
+            limit_offset,
         )?;
         py_config.to_backtest_config(Some(&bars))
     };
@@ -1462,6 +1497,8 @@ pub fn validate(
             freq: None,
             trading_hours_24: None,
             max_volume_participation: None,
+            order_type: "market".to_string(),
+            limit_offset: 0.0,
         };
         py_config.to_backtest_config(Some(&bars))
     };

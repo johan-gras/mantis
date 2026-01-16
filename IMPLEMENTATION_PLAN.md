@@ -844,14 +844,21 @@ These features are implemented in the Rust core but NOT exposed in the Python AP
 
 ---
 
-### 27. Limit Order Python API [PENDING]
-**Status:** NOT IMPLEMENTED
+### 27. Limit Order Python API [COMPLETE]
+**Status:** COMPLETE
 **Priority:** P3
 
-Limit orders are fully implemented in Rust (`src/types.rs` OrderType enum) but NOT exposed in Python API.
-The spec mentions `order_type="limit"` and `limit_offset` parameters.
-
-**Spec reference:** `specs/execution-realism.md` lines 97-111
+**Implementation details:**
+- Added `order_type` parameter to Python `backtest()` function - accepts "market" (default) or "limit"
+- Added `limit_offset` parameter - offset as fraction of close price (e.g., 0.01 = 1%)
+- For buys: limit_price = close * (1 - limit_offset) (below close)
+- For sells: limit_price = close * (1 + limit_offset) (above close)
+- Added `use_limit_orders` and `limit_offset` fields to Rust BacktestConfig
+- Updated `signal_to_order()` in engine.rs to create limit orders via `create_order()` helper
+- Added `order_type()` and `limit_offset()` methods to fluent `Backtest` API class
+- Updated PyBacktestConfig with order_type and limit_offset fields
+- Updated Python type stubs (__init__.pyi) with new parameters and methods
+- All 571 tests pass, clippy passes
 
 **Effort:** Medium
 **Dependencies:** None
@@ -909,7 +916,7 @@ The spec mentions `order_type="limit"` and `limit_offset` parameters.
 | 24 | Advanced Plot Features | **COMPLETE** | P2 | Small | None |
 | 25 | Python Frequency Override Params | **COMPLETE** | P1 | Small | None |
 | 26 | Rolling Metrics Python API | **COMPLETE** | P2 | Small | None |
-| 27 | Limit Order Python API | PENDING | P3 | Medium | None |
+| 27 | Limit Order Python API | **COMPLETE** | P3 | Medium | None |
 | 28 | Volume Participation Python API | **COMPLETE** | P3 | Small | None |
 
 ---
@@ -969,6 +976,7 @@ The spec mentions `order_type="limit"` and `limit_offset` parameters.
 | Codebase Cleanliness | **VERIFIED**: No TODOs/FIXMEs in codebase |
 | ALL TESTS | **PASSING**: 571 lib tests (0 failures) |
 | Python Bindings Build | **VERIFIED**: `cargo check --features python` compiles successfully (API drift fix 2026-01-16) |
+| **Limit Order Python API** | **COMPLETE**: `order_type` param ("market"/"limit"), `limit_offset` as fraction of close; Rust BacktestConfig fields; `signal_to_order()` limit order creation; Backtest fluent API methods; PyBacktestConfig; type stubs updated; 571 tests pass |
 
 ---
 

@@ -456,8 +456,10 @@ impl BacktestFileConfig {
             limit_order_ttl_bars: self.backtest.limit_order_ttl_bars,
             lot_selection: self.backtest.lot_selection.clone(),
             seed: self.backtest.seed,
-            data_frequency: None,   // Auto-detect from data
-            trading_hours_24: None, // Auto-detect from data
+            data_frequency: None,    // Auto-detect from data
+            trading_hours_24: None,  // Auto-detect from data
+            use_limit_orders: false, // Default to market orders
+            limit_offset: 0.0,
         })
     }
 

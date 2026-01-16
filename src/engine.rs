@@ -72,6 +72,16 @@ pub struct BacktestConfig {
     /// If None, this is auto-detected based on weekend bars.
     #[serde(default)]
     pub trading_hours_24: Option<bool>,
+    /// Default order type for signal-generated orders.
+    /// If true, uses limit orders with offset from close price.
+    /// If false (default), uses market orders.
+    #[serde(default)]
+    pub use_limit_orders: bool,
+    /// Limit order offset as a fraction of close price (e.g., 0.01 for 1%).
+    /// For buys: limit_price = close * (1 - limit_offset)
+    /// For sells: limit_price = close * (1 + limit_offset)
+    #[serde(default)]
+    pub limit_offset: f64,
 }
 
 impl Default for BacktestConfig {
@@ -95,6 +105,8 @@ impl Default for BacktestConfig {
             seed: None,
             data_frequency: None,   // Auto-detect from data
             trading_hours_24: None, // Auto-detect from data
+            use_limit_orders: false,
+            limit_offset: 0.0,
         }
     }
 }
@@ -518,7 +530,7 @@ impl Engine {
 
                     let total_qty = close_qty + long_qty;
                     if total_qty > 0.0 {
-                        return Some(Order::market(symbol, Side::Buy, total_qty, bar.timestamp));
+                        return Some(self.create_order(symbol, Side::Buy, total_qty, bar));
                     }
                 }
             }
@@ -536,31 +548,37 @@ impl Engine {
 
                     let total_qty = close_qty + short_qty;
                     if total_qty > 0.0 {
-                        return Some(Order::market(symbol, Side::Sell, total_qty, bar.timestamp));
+                        return Some(self.create_order(symbol, Side::Sell, total_qty, bar));
                     }
                 }
             }
             Signal::Exit => {
                 if current_position > 0.0 {
-                    return Some(Order::market(
-                        symbol,
-                        Side::Sell,
-                        current_position,
-                        bar.timestamp,
-                    ));
+                    return Some(self.create_order(symbol, Side::Sell, current_position, bar));
                 } else if current_position < 0.0 {
-                    return Some(Order::market(
-                        symbol,
-                        Side::Buy,
-                        current_position.abs(),
-                        bar.timestamp,
-                    ));
+                    return Some(self.create_order(symbol, Side::Buy, current_position.abs(), bar));
                 }
             }
             Signal::Hold => {}
         }
 
         None
+    }
+
+    /// Create an order based on config (market or limit).
+    fn create_order(&self, symbol: &str, side: Side, quantity: f64, bar: &Bar) -> Order {
+        if self.config.use_limit_orders && self.config.limit_offset > 0.0 {
+            // Calculate limit price based on side and offset
+            // For buys: limit below close (better price for buyer)
+            // For sells: limit above close (better price for seller)
+            let limit_price = match side {
+                Side::Buy => bar.close * (1.0 - self.config.limit_offset),
+                Side::Sell => bar.close * (1.0 + self.config.limit_offset),
+            };
+            Order::limit(symbol, side, quantity, limit_price, bar.timestamp)
+        } else {
+            Order::market(symbol, side, quantity, bar.timestamp)
+        }
     }
 
     /// Calculate position value based on the configured sizing method.

@@ -1023,6 +1023,8 @@ def backtest(
     freq: Optional[str] = None,
     trading_hours_24: Optional[bool] = None,
     max_volume_participation: Optional[float] = None,
+    order_type: str = "market",
+    limit_offset: float = 0.0,
 ) -> BacktestResult:
     """
     Run a backtest on historical data with a signal array.
@@ -1043,12 +1045,20 @@ def backtest(
         trading_hours_24: Whether to use 24/7 trading hours (crypto). Auto-detected if None.
         max_volume_participation: Maximum volume participation rate (e.g., 0.10 = 10%).
                                   Prevents unrealistic fills in illiquid markets. None = no limit.
+        order_type: Order type for signal-generated orders. Options:
+            - "market" (default): Execute at market price
+            - "limit": Place limit orders at offset from close price
+        limit_offset: Limit order offset as fraction of close price (e.g., 0.01 = 1%).
+            For buys: limit_price = close * (1 - limit_offset) (below close)
+            For sells: limit_price = close * (1 + limit_offset) (above close)
+            Only used when order_type="limit".
     """
     rust_result = _backtest_raw(
         data, signal, strategy, strategy_params, config,
         commission, slippage, size, cash, stop_loss,
         take_profit, allow_short, borrow_cost, max_position, fill_price,
-        benchmark, freq, trading_hours_24, max_volume_participation
+        benchmark, freq, trading_hours_24, max_volume_participation,
+        order_type, limit_offset
     )
     return BacktestResult(rust_result)
 
@@ -1517,6 +1527,8 @@ class Backtest:
             "max_position": 1.0,
             "fill_price": "next_open",
             "max_volume_participation": None,
+            "order_type": "market",
+            "limit_offset": 0.0,
         }
 
     def commission(self, rate: float) -> "Backtest":
@@ -1761,6 +1773,62 @@ class Backtest:
             >>> results = mt.Backtest(data, signal).max_volume_participation(0.05).run()
         """
         self._config["max_volume_participation"] = rate
+        return self
+
+    def order_type(self, order_type: str) -> "Backtest":
+        """
+        Set the order type for signal-generated orders.
+
+        By default, signals are converted to market orders. Use this method
+        to place limit orders instead, which can provide more realistic
+        execution simulation for passive strategies.
+
+        Args:
+            order_type: Order type. Options:
+                - "market" (default): Execute at market price
+                - "limit": Place limit orders at offset from close price
+
+        Returns:
+            Self for method chaining
+
+        Example:
+            >>> # Use limit orders with 0.5% offset
+            >>> results = (
+            ...     mt.Backtest(data, signal)
+            ...     .order_type("limit")
+            ...     .limit_offset(0.005)
+            ...     .run()
+            ... )
+        """
+        self._config["order_type"] = order_type
+        return self
+
+    def limit_offset(self, offset: float) -> "Backtest":
+        """
+        Set the limit order offset from close price.
+
+        Only used when order_type="limit". The offset determines how far
+        from the close price the limit order is placed.
+
+        For buy orders: limit_price = close * (1 - offset) (below close)
+        For sell orders: limit_price = close * (1 + offset) (above close)
+
+        Args:
+            offset: Offset as a fraction of close price (e.g., 0.01 = 1%)
+
+        Returns:
+            Self for method chaining
+
+        Example:
+            >>> # Limit orders 1% away from close
+            >>> results = (
+            ...     mt.Backtest(data, signal)
+            ...     .order_type("limit")
+            ...     .limit_offset(0.01)
+            ...     .run()
+            ... )
+        """
+        self._config["limit_offset"] = offset
         return self
 
     def run(self) -> BacktestResult:
