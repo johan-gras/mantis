@@ -162,6 +162,53 @@ def load_dir(
     """
     ...
 
+def list_samples() -> List[str]:
+    """
+    List available bundled sample datasets.
+
+    Returns a list of sample names that can be used with `load_sample()`.
+    Sample data is bundled with the package and requires no external files.
+
+    Returns:
+        List of sample data identifiers (e.g., ["AAPL", "SPY", "BTC"])
+
+    Example:
+        >>> samples = mt.list_samples()
+        >>> print(samples)
+        ['AAPL', 'SPY', 'BTC']
+    """
+    ...
+
+def load_sample(name: str) -> Dict[str, Any]:
+    """
+    Load bundled sample data by name.
+
+    Sample data is embedded in the binary and requires no external files or internet.
+    This is useful for quick demos, testing, and getting started without downloading data.
+
+    Available samples:
+        - "AAPL": Apple Inc. stock (10 years daily, 2014-2024, ~2600 bars)
+        - "SPY": S&P 500 ETF (10 years daily, 2014-2024, ~2600 bars)
+        - "BTC": Bitcoin (10 years daily including weekends, 2014-2024, ~3650 bars)
+
+    Args:
+        name: Sample data identifier (case-insensitive, e.g., "AAPL", "aapl")
+
+    Returns:
+        Dictionary with 'bars' list and numpy arrays for each column.
+
+    Raises:
+        ValueError: If the sample name is not recognized
+
+    Example:
+        >>> data = mt.load_sample("AAPL")
+        >>> print(data['n_bars'])
+        2609
+        >>> print(data['close'][-1])
+        212.45
+    """
+    ...
+
 def backtest(
     data: Union[Dict[str, Any], str],
     signal: Optional[NDArray[np.float64]] = None,

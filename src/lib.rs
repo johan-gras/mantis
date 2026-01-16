@@ -157,9 +157,9 @@ pub use types::{
 pub use data::{
     adjust_for_dividends, adjust_for_splits, align_series, apply_adjustment_factor,
     cumulative_adjustment_factor, data_quality_report, detect_gaps, fill_gaps,
-    filter_actions_for_symbol, load_corporate_actions, load_dir, load_multi, resample,
-    unalign_series, AlignMode, AlignedBars, DataGap, DataQualityReport, FillMethod,
-    ResampleInterval,
+    filter_actions_for_symbol, list_samples, load_corporate_actions, load_dir, load_multi,
+    load_sample, resample, unalign_series, AlignMode, AlignedBars, DataGap, DataQualityReport,
+    FillMethod, ResampleInterval,
 };
 
 // Multi-timeframe support

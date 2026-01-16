@@ -10,7 +10,10 @@ use numpy::{PyArray1, PyArray2};
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
-use crate::data::{load_csv, load_parquet, DataConfig};
+use crate::data::{
+    list_samples as rust_list_samples, load_csv, load_parquet, load_sample as rust_load_sample,
+    DataConfig,
+};
 use crate::types::Bar;
 
 use super::types::PyBar;
@@ -189,4 +192,97 @@ pub fn bars_to_array<'py>(py: Python<'py>, bars: &[Bar]) -> Bound<'py, PyArray2<
         .collect();
 
     PyArray2::from_vec2_bound(py, &data).expect("conversion should succeed")
+}
+
+/// List available bundled sample datasets.
+///
+/// Returns a list of sample names that can be used with `load_sample()`.
+/// Sample data is bundled with the package and requires no external files.
+///
+/// Returns:
+///     List of sample data identifiers (e.g., ["AAPL", "SPY", "BTC"])
+///
+/// Example:
+///     >>> samples = list_samples()
+///     >>> print(samples)
+///     ['AAPL', 'SPY', 'BTC']
+#[pyfunction]
+pub fn list_samples() -> Vec<&'static str> {
+    rust_list_samples()
+}
+
+/// Load bundled sample data by name.
+///
+/// Sample data is embedded in the binary and requires no external files or internet.
+/// This is useful for quick demos, testing, and getting started without downloading data.
+///
+/// Available samples:
+///     - "AAPL": Apple Inc. stock (10 years daily, 2014-2024, ~2600 bars)
+///     - "SPY": S&P 500 ETF (10 years daily, 2014-2024, ~2600 bars)
+///     - "BTC": Bitcoin (10 years daily including weekends, 2014-2024, ~3650 bars)
+///
+/// Args:
+///     name: Sample data identifier (case-insensitive, e.g., "AAPL", "aapl", "Aapl")
+///
+/// Returns:
+///     Dictionary with 'bars' (list of Bar objects) and numpy arrays for each column.
+///
+/// Raises:
+///     ValueError: If the sample name is not recognized
+///
+/// Example:
+///     >>> data = load_sample("AAPL")
+///     >>> print(data['n_bars'])
+///     2609
+///     >>> print(data['close'][-1])  # Last closing price
+///     212.45
+#[pyfunction]
+pub fn load_sample(py: Python<'_>, name: &str) -> PyResult<PyObject> {
+    let bars = rust_load_sample(name).map_err(|e| {
+        pyo3::exceptions::PyValueError::new_err(format!(
+            "Failed to load sample '{}': {}. Available samples: {:?}",
+            name,
+            e,
+            rust_list_samples()
+        ))
+    })?;
+
+    if bars.is_empty() {
+        return Err(pyo3::exceptions::PyValueError::new_err(
+            "Sample data is empty",
+        ));
+    }
+
+    // Convert to numpy arrays for efficient access
+    let n = bars.len();
+    let timestamps: Vec<i64> = bars.iter().map(|b| b.timestamp.timestamp()).collect();
+    let opens: Vec<f64> = bars.iter().map(|b| b.open).collect();
+    let highs: Vec<f64> = bars.iter().map(|b| b.high).collect();
+    let lows: Vec<f64> = bars.iter().map(|b| b.low).collect();
+    let closes: Vec<f64> = bars.iter().map(|b| b.close).collect();
+    let volumes: Vec<f64> = bars.iter().map(|b| b.volume).collect();
+
+    // Create result dictionary
+    let dict = PyDict::new_bound(py);
+
+    // Add numpy arrays
+    dict.set_item("timestamp", PyArray1::from_vec_bound(py, timestamps))?;
+    dict.set_item("open", PyArray1::from_vec_bound(py, opens))?;
+    dict.set_item("high", PyArray1::from_vec_bound(py, highs))?;
+    dict.set_item("low", PyArray1::from_vec_bound(py, lows))?;
+    dict.set_item("close", PyArray1::from_vec_bound(py, closes))?;
+    dict.set_item("volume", PyArray1::from_vec_bound(py, volumes))?;
+
+    // Add metadata
+    dict.set_item("n_bars", n)?;
+    dict.set_item("sample_name", name.to_uppercase())?;
+
+    // Convenience: add bars as list of PyBar objects
+    let py_bars: Vec<Py<PyBar>> = bars
+        .iter()
+        .map(|b| Py::new(py, PyBar::from(b)).unwrap())
+        .collect();
+    dict.set_item("bars", py_bars)?;
+
+    Ok(dict.into())
 }

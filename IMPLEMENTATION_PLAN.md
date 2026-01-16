@@ -373,15 +373,31 @@ All 3 previously failing tests now pass:
 
 ---
 
-### 16. Sample Data Bundling [MISSING]
-**Status:** Not implemented
+### 16. Sample Data Bundling [COMPLETE]
+**Status:** COMPLETE
 
-**Spec requirement:** `mt.load_sample("AAPL")` works offline with bundled data
+**Implementation details:**
+- `load_sample(name)` function loads bundled sample data by name (case-insensitive)
+- `list_samples()` function returns available sample names
+- Sample data files in `data/samples/`: AAPL.csv, SPY.csv, BTC.csv
+- ~10 years of daily OHLCV data (2014-2024)
+- AAPL/SPY: ~2609 bars (trading days only)
+- BTC: ~3653 bars (includes weekends)
+- Data embedded in binary via `include_str!()` macro
+- Python bindings: `mt.load_sample("AAPL")`, `mt.list_samples()`
+- Type stubs included for IDE autocomplete
+- 6 unit tests added (all passing)
 
-**Files affected:**
-- `data/samples/` (new) - Bundled sample files
-- `src/data.rs` - Add `load_sample()` function
-- `build.rs` - Include data in binary
+**Files created/modified:**
+- `data/samples/AAPL.csv` - Apple stock sample data
+- `data/samples/SPY.csv` - S&P 500 ETF sample data
+- `data/samples/BTC.csv` - Bitcoin sample data
+- `src/data.rs` - Added `load_sample()`, `list_samples()`, `load_csv_from_string()`
+- `src/lib.rs` - Added re-exports
+- `src/python/data.rs` - Added Python bindings
+- `src/python/mod.rs` - Registered functions
+- `python/mantis/__init__.py` - Added exports
+- `python/mantis/__init__.pyi` - Added type stubs
 
 **Dependencies:** None
 **Effort:** Small (1 day)
@@ -425,7 +441,7 @@ All 3 previously failing tests now pass:
 | 13 | HTML Reports | **COMPLETE** | P2 | Small | None |
 | 14 | Verdict System | **COMPLETE** | P2 | Small | None |
 | 15 | Polars Backend | PARTIAL | P3 | Small | Item 2 |
-| 16 | Sample Data Bundling | MISSING | P3 | Small | None |
+| 16 | Sample Data Bundling | **COMPLETE** | P3 | Small | None |
 | 17 | Documentation Site | MISSING | P3 | Medium | None |
 
 ---
@@ -470,8 +486,9 @@ All 3 previously failing tests now pass:
 | **HTML Reports** | **COMPLETE**: export_report_html() method in Exporter and MultiAssetExporter, self-contained HTML with embedded CSS, dark/light theme support, SVG charts for equity curve and drawdown, performance metrics grid, trade statistics, trade list table, 6 unit tests |
 | **Python Bindings (PyO3)** | **COMPLETE**: src/python/ module with mod.rs, types.rs, data.rs, backtest.rs, results.rs; pyproject.toml with maturin config; python/mantis/ wrapper with __init__.py, __init__.pyi type stubs, py.typed marker; load(), load_multi(), load_dir(), backtest(), signal_check() functions; 6 built-in strategies; compare(), sweep() helpers; BacktestResult with metrics and equity_curve |
 | **Visualization Module** | **COMPLETE**: src/viz.rs (~845 lines), ASCII sparklines (sparkline(), sparkline_with_config(), equity_sparkline()), strategy comparison (compare_strategies(), StrategyComparison), walk-forward visualization (walkforward_fold_chart(), walkforward_summary()), SVG heatmaps (heatmap_to_svg(), export_heatmap_svg()), ASCII heatmaps (heatmap_to_ascii()), result summaries (result_summary(), result_with_verdict()), all exported from lib.rs, 13 unit tests |
+| **Sample Data Bundling** | **COMPLETE**: load_sample(), list_samples() functions; data/samples/AAPL.csv, SPY.csv, BTC.csv (~10 years daily OHLCV 2014-2024); embedded via include_str!(); Python bindings mt.load_sample(), mt.list_samples(); type stubs; 6 unit tests |
 | Codebase Cleanliness | **VERIFIED**: No TODOs/FIXMEs in codebase |
-| ALL TESTS | **PASSING**: 552+ lib tests (0 failures) |
+| ALL TESTS | **PASSING**: 558+ lib tests (0 failures) |
 
 ---
 

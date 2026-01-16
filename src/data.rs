@@ -584,6 +584,177 @@ pub fn load_data(path: impl AsRef<Path>, config: &DataConfig) -> Result<Vec<Bar>
     }
 }
 
+// =============================================================================
+// Bundled Sample Data
+// =============================================================================
+
+/// Bundled sample CSV data for AAPL (10 years daily OHLCV, 2014-2024).
+const SAMPLE_AAPL_CSV: &str = include_str!("../data/samples/AAPL.csv");
+
+/// Bundled sample CSV data for SPY (10 years daily OHLCV, 2014-2024).
+const SAMPLE_SPY_CSV: &str = include_str!("../data/samples/SPY.csv");
+
+/// Bundled sample CSV data for BTC (10 years daily OHLCV including weekends, 2014-2024).
+const SAMPLE_BTC_CSV: &str = include_str!("../data/samples/BTC.csv");
+
+/// Available sample data names.
+///
+/// Returns a list of sample data identifiers that can be used with [`load_sample`].
+///
+/// # Example
+/// ```
+/// use mantis::data::list_samples;
+///
+/// let samples = list_samples();
+/// assert!(samples.contains(&"AAPL"));
+/// assert!(samples.contains(&"SPY"));
+/// assert!(samples.contains(&"BTC"));
+/// ```
+pub fn list_samples() -> Vec<&'static str> {
+    vec!["AAPL", "SPY", "BTC"]
+}
+
+/// Load bundled sample data by name.
+///
+/// Sample data is embedded in the binary and requires no external files or internet access.
+/// Available samples:
+/// - `"AAPL"` - Apple Inc. stock (10 years daily, 2014-2024)
+/// - `"SPY"` - S&P 500 ETF (10 years daily, 2014-2024)
+/// - `"BTC"` - Bitcoin (10 years daily including weekends, 2014-2024)
+///
+/// # Arguments
+/// * `name` - Sample data identifier (case-insensitive)
+///
+/// # Returns
+/// `Ok(Vec<Bar>)` containing the sample OHLCV data
+///
+/// # Errors
+/// Returns `BacktestError::DataError` if the sample name is not recognized.
+///
+/// # Example
+/// ```
+/// use mantis::data::load_sample;
+///
+/// // Load Apple stock data
+/// let aapl_data = load_sample("AAPL").unwrap();
+/// assert!(aapl_data.len() > 2500); // ~10 years of daily data
+///
+/// // Case-insensitive
+/// let spy_data = load_sample("spy").unwrap();
+/// ```
+pub fn load_sample(name: &str) -> Result<Vec<Bar>> {
+    let name_upper = name.to_uppercase();
+    let csv_content = match name_upper.as_str() {
+        "AAPL" => SAMPLE_AAPL_CSV,
+        "SPY" => SAMPLE_SPY_CSV,
+        "BTC" => SAMPLE_BTC_CSV,
+        _ => {
+            return Err(BacktestError::DataError(format!(
+                "Unknown sample: '{}'. Available samples: {:?}",
+                name,
+                list_samples()
+            )))
+        }
+    };
+
+    load_csv_from_string(csv_content, &DataConfig::default())
+}
+
+/// Parse CSV data from a string (used for embedded sample data).
+fn load_csv_from_string(csv_content: &str, config: &DataConfig) -> Result<Vec<Bar>> {
+    let mut reader = ReaderBuilder::new()
+        .has_headers(config.has_headers)
+        .delimiter(config.delimiter)
+        .flexible(true)
+        .from_reader(csv_content.as_bytes());
+
+    let mut bars = Vec::new();
+    let mut skipped = 0;
+    let mut row_num = 0;
+
+    for result in reader.deserialize() {
+        row_num += 1;
+        let row: CsvRow = match result {
+            Ok(r) => r,
+            Err(e) => {
+                if config.skip_invalid {
+                    debug!("Skipping row {}: {}", row_num, e);
+                    skipped += 1;
+                    continue;
+                } else {
+                    return Err(BacktestError::CsvError(e));
+                }
+            }
+        };
+
+        let timestamp = match parse_datetime(&row.date, config.date_format.as_deref()) {
+            Ok(ts) => ts,
+            Err(e) => {
+                if config.skip_invalid {
+                    debug!("Skipping row {} due to date parse error: {}", row_num, e);
+                    skipped += 1;
+                    continue;
+                } else {
+                    return Err(e);
+                }
+            }
+        };
+
+        let bar = Bar::new(
+            timestamp, row.open, row.high, row.low, row.close, row.volume,
+        );
+
+        if config.validate_bars && !bar.validate() {
+            if config.skip_invalid {
+                debug!(
+                    "Skipping row {} due to invalid bar data: {:?}",
+                    row_num, bar
+                );
+                skipped += 1;
+                continue;
+            } else {
+                return Err(BacktestError::DataError(format!(
+                    "Invalid bar data at row {}: {:?}",
+                    row_num, bar
+                )));
+            }
+        }
+
+        bars.push(bar);
+    }
+
+    if skipped > 0 {
+        warn!("Skipped {} invalid rows", skipped);
+    }
+
+    // Sort by timestamp
+    bars.sort_by_key(|b| b.timestamp);
+
+    // Check for duplicates
+    let original_len = bars.len();
+    bars.dedup_by_key(|b| b.timestamp);
+    if bars.len() < original_len {
+        warn!("Removed {} duplicate timestamps", original_len - bars.len());
+    }
+
+    debug!(
+        "Loaded {} bars from embedded sample data ({} to {})",
+        bars.len(),
+        bars.first()
+            .map(|b| b.timestamp.to_string())
+            .unwrap_or_default(),
+        bars.last()
+            .map(|b| b.timestamp.to_string())
+            .unwrap_or_default()
+    );
+
+    if bars.is_empty() {
+        return Err(BacktestError::NoData);
+    }
+
+    Ok(bars)
+}
+
 /// Load multiple symbols from a map of symbol -> file path.
 ///
 /// # Example
@@ -3585,5 +3756,109 @@ mod tests {
         assert!(manager.contains("SPY"));
         assert!(manager.contains("QQQ"));
         assert!(manager.contains("IWM"));
+    }
+
+    // =========================================================================
+    // Sample Data Loading Tests
+    // =========================================================================
+
+    #[test]
+    fn test_list_samples() {
+        let samples = list_samples();
+        assert!(samples.contains(&"AAPL"));
+        assert!(samples.contains(&"SPY"));
+        assert!(samples.contains(&"BTC"));
+        assert_eq!(samples.len(), 3);
+    }
+
+    #[test]
+    fn test_load_sample_aapl() {
+        let bars = load_sample("AAPL").unwrap();
+
+        // Should have approximately 10 years of daily data
+        assert!(
+            bars.len() > 2500,
+            "Expected ~2600 bars for 10 years of daily data"
+        );
+
+        // First bar should be from 2014
+        let first = &bars[0];
+        assert_eq!(first.timestamp.year(), 2014);
+        assert_eq!(first.timestamp.month(), 1);
+
+        // Last bar should be from 2024
+        let last = bars.last().unwrap();
+        assert_eq!(last.timestamp.year(), 2024);
+
+        // Verify OHLC constraints are met
+        for bar in &bars {
+            assert!(bar.high >= bar.open, "High must be >= Open");
+            assert!(bar.high >= bar.close, "High must be >= Close");
+            assert!(bar.low <= bar.open, "Low must be <= Open");
+            assert!(bar.low <= bar.close, "Low must be <= Close");
+            assert!(bar.volume > 0.0, "Volume must be positive");
+        }
+    }
+
+    #[test]
+    fn test_load_sample_spy() {
+        let bars = load_sample("SPY").unwrap();
+
+        // Should have approximately 10 years of daily data
+        assert!(
+            bars.len() > 2500,
+            "Expected ~2600 bars for 10 years of daily data"
+        );
+
+        // Verify all bars are sorted by timestamp
+        for window in bars.windows(2) {
+            assert!(
+                window[0].timestamp < window[1].timestamp,
+                "Bars should be sorted by timestamp"
+            );
+        }
+    }
+
+    #[test]
+    fn test_load_sample_btc() {
+        let bars = load_sample("BTC").unwrap();
+
+        // BTC includes weekends so should have more bars than stocks
+        assert!(
+            bars.len() > 3500,
+            "Expected ~3650 bars for 10 years of daily BTC data (including weekends)"
+        );
+
+        // Verify all bars have positive prices
+        for bar in &bars {
+            assert!(bar.open > 0.0);
+            assert!(bar.high > 0.0);
+            assert!(bar.low > 0.0);
+            assert!(bar.close > 0.0);
+        }
+    }
+
+    #[test]
+    fn test_load_sample_case_insensitive() {
+        // Test lowercase
+        let bars_lower = load_sample("aapl").unwrap();
+        // Test uppercase
+        let bars_upper = load_sample("AAPL").unwrap();
+        // Test mixed case
+        let bars_mixed = load_sample("Aapl").unwrap();
+
+        assert_eq!(bars_lower.len(), bars_upper.len());
+        assert_eq!(bars_lower.len(), bars_mixed.len());
+    }
+
+    #[test]
+    fn test_load_sample_unknown() {
+        let result = load_sample("UNKNOWN");
+        assert!(result.is_err());
+
+        let err = result.unwrap_err();
+        let err_str = format!("{}", err);
+        assert!(err_str.contains("Unknown sample"));
+        assert!(err_str.contains("AAPL")); // Should suggest available samples
     }
 }
