@@ -459,10 +459,7 @@ impl OnnxModel {
             }
             Err(e) => {
                 // On batch failure, fall back to sequential inference
-                warn!(
-                    "Batch inference failed, falling back to sequential: {}",
-                    e
-                );
+                warn!("Batch inference failed, falling back to sequential: {}", e);
 
                 let mut predictions = Vec::with_capacity(batch_size);
                 for features in batch_features {

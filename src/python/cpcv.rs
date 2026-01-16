@@ -544,8 +544,7 @@ pub fn cpcv(
     let symbol = "SYMBOL";
 
     // Parse metric
-    let cpcv_metric =
-        parse_cpcv_metric(metric).map_err(pyo3::exceptions::PyValueError::new_err)?;
+    let cpcv_metric = parse_cpcv_metric(metric).map_err(pyo3::exceptions::PyValueError::new_err)?;
 
     // Build CPCV config
     let cpcv_config: CPCVConfig = if let Some(cfg) = config {
@@ -573,13 +572,25 @@ pub fn cpcv(
         let signals = Arc::new(signal_vec);
 
         analyzer
-            .run(&bars, symbol, || Box::new(SignalStrategy::new(signals.clone())), cpcv_metric)
+            .run(
+                &bars,
+                symbol,
+                || Box::new(SignalStrategy::new(signals.clone())),
+                cpcv_metric,
+            )
             .map_err(|e| {
                 pyo3::exceptions::PyRuntimeError::new_err(format!("CPCV analysis failed: {}", e))
             })?
     } else if let Some(strat_name) = strategy {
         // Built-in strategy
-        run_cpcv_with_builtin_strategy(&analyzer, &bars, symbol, strat_name, strategy_params, cpcv_metric)?
+        run_cpcv_with_builtin_strategy(
+            &analyzer,
+            &bars,
+            symbol,
+            strat_name,
+            strategy_params,
+            cpcv_metric,
+        )?
     } else {
         return Err(pyo3::exceptions::PyValueError::new_err(
             "Must provide either 'signal' array or 'strategy' name.\n\
@@ -617,7 +628,12 @@ fn run_cpcv_with_builtin_strategy(
             } else {
                 (10, 30)
             };
-            analyzer.run(bars, symbol, move || Box::new(SmaCrossover::new(fast, slow)), metric)
+            analyzer.run(
+                bars,
+                symbol,
+                move || Box::new(SmaCrossover::new(fast, slow)),
+                metric,
+            )
         }
         "momentum" => {
             let (period, threshold) = if let Some(p) = params {

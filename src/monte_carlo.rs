@@ -927,9 +927,7 @@ mod tests {
 
     #[test]
     fn test_block_bootstrap_reproducibility() {
-        let returns: Vec<f64> = vec![
-            1.0, -0.5, 2.0, -1.0, 1.5, -0.8, 2.2, -1.2, 1.8, -0.6,
-        ];
+        let returns: Vec<f64> = vec![1.0, -0.5, 2.0, -1.0, 1.5, -0.8, 2.2, -1.2, 1.8, -0.6];
 
         // Same seed should produce same results with block bootstrap
         let config1 = MonteCarloConfig::default()

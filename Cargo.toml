@@ -71,6 +71,7 @@ numpy = { version = "0.22", optional = true }
 tempfile = "3.10"
 approx = "0.5"
 criterion = { version = "0.5", features = ["html_reports"] }
+proptest = "1.4"
 
 [[bench]]
 name = "backtest_bench"

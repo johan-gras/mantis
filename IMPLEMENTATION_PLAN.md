@@ -237,7 +237,7 @@ Mantis is a high-performance Rust CLI backtest engine for quantitative trading w
 - [x] Script `scripts/test_doc_examples.py` to extract and run Python code blocks
 - [x] Smart detection of pseudo-code, API signatures, and context-dependent examples
 - [x] Support for `# skip-test` marker to skip specific blocks
-- [ ] CI step to validate all examples (add to ci.yml workflow)
+- [x] CI step to validate all examples (added `docs-examples` job to ci.yml workflow)
 
 **Usage:**
 ```bash
@@ -304,16 +304,27 @@ python3 scripts/test_doc_examples.py --file path  # Test single file
 
 ---
 
-### 4.2 Property-Based Testing
+### 4.2 ~~Property-Based Testing~~ RESOLVED
 
-| Issue | No fuzz/property tests despite being recommended in spec |
-|-------|--------------------------------------------------------|
+| Status | ✅ FIXED - Property-based testing implemented with proptest |
+|--------|-----------------------------------------------------------|
+| **Fix Date** | 2026-01-16 |
 
-**Required per specs/ci-testing.md:**
-- [ ] proptest for random input validation
-- [ ] Invariant testing (OHLC constraints always hold)
+**Implemented per specs/ci-testing.md:**
+- [x] proptest for random input validation (17 property tests)
+- [x] Invariant testing (OHLC constraints always hold)
 
-**Current:** Only deterministic unit tests
+**Test file:** `tests/proptest_tests.rs`
+
+**Property tests include:**
+- OHLC constraint validation (high >= low, constraints hold)
+- Bar data validation (negative prices, invalid OHLC)
+- Position sizing constraints (capital limits)
+- Cost model validation (non-negative costs)
+- Backtest engine invariants (equity never negative, max drawdown bounded)
+- Signal processing validation
+- Risk configuration validation
+- Determinism verification (identical inputs produce identical outputs)
 
 ---
 
@@ -492,8 +503,9 @@ The following are **100% implemented** per specifications:
 | Config | 5 | PASS |
 | ONNX | 5 | PASS |
 | Integration | 20 | PASS |
+| Property (proptest) | 17 | PASS |
 | Doc tests | 12 | PASS (24 ignored) |
-| **Total Rust** | **409+** | **ALL PASS** |
+| **Total Rust** | **426+** | **ALL PASS** |
 | **Python** | **195** | **ALL PASS** |
 
 ---

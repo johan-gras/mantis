@@ -403,12 +403,7 @@ fn bench_walkforward(c: &mut Criterion) {
     let bars = generate_bars(1200); // 1200 bars for 12-fold
 
     // Parameter grid for optimization within each fold
-    let params: Vec<(usize, usize)> = vec![
-        (5, 20),
-        (10, 30),
-        (15, 40),
-        (20, 50),
-    ];
+    let params: Vec<(usize, usize)> = vec![(5, 20), (10, 30), (15, 40), (20, 50)];
 
     // walkforward_12fold: Walk-forward with 12 folds (target: < 2s)
     group.bench_function("walkforward_12fold", |b| {

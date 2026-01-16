@@ -173,3 +173,28 @@ jobs:
 
       - name: Build documentation
         run: mkdocs build --strict
+
+  # Documentation examples testing
+  docs-examples:
+    name: Documentation Examples
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install maturin and dependencies
+        run: pip install maturin numpy pandas
+
+      - name: Build and install mantis
+        run: maturin develop --release
+
+      - name: Test documentation examples
+        run: python scripts/test_doc_examples.py --verbose
