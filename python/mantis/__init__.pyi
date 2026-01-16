@@ -41,6 +41,10 @@ class BacktestConfig:
     borrow_cost: float
     max_position: float
     fill_price: str
+    freq: Optional[str]
+    """Data frequency override (e.g., "1min", "5min", "1h", "1d"). Auto-detected if None."""
+    trading_hours_24: Optional[bool]
+    """Whether to use 24/7 trading hours for annualization (crypto). Auto-detected if None."""
 
     def __init__(
         self,
@@ -55,6 +59,8 @@ class BacktestConfig:
         borrow_cost: float = 0.03,
         max_position: float = 1.0,
         fill_price: str = "next_open",
+        freq: Optional[str] = None,
+        trading_hours_24: Optional[bool] = None,
     ) -> None: ...
 
 class BacktestResult:
@@ -510,6 +516,8 @@ def backtest(
     max_position: float = 1.0,
     fill_price: str = "next_open",
     benchmark: Optional[Union[Dict[str, Any], str, _DataFrame]] = None,
+    freq: Optional[str] = None,
+    trading_hours_24: Optional[bool] = None,
 ) -> BacktestResult:
     """
     Run a backtest on historical data with a signal array.
@@ -540,6 +548,10 @@ def backtest(
         benchmark: Optional benchmark data for performance comparison (data dict from load()).
                    When provided, the result will include alpha, beta, benchmark_return,
                    excess_return, and other benchmark comparison metrics.
+        freq: Data frequency override ("1s", "5s", "1min", "5min", "15min", "30min",
+              "1h", "4h", "1d", "1w", "1mo"). Auto-detected from bar timestamps if None.
+        trading_hours_24: Whether to use 24/7 trading hours for metric annualization (crypto).
+                          Auto-detected from weekend bars if None.
 
     Returns:
         BacktestResult object with metrics, equity curve, and trades.
@@ -567,6 +579,12 @@ def backtest(
         >>> results = mt.backtest(data, signal, benchmark=spy)
         >>> print(results.alpha, results.beta)
         0.05 1.2
+
+        >>> # Explicit frequency override for 5-minute data
+        >>> results = mt.backtest(data, signal, freq="5min")
+
+        >>> # 24/7 market (crypto) with proper annualization
+        >>> results = mt.backtest(btc_data, signal, trading_hours_24=True)
     """
     ...
 
@@ -960,6 +978,36 @@ class Backtest:
             >>> spy = mt.load("SPY.csv")
             >>> results = mt.Backtest(data, signal).benchmark(spy).run()
             >>> print(results.alpha, results.beta)
+        """
+        ...
+    def freq(self, frequency: str) -> "Backtest":
+        """
+        Override the data frequency for metric annualization.
+
+        Args:
+            frequency: Data frequency. Options:
+                - "1s", "5s", "10s", "15s", "30s": Second frequencies
+                - "1min", "5min", "15min", "30min": Minute frequencies
+                - "1h", "4h": Hourly frequencies
+                - "1d" or "daily": Daily frequency
+                - "1w" or "weekly": Weekly frequency
+                - "1mo" or "monthly": Monthly frequency
+
+        Example:
+            >>> results = mt.Backtest(data, signal).freq("5min").run()
+        """
+        ...
+    def trading_hours_24(self, enabled: bool = True) -> "Backtest":
+        """
+        Enable 24/7 trading hours for metric annualization (crypto markets).
+
+        When enabled, metrics are annualized using 365 days/year instead of 252.
+
+        Args:
+            enabled: Whether to use 24/7 market annualization (default True)
+
+        Example:
+            >>> results = mt.Backtest(btc_data, signal).trading_hours_24().run()
         """
         ...
     def run(self) -> BacktestResult:

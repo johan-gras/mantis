@@ -626,7 +626,7 @@ result.plot()  # Interactive Plotly in Jupyter
 - `src/config.rs` - Updated BacktestConfig initialization
 - `src/lib.rs` - Added DataFrequency to public exports
 
-**Note:** Python bindings need exposure of `freq` and `trading_hours_24` parameters - tracked separately.
+**Python API exposure:** Implemented in Item #25 below.
 
 **Effort:** Medium (completed)
 **Dependencies:** None
@@ -795,6 +795,82 @@ result.plot()  # Interactive Plotly in Jupyter
 
 ---
 
+### 25. Python Frequency Override Parameters [COMPLETE]
+**Status:** COMPLETE (2026-01-16)
+**Priority:** P1
+
+**Implementation details:**
+- Added `freq` parameter to Python `backtest()` function
+  - Accepts strings: "1s", "5s", "1min", "5min", "15min", "30min", "1h", "4h", "1d", "1w", "1mo"
+  - Auto-detected from bar timestamps if None (default)
+- Added `trading_hours_24` parameter to Python `backtest()` function
+  - When True, uses 24/7 market annualization (365 days/year)
+  - When False, uses traditional market annualization (252 days/year)
+  - Auto-detected from weekend bars if None (default)
+- Added `parse_freq()` helper function in backtest.rs
+- Updated `PyBacktestConfig` class with new fields
+- Added `freq()` and `trading_hours_24()` methods to fluent `Backtest` API class
+- Updated type stubs in `__init__.pyi` for IDE autocomplete
+
+**Files modified:**
+- `src/python/backtest.rs` - Added parameters, parse_freq(), updated PyBacktestConfig
+- `python/mantis/__init__.py` - Added fluent API methods
+- `python/mantis/__init__.pyi` - Updated type stubs and docstrings
+
+**Effort:** Small (completed)
+**Dependencies:** None
+
+---
+
+## Remaining Spec Gaps (Discovered 2026-01-16)
+
+These features are implemented in the Rust core but NOT exposed in the Python API:
+
+### 26. Rolling Metrics Python API [PENDING]
+**Status:** NOT IMPLEMENTED
+**Priority:** P2
+
+The following rolling metric functions exist in Rust (`src/analytics.rs`) but are NOT exposed in Python:
+- `rolling_sharpe(returns, window, annualization_factor)`
+- `rolling_drawdown(equity)`
+- `rolling_drawdown_windowed(equity, window)`
+- `rolling_max_drawdown(equity, window)`
+- `rolling_volatility(returns, window, annualization_factor)`
+
+**Spec reference:** `specs/performance-metrics.md` lines 96-106
+
+**Effort:** Small
+**Dependencies:** None
+
+---
+
+### 27. Limit Order Python API [PENDING]
+**Status:** NOT IMPLEMENTED
+**Priority:** P3
+
+Limit orders are fully implemented in Rust (`src/types.rs` OrderType enum) but NOT exposed in Python API.
+The spec mentions `order_type="limit"` and `limit_offset` parameters.
+
+**Spec reference:** `specs/execution-realism.md` lines 97-111
+
+**Effort:** Medium
+**Dependencies:** None
+
+---
+
+### 28. Volume Participation Python API [PENDING]
+**Status:** NOT IMPLEMENTED
+**Priority:** P3
+
+Volume participation constraints (`max_volume_participation`) exist in Rust (`src/portfolio.rs` CostModel) but NOT exposed in Python API.
+
+**Spec reference:** `specs/execution-realism.md`
+
+**Effort:** Small
+**Dependencies:** None
+
+---
+
 ## Summary Table
 
 | ID | Item | Status | Priority | Effort | Dependencies |
@@ -828,6 +904,10 @@ result.plot()  # Interactive Plotly in Jupyter
 | 22 | ATR-Based Stop-Loss in Python | **COMPLETE** | P2 | Small | None |
 | 23 | Parallel Parameter Sweep | **COMPLETE** | P3 | Medium | None |
 | 24 | Advanced Plot Features | **COMPLETE** | P2 | Small | None |
+| 25 | Python Frequency Override Params | **COMPLETE** | P1 | Small | None |
+| 26 | Rolling Metrics Python API | PENDING | P2 | Small | None |
+| 27 | Limit Order Python API | PENDING | P3 | Medium | None |
+| 28 | Volume Participation Python API | PENDING | P3 | Small | None |
 
 ---
 
@@ -882,6 +962,7 @@ result.plot()  # Interactive Plotly in Jupyter
 | **Python Split/Dividend Adjustment** | **COMPLETE**: mt.adjust() function with splits (date, ratio, reverse) and dividends (date, amount, type) parameters; method options (proportional, absolute, none); parse_splits(), parse_dividends(), parse_date_from_dict() helpers; type stubs; Files: src/python/data.rs, src/python/mod.rs, python/mantis/__init__.py, python/mantis/__init__.pyi |
 | **ATR-Based Stop-Loss/Take-Profit** | **COMPLETE**: stop_loss and take_profit accept float or string; ATR syntax ("2atr"), trailing ("5trail"), risk-reward ("2rr"); StopSpec, TakeProfitSpec enums; parse_stop_loss(), parse_take_profit() helpers; 14-period ATR auto-calculated; works with backtest() and Backtest fluent API; type stubs updated; Files: src/python/backtest.rs, python/mantis/__init__.py, python/mantis/__init__.pyi |
 | **Parallel Parameter Sweep** | **COMPLETE**: src/python/sweep.rs (~400 lines) with rayon-based parallel execution; PySweepResult class with best(), sorted_by(), top(), summary(), plot() methods; PySweepResultItem for individual param/result pairs; signals pre-computed in Python (signal_fn not callable from Rust); Rust parallel loop using rayon par_iter() with GIL released; Python SweepResult wrapper with Plotly visualization in Jupyter; parallel=True parameter (n_jobs deprecated); Files: src/python/sweep.rs (new), src/python/mod.rs, python/mantis/__init__.py, python/mantis/__init__.pyi |
+| **Python Frequency Override** | **COMPLETE**: freq parameter accepts "1s", "5s", "1min", "5min", "15min", "30min", "1h", "4h", "1d", "1w", "1mo"; trading_hours_24 bool param; parse_freq() helper; PyBacktestConfig updated; Backtest fluent API .freq() and .trading_hours_24() methods; type stubs updated; Files: src/python/backtest.rs, python/mantis/__init__.py, python/mantis/__init__.pyi |
 | Codebase Cleanliness | **VERIFIED**: No TODOs/FIXMEs in codebase |
 | ALL TESTS | **PASSING**: 571 lib tests (0 failures) |
 | Python Bindings Build | **VERIFIED**: `cargo check --features python` compiles successfully (API drift fix 2026-01-16) |

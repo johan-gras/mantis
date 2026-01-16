@@ -15,7 +15,7 @@ use crate::strategies::{
     BreakoutStrategy, MacdStrategy, MeanReversion, MomentumStrategy, RsiStrategy, SmaCrossover,
 };
 use crate::strategy::Strategy;
-use crate::types::{Bar, ExecutionPrice, Signal};
+use crate::types::{Bar, DataFrequency, ExecutionPrice, Signal};
 use crate::walkforward::{WalkForwardConfig, WalkForwardResult, WalkForwardWindow, WindowResult};
 
 use super::results::PyBacktestResult;
@@ -48,6 +48,12 @@ pub struct PyBacktestConfig {
     pub max_position: f64,
     #[pyo3(get, set)]
     pub fill_price: String,
+    /// Data frequency override (e.g., "1min", "5min", "1h", "1D").
+    /// If None, frequency is auto-detected from bar timestamps.
+    pub freq: Option<DataFrequency>,
+    /// Whether to use 24/7 trading hours (for crypto markets).
+    /// If None, this is auto-detected based on weekend bars.
+    pub trading_hours_24: Option<bool>,
 }
 
 /// Specification for stop loss - can be percentage or ATR-based.
@@ -138,6 +144,31 @@ fn parse_stop_loss(py: Python<'_>, obj: &PyObject) -> PyResult<Option<StopSpec>>
     ))
 }
 
+/// Parse frequency string to DataFrequency.
+fn parse_freq(s: &str) -> PyResult<DataFrequency> {
+    let s_lower = s.to_lowercase().trim().to_string();
+    match s_lower.as_str() {
+        "1s" | "1sec" | "second1" => Ok(DataFrequency::Second1),
+        "5s" | "5sec" | "second5" => Ok(DataFrequency::Second5),
+        "10s" | "10sec" | "second10" => Ok(DataFrequency::Second10),
+        "15s" | "15sec" | "second15" => Ok(DataFrequency::Second15),
+        "30s" | "30sec" | "second30" => Ok(DataFrequency::Second30),
+        "1min" | "1m" | "minute1" => Ok(DataFrequency::Minute1),
+        "5min" | "5m" | "minute5" => Ok(DataFrequency::Minute5),
+        "15min" | "15m" | "minute15" => Ok(DataFrequency::Minute15),
+        "30min" | "30m" | "minute30" => Ok(DataFrequency::Minute30),
+        "1h" | "1hr" | "hour1" | "hourly" => Ok(DataFrequency::Hour1),
+        "4h" | "4hr" | "hour4" => Ok(DataFrequency::Hour4),
+        "1d" | "day" | "daily" | "d" => Ok(DataFrequency::Day),
+        "1w" | "week" | "weekly" | "w" => Ok(DataFrequency::Week),
+        "1mo" | "month" | "monthly" | "m" => Ok(DataFrequency::Month),
+        _ => Err(pyo3::exceptions::PyValueError::new_err(format!(
+            "Invalid frequency: '{}'. Valid options: 1s, 5s, 10s, 15s, 30s, 1min, 5min, 15min, 30min, 1h, 4h, 1d, 1w, 1mo",
+            s
+        ))),
+    }
+}
+
 /// Parse take profit specification from Python object (float or string).
 fn parse_take_profit(py: Python<'_>, obj: &PyObject) -> PyResult<Option<TakeProfitSpec>> {
     // Try as None first
@@ -216,7 +247,9 @@ impl PyBacktestConfig {
         take_profit=None,
         borrow_cost=0.03,
         max_position=1.0,
-        fill_price="next_open"
+        fill_price="next_open",
+        freq=None,
+        trading_hours_24=None
     ))]
     #[allow(clippy::too_many_arguments)]
     fn new(
@@ -232,6 +265,8 @@ impl PyBacktestConfig {
         borrow_cost: f64,
         max_position: f64,
         fill_price: &str,
+        freq: Option<&str>,
+        trading_hours_24: Option<bool>,
     ) -> PyResult<Self> {
         let sl_spec = if let Some(ref obj) = stop_loss {
             parse_stop_loss(py, obj)?
@@ -240,6 +275,12 @@ impl PyBacktestConfig {
         };
         let tp_spec = if let Some(ref obj) = take_profit {
             parse_take_profit(py, obj)?
+        } else {
+            None
+        };
+
+        let freq_parsed = if let Some(f) = freq {
+            Some(parse_freq(f)?)
         } else {
             None
         };
@@ -256,6 +297,8 @@ impl PyBacktestConfig {
             borrow_cost,
             max_position,
             fill_price: fill_price.to_string(),
+            freq: freq_parsed,
+            trading_hours_24,
         })
     }
 
@@ -275,6 +318,22 @@ impl PyBacktestConfig {
             Some(TakeProfitSpec::Percentage(p)) => p.into_py(py),
             Some(TakeProfitSpec::Atr(m)) => format!("{}atr", m).into_py(py),
             Some(TakeProfitSpec::RiskReward(r)) => format!("{}rr", r).into_py(py),
+            None => py.None(),
+        }
+    }
+
+    #[getter]
+    fn get_freq(&self, py: Python<'_>) -> PyObject {
+        match &self.freq {
+            Some(f) => f.description().into_py(py),
+            None => py.None(),
+        }
+    }
+
+    #[getter]
+    fn get_trading_hours_24(&self, py: Python<'_>) -> PyObject {
+        match self.trading_hours_24 {
+            Some(v) => v.into_py(py),
             None => py.None(),
         }
     }
@@ -360,6 +419,12 @@ impl PyBacktestConfig {
             _ => ExecutionPrice::Open, // Default to open (prevents lookahead)
         };
 
+        // Set data frequency if specified
+        config.data_frequency = self.freq;
+
+        // Set 24/7 trading hours if specified
+        config.trading_hours_24 = self.trading_hours_24;
+
         config
     }
 }
@@ -391,6 +456,8 @@ impl From<&PyBacktestConfig> for BacktestConfig {
 ///     max_position: Maximum position size as fraction of equity (default 1.0 = 100%)
 ///     fill_price: Execution price model ("next_open", "close", "vwap", "twap", "midpoint")
 ///     benchmark: Optional benchmark data for performance comparison (data dict from load())
+///     freq: Optional data frequency override ("1min", "5min", "1h", "1d", etc.). Auto-detected if None.
+///     trading_hours_24: Whether to use 24/7 trading hours for annualization (crypto). Auto-detected if None.
 ///
 /// Returns:
 ///     BacktestResult object with metrics, equity curve, and trades.
@@ -426,7 +493,9 @@ impl From<&PyBacktestConfig> for BacktestConfig {
     borrow_cost=0.03,
     max_position=1.0,
     fill_price="next_open",
-    benchmark=None
+    benchmark=None,
+    freq=None,
+    trading_hours_24=None
 ))]
 #[allow(clippy::too_many_arguments)]
 pub fn backtest(
@@ -447,6 +516,8 @@ pub fn backtest(
     max_position: f64,
     fill_price: &str,
     benchmark: Option<PyObject>,
+    freq: Option<&str>,
+    trading_hours_24: Option<bool>,
 ) -> PyResult<PyBacktestResult> {
     // Extract bars from data first (needed for ATR calculation)
     let bars = extract_bars(py, &data)?;
@@ -474,6 +545,8 @@ pub fn backtest(
             borrow_cost,
             max_position,
             fill_price,
+            freq,
+            trading_hours_24,
         )?;
         py_config.to_backtest_config(Some(&bars))
     };
@@ -1373,6 +1446,8 @@ pub fn validate(
             borrow_cost: 0.03,
             max_position: 1.0,
             fill_price: "next_open".to_string(),
+            freq: None,
+            trading_hours_24: None,
         };
         py_config.to_backtest_config(Some(&bars))
     };

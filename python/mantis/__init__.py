@@ -1625,6 +1625,57 @@ class Backtest:
         self._config["benchmark"] = data
         return self
 
+    def freq(self, frequency: str) -> "Backtest":
+        """
+        Override the data frequency for metric annualization.
+
+        By default, data frequency is auto-detected from bar timestamps.
+        Use this method to explicitly specify the frequency when auto-detection
+        fails or when you want to override the detected value.
+
+        Args:
+            frequency: Data frequency. Options:
+                - "1s", "5s", "10s", "15s", "30s": Second frequencies
+                - "1min", "5min", "15min", "30min": Minute frequencies
+                - "1h", "4h": Hourly frequencies
+                - "1d" or "daily": Daily frequency
+                - "1w" or "weekly": Weekly frequency
+                - "1mo" or "monthly": Monthly frequency
+
+        Returns:
+            Self for method chaining
+
+        Example:
+            >>> # 5-minute data
+            >>> results = mt.Backtest(data, signal).freq("5min").run()
+        """
+        self._config["freq"] = frequency
+        return self
+
+    def trading_hours_24(self, enabled: bool = True) -> "Backtest":
+        """
+        Enable 24/7 trading hours for metric annualization (crypto markets).
+
+        By default, the system auto-detects whether data is from a 24/7 market
+        by checking for weekend bars. Use this method to explicitly specify
+        the market type.
+
+        When enabled (True), metrics are annualized using 365 days/year.
+        When disabled (False), metrics use 252 trading days/year (traditional markets).
+
+        Args:
+            enabled: Whether to use 24/7 market annualization (default True)
+
+        Returns:
+            Self for method chaining
+
+        Example:
+            >>> # Bitcoin backtest with proper annualization
+            >>> results = mt.Backtest(btc_data, signal).trading_hours_24().run()
+        """
+        self._config["trading_hours_24"] = enabled
+        return self
+
     def run(self) -> BacktestResult:
         """
         Execute the backtest with the configured parameters.
