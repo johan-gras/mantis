@@ -2,6 +2,9 @@
 
 use mantis::analytics::ResultFormatter;
 use mantis::config::BacktestFileConfig;
+use mantis::cost_sensitivity::{
+    run_cost_sensitivity_analysis, CostSensitivityAnalysis, CostSensitivityConfig,
+};
 use mantis::data::{
     data_quality_report, load_csv, load_data, load_parquet, resample, DataConfig, ResampleInterval,
 };
@@ -475,6 +478,69 @@ pub enum Commands {
         /// Shuffle returns instead of resampling (destroys autocorrelation)
         #[arg(long)]
         shuffle_returns: bool,
+
+        /// Fast MA period (for SMA strategy)
+        #[arg(long, default_value = "10")]
+        fast_period: usize,
+
+        /// Slow MA period (for SMA strategy)
+        #[arg(long, default_value = "30")]
+        slow_period: usize,
+
+        /// RSI period
+        #[arg(long, default_value = "14")]
+        rsi_period: usize,
+
+        /// Momentum lookback period
+        #[arg(long, default_value = "20")]
+        lookback: usize,
+
+        /// Data file format (auto-detects from extension if not specified)
+        #[arg(short, long, value_enum, default_value = "auto")]
+        format: DataFormatArg,
+    },
+
+    /// Run cost sensitivity analysis to test strategy robustness to transaction costs
+    CostSensitivity {
+        /// Path to data file (CSV or Parquet)
+        #[arg(short, long)]
+        data: PathBuf,
+
+        /// Symbol name
+        #[arg(short, long, default_value = "SYMBOL")]
+        symbol: String,
+
+        /// Strategy to use
+        #[arg(short = 'S', long, value_enum, default_value = "sma-crossover")]
+        strategy: StrategyType,
+
+        /// Initial capital
+        #[arg(short, long, default_value = "100000")]
+        capital: f64,
+
+        /// Position size as fraction of equity (0.0-1.0)
+        #[arg(short, long, default_value = "0.1")]
+        position_size: f64,
+
+        /// Commission percentage (e.g., 0.1 for 0.1%)
+        #[arg(long, default_value = "0.1")]
+        commission: f64,
+
+        /// Slippage percentage (e.g., 0.1 for 0.1%)
+        #[arg(long, default_value = "0.1")]
+        slippage: f64,
+
+        /// Cost multipliers to test (comma-separated, e.g., "1.0,2.0,5.0,10.0")
+        #[arg(long, default_value = "1.0,2.0,5.0,10.0")]
+        multipliers: String,
+
+        /// Include zero-cost baseline (theoretical upper bound)
+        #[arg(long)]
+        include_zero_cost: bool,
+
+        /// Minimum acceptable Sharpe ratio at 5x costs (robustness threshold)
+        #[arg(long, default_value = "0.5")]
+        robustness_threshold: f64,
 
         /// Fast MA period (for SMA strategy)
         #[arg(long, default_value = "10")]
@@ -1046,6 +1112,41 @@ pub fn run() -> Result<()> {
             *seed,
             *resample_trades,
             *shuffle_returns,
+            *fast_period,
+            *slow_period,
+            *rsi_period,
+            *lookback,
+            *format,
+            cli.output,
+        ),
+
+        Commands::CostSensitivity {
+            data,
+            symbol,
+            strategy,
+            capital,
+            position_size,
+            commission,
+            slippage,
+            multipliers,
+            include_zero_cost,
+            robustness_threshold,
+            fast_period,
+            slow_period,
+            rsi_period,
+            lookback,
+            format,
+        } => run_cost_sensitivity(
+            data,
+            symbol,
+            *strategy,
+            *capital,
+            *position_size,
+            *commission,
+            *slippage,
+            multipliers,
+            *include_zero_cost,
+            *robustness_threshold,
             *fast_period,
             *slow_period,
             *rsi_period,
@@ -2216,6 +2317,277 @@ fn run_monte_carlo(
     }
 
     Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_cost_sensitivity(
+    data_path: &PathBuf,
+    symbol: &str,
+    strategy_type: StrategyType,
+    capital: f64,
+    position_size: f64,
+    commission: f64,
+    slippage: f64,
+    multipliers_str: &str,
+    include_zero_cost: bool,
+    robustness_threshold: f64,
+    fast_period: usize,
+    slow_period: usize,
+    rsi_period: usize,
+    lookback: usize,
+    format: DataFormatArg,
+    output: OutputFormat,
+) -> Result<()> {
+    info!("Loading data from: {}", data_path.display());
+    let bars = load_data_with_format(data_path, &DataConfig::default(), format)?;
+
+    // Parse multipliers from comma-separated string
+    let mut multipliers: Vec<f64> = multipliers_str
+        .split(',')
+        .filter_map(|s| s.trim().parse().ok())
+        .collect();
+
+    if multipliers.is_empty() {
+        multipliers = vec![1.0, 2.0, 5.0, 10.0];
+    }
+
+    // Add zero-cost baseline if requested
+    if include_zero_cost && !multipliers.contains(&0.0) {
+        multipliers.insert(0, 0.0);
+    }
+
+    multipliers.sort_by(|a, b| a.partial_cmp(b).unwrap());
+
+    println!("Running cost sensitivity analysis...");
+    println!("  Multipliers: {:?}", multipliers);
+    println!(
+        "  Robustness threshold (Sharpe at 5x): {:.2}\n",
+        robustness_threshold
+    );
+
+    let cost_model = CostModel {
+        commission_pct: commission / 100.0,
+        slippage_pct: slippage / 100.0,
+        ..Default::default()
+    };
+
+    let config = BacktestConfig {
+        initial_capital: capital,
+        cost_model,
+        position_size,
+        show_progress: false,
+        ..Default::default()
+    };
+
+    let sensitivity_config = CostSensitivityConfig {
+        multipliers,
+        robustness_threshold_5x: Some(robustness_threshold),
+        include_zero_cost,
+    };
+
+    let mut strategy: Box<dyn Strategy> = match strategy_type {
+        StrategyType::SmaCrossover => Box::new(SmaCrossover::new(fast_period, slow_period)),
+        StrategyType::Momentum => Box::new(MomentumStrategy::new(lookback, 0.0)),
+        StrategyType::MeanReversion => Box::new(MeanReversion::default_params()),
+        StrategyType::Rsi => Box::new(RsiStrategy::new(rsi_period, 30.0, 70.0)),
+        StrategyType::Breakout => Box::new(BreakoutStrategy::default_params()),
+        StrategyType::Macd => Box::new(MacdStrategy::new(fast_period, slow_period, 9)),
+    };
+
+    let analysis = run_cost_sensitivity_analysis(
+        &config,
+        &sensitivity_config,
+        &bars,
+        strategy.as_mut(),
+        symbol,
+    )
+    .map_err(|e| {
+        mantis::BacktestError::ConfigError(format!("Cost sensitivity analysis failed: {}", e))
+    })?;
+
+    match output {
+        OutputFormat::Text => print_cost_sensitivity_text(&analysis),
+        OutputFormat::Json => {
+            let json = serde_json::to_string_pretty(&analysis)?;
+            println!("{}", json);
+        }
+        OutputFormat::Csv => print_cost_sensitivity_csv(&analysis),
+    }
+
+    Ok(())
+}
+
+fn print_cost_sensitivity_text(analysis: &CostSensitivityAnalysis) {
+    println!("\n{}", "Cost Sensitivity Analysis".bold().underline());
+    println!(
+        "Symbol: {}  |  Strategy: {}",
+        analysis.symbol.bright_cyan(),
+        analysis.strategy_name.bright_cyan()
+    );
+    println!("{}", "=".repeat(70));
+    println!();
+
+    // Scenario table
+    println!("{}", "Cost Scenarios".bold());
+    println!(
+        "{:<12} {:>12} {:>12} {:>12} {:>10}",
+        "Multiplier", "Return", "Sharpe", "Max DD", "Trades"
+    );
+    println!("{}", "-".repeat(60));
+
+    for scenario in &analysis.scenarios {
+        let return_str = format!("{:.2}%", scenario.total_return_pct());
+        let sharpe_str = format!("{:.3}", scenario.sharpe_ratio());
+        let dd_str = format!("{:.2}%", scenario.result.max_drawdown_pct);
+
+        let return_colored = if scenario.total_return_pct() > 0.0 {
+            return_str.green()
+        } else {
+            return_str.red()
+        };
+
+        let sharpe_colored = if scenario.sharpe_ratio() > 0.5 {
+            sharpe_str.green()
+        } else if scenario.sharpe_ratio() > 0.0 {
+            sharpe_str.yellow()
+        } else {
+            sharpe_str.red()
+        };
+
+        println!(
+            "{:<12} {:>12} {:>12} {:>12} {:>10}",
+            format!("{}x", scenario.multiplier),
+            return_colored,
+            sharpe_colored,
+            dd_str.red(),
+            scenario.result.total_trades
+        );
+    }
+
+    println!();
+    println!("{}", "Degradation Analysis (vs 1x baseline)".bold());
+    println!("{}", "-".repeat(60));
+
+    if let Some(degrad_2x) = analysis.sharpe_degradation_at(2.0) {
+        let degrad_str = format!("{:.1}%", degrad_2x);
+        let colored = if degrad_2x < 25.0 {
+            degrad_str.green()
+        } else if degrad_2x < 50.0 {
+            degrad_str.yellow()
+        } else {
+            degrad_str.red()
+        };
+        println!("  Sharpe degradation at 2x costs: {}", colored);
+    }
+
+    if let Some(degrad_5x) = analysis.sharpe_degradation_at(5.0) {
+        let degrad_str = format!("{:.1}%", degrad_5x);
+        let colored = if degrad_5x < 50.0 {
+            degrad_str.green()
+        } else if degrad_5x < 75.0 {
+            degrad_str.yellow()
+        } else {
+            degrad_str.red()
+        };
+        println!("  Sharpe degradation at 5x costs: {}", colored);
+    }
+
+    if let Some(degrad_10x) = analysis.sharpe_degradation_at(10.0) {
+        let degrad_str = format!("{:.1}%", degrad_10x);
+        let colored = if degrad_10x < 75.0 {
+            degrad_str.green()
+        } else {
+            degrad_str.red()
+        };
+        println!("  Sharpe degradation at 10x costs: {}", colored);
+    }
+
+    if let Some(elasticity) = analysis.cost_elasticity() {
+        println!("\n  Cost elasticity: {:.3}", elasticity);
+    }
+
+    if let Some(breakeven) = analysis.breakeven_multiplier() {
+        println!("  Breakeven cost multiplier: {:.2}x", breakeven);
+    } else {
+        println!("  Breakeven: Strategy profitable at all tested multipliers");
+    }
+
+    println!();
+    println!("{}", "Robustness Assessment".bold());
+    println!("{}", "-".repeat(60));
+
+    if let Some(scenario_5x) = analysis.scenario_at(5.0) {
+        let sharpe_5x = scenario_5x.sharpe_ratio();
+        let threshold = 0.5;
+        let passes = sharpe_5x >= threshold;
+        let status = if passes {
+            "PASS".green().bold()
+        } else {
+            "FAIL".red().bold()
+        };
+        println!(
+            "  5x cost test: {} (Sharpe = {:.3}, threshold = {:.3})",
+            status, sharpe_5x, threshold
+        );
+    }
+
+    let overall_robust = analysis.is_robust(0.5);
+    let verdict = if overall_robust {
+        "ROBUST".green().bold()
+    } else {
+        "NOT ROBUST".red().bold()
+    };
+    println!("\n  Overall verdict: {}", verdict);
+
+    if overall_robust {
+        println!(
+            "{}",
+            "\n  Strategy maintains acceptable performance under stressed cost conditions."
+                .green()
+                .dimmed()
+        );
+    } else {
+        println!(
+            "{}",
+            "\n  Strategy performance degrades significantly under higher costs."
+                .yellow()
+                .dimmed()
+        );
+        println!(
+            "{}",
+            "  Consider: Reducing trading frequency, widening entry criteria, or accepting lower returns."
+                .yellow()
+                .dimmed()
+        );
+    }
+}
+
+fn print_cost_sensitivity_csv(analysis: &CostSensitivityAnalysis) {
+    println!("multiplier,return_pct,sharpe,max_dd_pct,total_trades,total_costs,avg_cost_per_trade");
+    for scenario in &analysis.scenarios {
+        println!(
+            "{},{:.4},{:.4},{:.4},{},{:.4},{:.4}",
+            scenario.multiplier,
+            scenario.total_return_pct(),
+            scenario.sharpe_ratio(),
+            scenario.result.max_drawdown_pct,
+            scenario.result.total_trades,
+            scenario.total_costs,
+            scenario.avg_cost_per_trade
+        );
+    }
+
+    // Summary row
+    if let Some(degrad_5x) = analysis.sharpe_degradation_at(5.0) {
+        println!("# sharpe_degradation_5x,{:.4}", degrad_5x);
+    }
+    if let Some(elasticity) = analysis.cost_elasticity() {
+        println!("# cost_elasticity,{:.4}", elasticity);
+    }
+    if let Some(breakeven) = analysis.breakeven_multiplier() {
+        println!("# breakeven_multiplier,{:.4}", breakeven);
+    }
+    println!("# is_robust,{}", analysis.is_robust(0.5));
 }
 
 fn print_monte_carlo_text(result: &MonteCarloResult) {

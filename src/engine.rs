@@ -373,7 +373,13 @@ impl Engine {
                             Order::market(symbol, exit_side, position.quantity, bar.timestamp);
 
                         // Buffer exit for next bar to prevent lookahead bias
-                        self.buffer_order_for_next_bar(&mut pending_orders, exit_order, None, &bars, i);
+                        self.buffer_order_for_next_bar(
+                            &mut pending_orders,
+                            exit_order,
+                            None,
+                            &bars,
+                            i,
+                        );
                         pending_exits.insert(symbol.to_string());
 
                         debug!(
@@ -405,7 +411,16 @@ impl Engine {
                 timeframe_manager: timeframe_manager.as_ref(),
             };
 
-            self.handle_pending_orders(&mut pending_orders, &mut pending_exits, &mut entry_prices, &mut trailing_stops, bar, strategy, &ctx, &mut portfolio)?;
+            self.handle_pending_orders(
+                &mut pending_orders,
+                &mut pending_exits,
+                &mut entry_prices,
+                &mut trailing_stops,
+                bar,
+                strategy,
+                &ctx,
+                &mut portfolio,
+            )?;
 
             // Check for custom orders first
             if let Some(orders) = strategy.generate_orders(&ctx) {
@@ -420,7 +435,13 @@ impl Engine {
                     // Buffer order for execution at next bar's open (prevents lookahead bias)
                     // Entry tracking (entry_prices, trailing_stops) will be handled in
                     // handle_pending_orders when the order actually fills
-                    self.buffer_order_for_next_bar(&mut pending_orders, order, Some(signal), &bars, i);
+                    self.buffer_order_for_next_bar(
+                        &mut pending_orders,
+                        order,
+                        Some(signal),
+                        &bars,
+                        i,
+                    );
                 }
             }
 
@@ -568,7 +589,8 @@ impl Engine {
 
                             if let StopLoss::Trailing(trail_pct) = self.config.risk_config.stop_loss
                             {
-                                let ts = TrailingStop::new(trade.entry_price, trade.side, trail_pct);
+                                let ts =
+                                    TrailingStop::new(trade.entry_price, trade.side, trail_pct);
                                 trailing_stops.insert(pending_order.symbol.clone(), ts);
                             }
                         } else if matches!(signal, Some(Signal::Exit))
@@ -940,7 +962,13 @@ mod tests {
 
         // Limit order should be buffered with TTL-based expiry
         let limit_order = Order::limit("TEST", Side::Buy, 10.0, 99.0, bars[0].timestamp);
-        engine.buffer_order_for_next_bar(&mut pending, limit_order.clone(), Some(Signal::Long), &bars, 0);
+        engine.buffer_order_for_next_bar(
+            &mut pending,
+            limit_order.clone(),
+            Some(Signal::Long),
+            &bars,
+            0,
+        );
         assert_eq!(pending.len(), 1);
         assert!((pending[0].remaining_quantity - 10.0).abs() < f64::EPSILON);
         assert!(pending[0].expires_at.is_some());

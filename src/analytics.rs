@@ -948,7 +948,9 @@ impl PerformanceMetrics {
 
         for point in &result.equity_curve {
             let key = (point.timestamp.year(), point.timestamp.month());
-            let entry = monthly_data.entry(key).or_insert((point.equity, point.equity));
+            let entry = monthly_data
+                .entry(key)
+                .or_insert((point.equity, point.equity));
             // Update the end equity (last value in this month)
             entry.1 = point.equity;
         }
@@ -985,7 +987,9 @@ impl PerformanceMetrics {
                 metric: "sharpe_ratio".to_string(),
                 value: self.sharpe_ratio,
                 threshold: 3.0,
-                message: "Sharpe ratio > 3 is unusually high. Verify data quality and execution logic.".to_string(),
+                message:
+                    "Sharpe ratio > 3 is unusually high. Verify data quality and execution logic."
+                        .to_string(),
                 severity: "warning".to_string(),
             });
         }
@@ -1029,7 +1033,8 @@ impl PerformanceMetrics {
                 metric: "profit_factor".to_string(),
                 value: self.profit_factor,
                 threshold: 5.0,
-                message: "Profit factor > 5 is unusually high. Verify data and execution.".to_string(),
+                message: "Profit factor > 5 is unusually high. Verify data and execution."
+                    .to_string(),
                 severity: "caution".to_string(),
             });
         }
@@ -5307,7 +5312,10 @@ mod tests {
         };
 
         let warnings = metrics.check_suspicious_metrics();
-        assert!(warnings.is_empty(), "Expected no warnings for normal metrics");
+        assert!(
+            warnings.is_empty(),
+            "Expected no warnings for normal metrics"
+        );
     }
 
     #[test]

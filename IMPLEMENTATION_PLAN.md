@@ -198,16 +198,16 @@ let sample = mt.load_sample("AAPL")?;  // Works offline
 
 ---
 
-### 8. Cost Sensitivity CLI Command [PARTIAL - VERIFIED]
-**Status:** Module complete (724 lines), CLI command missing
+### 8. Cost Sensitivity CLI Command [COMPLETE]
+**Status:** COMPLETE - CLI command implemented
 
-**Current state:**
-- `src/cost_sensitivity.rs` - Full implementation with 1x/2x/5x/10x multipliers
-- `src/cli.rs` - NO dedicated cost-sensitivity command
-- Module works via library API only
-
-**Files affected:**
-- `src/cli.rs` - Add `CostSensitivity` command variant
+**Implementation details:**
+- Command: `mantis cost-sensitivity`
+- Supports all standard backtest options (data, symbol, strategy, capital, position_size, commission, slippage)
+- Custom cost multipliers via `--multipliers` (comma-separated list like "1.0,2.0,5.0,10.0")
+- `--include-zero-cost` flag for theoretical upper bound analysis
+- `--robustness-threshold` for Sharpe threshold at 5x costs
+- Output formats: Text (default), JSON (`-o json`), CSV (`-o csv`)
 
 **Dependencies:** None
 **Effort:** Small (1 day)
@@ -392,7 +392,7 @@ enum Verdict { Robust, Borderline, LikelyOverfit }
 | 5 | Rolling Metrics | MISSING | P1 | Medium | None |
 | 6 | Short Borrow Costs | PARTIAL | P1 | Medium | None |
 | 7 | load_multi/load_dir | MISSING | P1 | Small | None |
-| 8 | Cost Sensitivity CLI | PARTIAL | P1 | Small | None |
+| 8 | Cost Sensitivity CLI | **COMPLETE** | P1 | Small | None |
 | 9 | Position Sizing Integration | PARTIAL | P1 | Medium | None |
 | 10 | Multi-Symbol Documentation | DOC GAP | P1 | Small | None |
 | 11 | Parameter Sensitivity | PARTIAL | P2 | Medium | None |
@@ -425,7 +425,7 @@ enum Verdict { Robust, Borderline, LikelyOverfit }
 | **Black-Litterman** | FULLY IMPLEMENTED: multi_asset.rs:2124-2635 |
 | **Mean-Variance Optimization** | FULLY IMPLEMENTED: multi_asset.rs:1515-2082 |
 | **HRP (Hierarchical Risk Parity)** | FULLY IMPLEMENTED: multi_asset.rs:2683-3141 |
-| **Cost Sensitivity Module** | COMPLETE (not CLI-integrated): cost_sensitivity.rs (725 lines) |
+| **Cost Sensitivity Module & CLI** | **COMPLETE**: cost_sensitivity.rs (725 lines), CLI command `mantis cost-sensitivity` with custom multipliers, zero-cost flag, robustness threshold, text/JSON/CSV output |
 | **ONNX Module Code** | COMPLETE but disabled: onnx.rs (524 lines, waiting for ort crate) |
 | Config Defaults | CORRECT: slippage=0.1%, commission=0.1%, position_size=10% |
 | Performance Benchmarks | EXISTS in benches/backtest_bench.rs (9 benchmark groups) |

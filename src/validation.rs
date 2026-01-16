@@ -164,7 +164,10 @@ impl SignalStats {
             let sum: f64 = valid_values.iter().sum();
             let mean = sum / valid_len as f64;
 
-            let variance: f64 = valid_values.iter().map(|&x| (x - mean).powi(2)).sum::<f64>()
+            let variance: f64 = valid_values
+                .iter()
+                .map(|&x| (x - mean).powi(2))
+                .sum::<f64>()
                 / valid_len as f64;
             let std_dev = variance.sqrt();
 
@@ -335,7 +338,10 @@ pub fn validate_signals<S: AsRef<str>>(
     for (symbol, signal) in signals {
         let symbol_str = symbol.as_ref();
         let data_len = *data_len_map.get(symbol_str).ok_or_else(|| {
-            BacktestError::DataError(format!("No data length provided for symbol: {}", symbol_str))
+            BacktestError::DataError(format!(
+                "No data length provided for symbol: {}",
+                symbol_str
+            ))
         })?;
 
         let validation_result = validate_signal(signal, data_len, config)?;

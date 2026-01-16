@@ -158,6 +158,6 @@ pub use timeframe::TimeframeManager;
 
 // Signal validation
 pub use validation::{
-    validate_signal, validate_signal_quick, validate_signals, SignalStats,
-    SignalValidationConfig, SignalValidationResult,
+    validate_signal, validate_signal_quick, validate_signals, SignalStats, SignalValidationConfig,
+    SignalValidationResult,
 };

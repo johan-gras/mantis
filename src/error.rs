@@ -93,7 +93,6 @@ pub enum BacktestError {
     // ============================================================
     // Helpful Error Types (with structured diagnostics)
     // ============================================================
-
     /// Signal shape mismatch between signal array and data.
     #[error("Signal shape mismatch: signal has {signal_len} rows but data has {data_len} rows\n{}", .help)]
     SignalShapeMismatch {
