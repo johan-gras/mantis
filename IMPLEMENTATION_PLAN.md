@@ -10,7 +10,7 @@
 
 ## Executive Summary
 
-The Mantis backtesting framework implementation is **complete**. All 37 planned items have been verified and implemented.
+The Mantis backtesting framework implementation is **complete**. All 39 items have been verified and implemented.
 
 **Core Features:**
 - Core backtest engine with comprehensive cost modeling
@@ -105,6 +105,7 @@ The Mantis backtesting framework implementation is **complete**. All 37 planned 
 | 36 | max_leverage Parameter | P1 | max_leverage parameter exposed in Python backtest() |
 | 37 | Deflated Sharpe trials | P1 | trials parameter for deflated Sharpe in validate() |
 | 38 | Jupyter Notebooks | P2 | quickstart.ipynb, validation.ipynb, multi_symbol.ipynb for Colab/Binder |
+| 39 | GitHub Pages Deployment | P2 | GitHub Actions workflow, mkdocs.yml URLs fixed |
 
 ---
 
@@ -399,6 +400,34 @@ The following edge case fixes were implemented to match specification requiremen
 - Warnings logged with specific messages about the condition
 - Spec updated to use consistent behavior for both edge cases
 - **Files modified:** `src/engine.rs` (calculate_position_value method), `specs/position-sizing.md`
+
+---
+
+## Completed Items - GitHub Pages Deployment (2026-01-16)
+
+### Item 39: GitHub Pages Deployment
+
+The GitHub Pages deployment has been implemented with the following changes:
+
+**Files Created:**
+- `.github/workflows/docs.yml` - GitHub Actions workflow for building and deploying docs
+
+**Files Modified:**
+- `mkdocs.yml` - Updated URLs:
+  - `site_url`: `https://johan-gras.github.io/mantis/`
+  - `repo_url`: `https://github.com/johan-gras/mantis`
+  - `repo_name`: `johan-gras/mantis`
+  - Social link updated to correct repository
+
+**Workflow Features:**
+- Triggers on push to main (docs/**, mkdocs.yml, or workflow changes)
+- Manual dispatch via workflow_dispatch
+- Uses actions/upload-pages-artifact@v3 and actions/deploy-pages@v4
+- Builds with mkdocs-material>=9.0 and mkdocstrings[python]>=0.24
+
+**Note:** After pushing, enable GitHub Pages in repository settings:
+- Go to Settings → Pages → Build and deployment
+- Source: GitHub Actions
 
 ---
 

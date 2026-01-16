@@ -34,3 +34,9 @@ PROMPT_plan.md
 PROMPT_build.md
 loop.sh
 specs/
+
+# MkDocs
+site/
+
+# Virtual environment
+.venv/

@@ -1,8 +1,8 @@
 site_name: Mantis
 site_description: Fast, correct backtesting for DL researchers
-site_url: https://mantis.dev
-repo_url: https://github.com/mantis-bt/mantis
-repo_name: mantis-bt/mantis
+site_url: https://johan-gras.github.io/mantis/
+repo_url: https://github.com/johan-gras/mantis
+repo_name: johan-gras/mantis
 
 theme:
   name: material
@@ -95,7 +95,7 @@ nav:
 extra:
   social:
     - icon: fontawesome/brands/github
-      link: https://github.com/mantis-bt/mantis
+      link: https://github.com/johan-gras/mantis
     - icon: fontawesome/brands/python
       link: https://pypi.org/project/mantis-bt/
 
