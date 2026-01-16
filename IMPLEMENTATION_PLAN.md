@@ -190,3 +190,4 @@ The following items were resolved on 2026-01-16:
 - **ONNX benchmarks → Added, verify ~1.8μs inference (500x under 1ms target)**
 - **ONNX integration tests → 15 tests covering model loading, inference, batching, stats**
 - **Test ONNX models → Created scripts/generate_test_onnx.py and data/models/**
+- **README accuracy update (2026-01-16)** → Removed false claims about unimplemented modules (features.rs, streaming.rs, regime.rs), updated to Python-first positioning per marketing-positioning.md, corrected API examples to match actual implementation
