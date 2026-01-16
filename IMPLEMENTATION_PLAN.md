@@ -8,7 +8,7 @@
 
 Mantis is a high-performance Rust CLI backtest engine for quantitative trading with Python bindings. Core functionality (backtesting, metrics, validation, visualization) is **100% complete** per specifications.
 
-**Test Status:** 515 Rust tests ALL PASSING
+**Test Status:** 491 Rust tests ALL PASSING
 **Clippy Status:** CLEAN (0 warnings)
 **Benchmark Status:** Compiles and runs (6 benchmark groups active, including ONNX)
 **Python Tests:** 195 tests ALL PASSING
