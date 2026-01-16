@@ -20,6 +20,7 @@ use crate::strategy::{Strategy, StrategyContext};
 use crate::types::{Bar, Signal};
 use crate::viz::{sparkline, walkforward_fold_chart};
 use crate::walkforward::{WalkForwardConfig, WalkForwardResult, WalkForwardWindow, WindowResult};
+use crate::monte_carlo::{MonteCarloConfig, MonteCarloResult, MonteCarloSimulator};
 
 use super::types::PyTrade;
 
@@ -665,6 +666,44 @@ impl PyBacktestResult {
         Ok(PyValidationResult::from_wf_result_with_trials(
             &wf_result, trials,
         ))
+    }
+
+    /// Run Monte Carlo simulation to assess strategy robustness.
+    ///
+    /// Monte Carlo resamples trades with replacement to estimate confidence
+    /// intervals and probability of positive returns.
+    ///
+    /// Args:
+    ///     n_simulations: Number of simulation iterations (default: 1000)
+    ///     seed: Random seed for reproducibility (optional)
+    ///
+    /// Returns:
+    ///     MonteCarloResult with confidence intervals and robustness metrics
+    ///
+    /// Example:
+    ///     >>> mc = results.monte_carlo(n_simulations=1000)
+    ///     >>> print(f"95% CI for return: [{mc.return_ci[0]:.2%}, {mc.return_ci[1]:.2%}]")
+    ///     >>> print(f"Probability of positive return: {mc.prob_positive_return:.1%}")
+    #[pyo3(signature = (n_simulations=1000, seed=None))]
+    fn monte_carlo(&self, n_simulations: usize, seed: Option<u64>) -> PyResult<PyMonteCarloResult> {
+        if self.rust_result.trades.is_empty() {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "Cannot run Monte Carlo simulation: no trades in backtest result.\n\n\
+                 Monte Carlo requires trade history to resample.\n\n\
+                 Quick fix: Ensure your strategy generates trades before calling monte_carlo().",
+            ));
+        }
+
+        let config = MonteCarloConfig {
+            num_simulations: n_simulations,
+            seed,
+            ..MonteCarloConfig::default()
+        };
+
+        let mut simulator = MonteCarloSimulator::new(config);
+        let mc_result = simulator.simulate_from_result(&self.rust_result);
+
+        Ok(PyMonteCarloResult::from_result(mc_result))
     }
 
     fn __repr__(&self) -> String {
@@ -1429,5 +1468,179 @@ fn build_walkforward_result(
         avg_oos_sharpe,
         oos_sharpe_threshold_met,
         parameter_stability,
+    }
+}
+
+/// Python-exposed Monte Carlo simulation results.
+#[pyclass(name = "MonteCarloResult")]
+#[derive(Debug, Clone)]
+pub struct PyMonteCarloResult {
+    // Configuration
+    #[pyo3(get)]
+    pub num_simulations: usize,
+    #[pyo3(get)]
+    pub num_trades: usize,
+
+    // Return statistics
+    #[pyo3(get)]
+    pub mean_return: f64,
+    #[pyo3(get)]
+    pub median_return: f64,
+    #[pyo3(get)]
+    pub return_std: f64,
+    #[pyo3(get)]
+    pub return_ci: (f64, f64),
+    #[pyo3(get)]
+    pub prob_positive_return: f64,
+
+    // Drawdown statistics
+    #[pyo3(get)]
+    pub mean_max_drawdown: f64,
+    #[pyo3(get)]
+    pub median_max_drawdown: f64,
+    #[pyo3(get)]
+    pub max_drawdown_ci: (f64, f64),
+    #[pyo3(get)]
+    pub max_drawdown_95th: f64,
+
+    // Sharpe statistics
+    #[pyo3(get)]
+    pub mean_sharpe: f64,
+    #[pyo3(get)]
+    pub median_sharpe: f64,
+    #[pyo3(get)]
+    pub sharpe_ci: (f64, f64),
+    #[pyo3(get)]
+    pub prob_positive_sharpe: f64,
+
+    // Risk metrics
+    #[pyo3(get)]
+    pub var: f64,
+    #[pyo3(get)]
+    pub cvar: f64,
+
+    // Distribution data (internal)
+    return_distribution: Vec<f64>,
+    return_percentiles: HashMap<String, f64>,
+
+    // For methods
+    rust_result: MonteCarloResult,
+}
+
+#[pymethods]
+impl PyMonteCarloResult {
+    /// Get the return distribution as a numpy array.
+    #[getter]
+    fn return_distribution<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<f64>> {
+        PyArray1::from_vec_bound(py, self.return_distribution.clone())
+    }
+
+    /// Get return percentiles as a dictionary.
+    #[getter]
+    fn return_percentiles<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
+        let dict = PyDict::new_bound(py);
+        for (k, v) in &self.return_percentiles {
+            dict.set_item(k, v)?;
+        }
+        Ok(dict)
+    }
+
+    /// Check if the strategy is robust based on Monte Carlo results.
+    ///
+    /// Returns True if:
+    /// - Probability of positive return > 60%
+    /// - Probability of positive Sharpe > 50%
+    /// - Median return > 0
+    fn is_robust(&self) -> bool {
+        self.rust_result.is_robust()
+    }
+
+    /// Get a robustness score from 0-100.
+    ///
+    /// Combines probability of positive return, positive Sharpe,
+    /// and drawdown severity into a single score.
+    fn robustness_score(&self) -> f64 {
+        self.rust_result.robustness_score()
+    }
+
+    /// Get the verdict: "robust", "borderline", or "likely_overfit".
+    #[getter]
+    fn verdict(&self) -> String {
+        self.rust_result.verdict().label().to_string()
+    }
+
+    /// Get a specific percentile from the return distribution.
+    ///
+    /// Args:
+    ///     percentile: Percentile to retrieve (0-100)
+    ///
+    /// Returns:
+    ///     The return value at the given percentile
+    fn percentile(&self, percentile: usize) -> PyResult<f64> {
+        if percentile > 100 {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "Percentile must be between 0 and 100",
+            ));
+        }
+
+        let key = format!("{}th", percentile);
+        if let Some(&value) = self.return_percentiles.get(&key) {
+            return Ok(value);
+        }
+
+        // Calculate from distribution if not pre-computed
+        if self.return_distribution.is_empty() {
+            return Ok(0.0);
+        }
+
+        let idx = (percentile as f64 / 100.0 * (self.return_distribution.len() - 1) as f64) as usize;
+        Ok(self.return_distribution[idx])
+    }
+
+    /// Generate a summary report string.
+    fn summary(&self) -> String {
+        self.rust_result.summary()
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "MonteCarloResult(simulations={}, median_return={:+.2}%, sharpe_ci=[{:.2}, {:.2}])",
+            self.num_simulations,
+            self.median_return,
+            self.sharpe_ci.0,
+            self.sharpe_ci.1
+        )
+    }
+
+    fn __str__(&self) -> String {
+        self.summary()
+    }
+}
+
+impl PyMonteCarloResult {
+    /// Create from a Rust MonteCarloResult.
+    pub fn from_result(result: MonteCarloResult) -> Self {
+        Self {
+            num_simulations: result.num_simulations,
+            num_trades: result.num_trades,
+            mean_return: result.mean_return,
+            median_return: result.median_return,
+            return_std: result.return_std,
+            return_ci: result.return_ci,
+            prob_positive_return: result.prob_positive_return,
+            mean_max_drawdown: result.mean_max_drawdown,
+            median_max_drawdown: result.median_max_drawdown,
+            max_drawdown_ci: result.max_drawdown_ci,
+            max_drawdown_95th: result.max_drawdown_95th,
+            mean_sharpe: result.mean_sharpe,
+            median_sharpe: result.median_sharpe,
+            sharpe_ci: result.sharpe_ci,
+            prob_positive_sharpe: result.prob_positive_sharpe,
+            var: result.var,
+            cvar: result.cvar,
+            return_distribution: result.return_distribution.clone(),
+            return_percentiles: result.return_percentiles.clone(),
+            rust_result: result,
+        }
     }
 }

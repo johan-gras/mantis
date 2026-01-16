@@ -210,6 +210,23 @@ Per spec (`specs/position-sizing.md`), position sizes are rounded to **whole sha
 
 ---
 
+### Monte Carlo Python API (2026-01-16)
+
+Per spec (validation-robustness.md lines 206, 317-319), added `results.monte_carlo(n_simulations=1000)` method:
+- Exposes the existing Rust MonteCarloSimulator to Python
+- Returns PyMonteCarloResult with:
+  - Confidence intervals for return, Sharpe, and max drawdown
+  - Probability of positive return and Sharpe
+  - Value at Risk (VaR) and Conditional VaR (CVaR)
+  - Robustness score and verdict
+
+**Files modified:**
+- `src/python/results.rs`: Added monte_carlo() method to PyBacktestResult
+- `src/python/mod.rs`: Registered PyMonteCarloResult type
+- `python/mantis/__init__.pyi`: Updated type stubs
+
+---
+
 ## Design Decisions
 
 ### Data Output Format

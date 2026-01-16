@@ -57,6 +57,7 @@ fn _mantis(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<results::PyBacktestResult>()?;
     m.add_class::<results::PyValidationResult>()?;
     m.add_class::<results::PyFoldDetail>()?;
+    m.add_class::<results::PyMonteCarloResult>()?;
     m.add_class::<types::PyBar>()?;
     m.add_class::<backtest::PyBacktestConfig>()?;
 

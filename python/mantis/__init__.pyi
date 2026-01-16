@@ -1,6 +1,6 @@
 """Type stubs for Mantis backtesting engine."""
 
-from typing import Any, Callable, Dict, List, Optional, Union
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 import numpy as np
 from numpy.typing import NDArray
 
@@ -567,6 +567,44 @@ class BacktestResult:
             >>> print(validation.deflated_sharpe)
         """
         ...
+    def monte_carlo(
+        self,
+        n_simulations: int = 1000,
+        seed: Optional[int] = None,
+    ) -> "MonteCarloResult":
+        """
+        Run Monte Carlo simulation to assess strategy robustness.
+
+        Monte Carlo resamples trades with replacement to estimate confidence
+        intervals and probability of positive returns. This helps answer:
+        "If market conditions had been slightly different, how might results vary?"
+
+        Args:
+            n_simulations: Number of simulation iterations (default: 1000).
+                More simulations give tighter confidence intervals.
+            seed: Random seed for reproducibility (optional).
+
+        Returns:
+            MonteCarloResult with confidence intervals, distributions, and
+            robustness metrics including:
+            - 95% CI for returns, Sharpe, and max drawdown
+            - Probability of positive return and Sharpe
+            - Value at Risk (VaR) and Conditional VaR (CVaR)
+            - Robustness score and verdict
+
+        Raises:
+            ValueError: If the backtest has no trades (Monte Carlo requires
+                trade history to resample).
+
+        Example:
+            >>> results = mt.backtest(data, signal)
+            >>> mc = results.monte_carlo(n_simulations=1000)
+            >>> print(f"95% CI for return: [{mc.return_ci[0]:.2%}, {mc.return_ci[1]:.2%}]")
+            >>> print(f"Probability of positive return: {mc.prob_positive_return:.1%}")
+            >>> print(mc.verdict)  # "robust", "borderline", or "likely_overfit"
+            >>> print(mc.summary())  # Full report
+        """
+        ...
 
 class FoldDetail:
     """Details for a single fold in walk-forward validation."""
@@ -660,6 +698,130 @@ class ValidationResult:
         Example:
             >>> validation = mt.validate(data, signal)
             >>> validation.report("validation_report.html")
+        """
+        ...
+
+class MonteCarloResult:
+    """Results from Monte Carlo simulation.
+
+    Monte Carlo resamples trades with replacement to estimate confidence
+    intervals and assess strategy robustness. This helps answer: "If market
+    conditions had been slightly different, how might results vary?"
+    """
+
+    # Configuration
+    num_simulations: int
+    """Number of simulations run."""
+    num_trades: int
+    """Number of trades used in each simulation."""
+
+    # Return statistics
+    mean_return: float
+    """Mean return across all simulations (as decimal, e.g., 0.15 = 15%)."""
+    median_return: float
+    """Median return across all simulations."""
+    return_std: float
+    """Standard deviation of simulated returns."""
+    return_ci: Tuple[float, float]
+    """95% confidence interval for return (lower, upper)."""
+    prob_positive_return: float
+    """Probability of achieving positive return (0-1)."""
+
+    # Drawdown statistics
+    mean_max_drawdown: float
+    """Mean maximum drawdown across simulations."""
+    median_max_drawdown: float
+    """Median maximum drawdown."""
+    max_drawdown_ci: Tuple[float, float]
+    """95% confidence interval for max drawdown."""
+    max_drawdown_95th: float
+    """95th percentile max drawdown (worst-case scenario)."""
+
+    # Sharpe statistics
+    mean_sharpe: float
+    """Mean Sharpe ratio across simulations."""
+    median_sharpe: float
+    """Median Sharpe ratio."""
+    sharpe_ci: Tuple[float, float]
+    """95% confidence interval for Sharpe ratio."""
+    prob_positive_sharpe: float
+    """Probability of achieving positive Sharpe (0-1)."""
+
+    # Risk metrics
+    var: float
+    """Value at Risk at confidence level (usually 95%)."""
+    cvar: float
+    """Conditional VaR (Expected Shortfall) - mean loss in worst cases."""
+
+    @property
+    def return_distribution(self) -> NDArray[np.float64]:
+        """Get the full distribution of simulated returns as numpy array."""
+        ...
+    @property
+    def return_percentiles(self) -> Dict[str, float]:
+        """Get return percentiles (5th, 10th, 25th, 50th, 75th, 90th, 95th)."""
+        ...
+    @property
+    def verdict(self) -> str:
+        """Get robustness verdict: 'robust', 'borderline', or 'likely_overfit'."""
+        ...
+    def is_robust(self) -> bool:
+        """
+        Check if strategy is robust based on Monte Carlo results.
+
+        Returns True if:
+        - Probability of positive return > 60%
+        - Probability of positive Sharpe > 50%
+        - Median return > 0
+
+        Example:
+            >>> mc = results.monte_carlo()
+            >>> if mc.is_robust():
+            ...     print("Strategy appears robust")
+        """
+        ...
+    def robustness_score(self) -> float:
+        """
+        Get a robustness score from 0-100.
+
+        Combines probability of positive return, positive Sharpe,
+        and drawdown severity into a single score.
+
+        Higher scores indicate more robust strategies:
+        - > 70: Robust
+        - 50-70: Borderline
+        - < 50: Likely overfit
+
+        Example:
+            >>> mc = results.monte_carlo()
+            >>> print(f"Robustness: {mc.robustness_score():.0f}/100")
+        """
+        ...
+    def percentile(self, percentile: int) -> float:
+        """
+        Get a specific percentile from the return distribution.
+
+        Args:
+            percentile: Percentile to retrieve (0-100)
+
+        Returns:
+            The return value at the given percentile
+
+        Example:
+            >>> mc = results.monte_carlo()
+            >>> worst_5pct = mc.percentile(5)  # 5th percentile return
+            >>> best_95pct = mc.percentile(95)  # 95th percentile return
+        """
+        ...
+    def summary(self) -> str:
+        """
+        Generate a detailed summary report.
+
+        Includes all statistics, confidence intervals, and verdict.
+
+        Example:
+            >>> mc = results.monte_carlo()
+            >>> print(mc.summary())
         """
         ...
 
