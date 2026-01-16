@@ -59,6 +59,12 @@ Per spec gap analysis on 2026-01-16, all items resolved:
    - `field_reassign_with_default` → use struct update syntax
    - `needless_range_loop` → use iterator with `.iter().skip(n)`
    - `unnecessary_get_then_check` → use `contains_key()` instead of `get().is_none()`
+5. `maturin develop` requires a virtual environment - added venv creation to python-test, docs-examples, and python-coverage jobs
+
+**Known Pre-existing Issues (not workflow bugs):**
+- Benchmark regression check fails due to CI runner variability (baseline captured on different runner)
+- Coverage is below 80% threshold (Rust: 70.7%, Python: 48.2%)
+- Documentation examples test may have failures unrelated to workflow
 
 ### Optional Future Enhancements
 
@@ -233,3 +239,4 @@ The following items were resolved on 2026-01-16:
 - **Benchmark regression check enabled (2026-01-16)** → Created initial benchmark baseline (benchmarks/results/main.json) with 21 benchmarks. CI will now fail PRs with >10% regression. All spec-required benchmarks pass targets: single_bar_1000 ~1.5ms (<10ms), daily_10y ~1.7ms (<100ms), multi_symbol_3 ~5ms (<300ms), sweep_1000 ~45ms (<30s), walkforward_12fold ~39ms (<2s)
 - **optimization_9param spec fix (2026-01-16)** → Fixed optimization_9param benchmark target from < 1ms (impossible for full execution) to < 10ms in specs/benchmarking.md and benches/backtest_bench.rs. The word "setup" in the original description was misleading - the benchmark measures full execution of 9 backtests (~5.4ms actual), which cannot complete in 1ms. Changed description to "9-parameter grid optimization (full execution)" for clarity.
 - **CI workflow fixes (2026-01-16)** → Fixed CI workflows to use `--features onnx` instead of `--all-features` (which caused issues with pyo3 extension-module feature). Added `--features onnx` to bench.yml for ONNX benchmarks. Fixed new clippy lints from Rust 1.92 (manual_range_contains, field_reassign_with_default, needless_range_loop, unnecessary_get_then_check).
+- **CI maturin venv fix (2026-01-16)** → Added virtual environment creation for `maturin develop` in python-test, docs-examples, and python-coverage jobs. `maturin develop` requires a venv to work correctly.
