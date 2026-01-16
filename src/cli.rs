@@ -6,8 +6,7 @@ use mantis::cost_sensitivity::{
     run_cost_sensitivity_analysis, CostSensitivityAnalysis, CostSensitivityConfig,
 };
 use mantis::data::{
-    data_quality_report, load_csv, load_data, load_parquet, resample, DataConfig,
-    ResampleInterval,
+    data_quality_report, load_csv, load_data, load_parquet, resample, DataConfig, ResampleInterval,
 };
 use mantis::engine::{BacktestConfig, Engine};
 use mantis::error::Result;
@@ -1203,7 +1202,6 @@ pub fn run() -> Result<()> {
             *format,
             cli.output,
         ),
-
     }
 }
 

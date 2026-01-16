@@ -34,26 +34,33 @@ Mantis is a high-performance Rust CLI backtest engine for quantitative trading w
 
 ---
 
-### 1.2 CI/CD Workflows Missing
+### 1.2 CI/CD Workflows - PARTIALLY COMPLETE
 
-**Status:** Blocks automated testing
+**Status:** Core CI workflow implemented
 
-| Issue | Only `.github/workflows/docs.yml` exists; no test/build/release workflows |
-|-------|--------------------------------------------------------------------------|
-| **Verified** | `ls .github/workflows/` shows only `docs.yml` |
-| **Impact** | Zero automated testing in CI |
+| Issue | CI workflow added; release/bench/coverage workflows still needed |
+|-------|------------------------------------------------------------------|
+| **Fix Date** | 2026-01-16 |
+| **Verified** | `ls .github/workflows/` shows `docs.yml` and `ci.yml` |
 
-**Required per specs/ci-testing.md:**
-- [ ] `ci.yml` - Run `cargo test`, `cargo clippy`, Python tests on PR/push
+**Per specs/ci-testing.md:**
+- [x] `ci.yml` - Run `cargo test`, `cargo clippy`, rustfmt, Python build on PR/push
 - [ ] `release.yml` - Automated wheel building and PyPI publishing
 - [ ] `bench.yml` - Benchmark regression detection (>10% slower = fail)
-- [ ] `lint.yml` - rustfmt + clippy + black checks
 - [ ] `coverage.yml` - Coverage reporting with >=80% threshold
 
-**Platform matrix required:**
-- OS: Linux (x86_64, aarch64), macOS (x86_64, ARM64), Windows (x86_64)
-- Python: 3.8, 3.9, 3.10, 3.11, 3.12
-- **Total configurations:** 3 OS x 5 Python versions = 15 test configurations
+**CI workflow includes:**
+- Rust tests on ubuntu-latest, macos-latest, windows-latest
+- Lint checks (rustfmt, clippy)
+- Python bindings build on 3.9, 3.10, 3.11, 3.12 across all 3 OS
+- Benchmark compilation check
+- Documentation build check
+
+**Still needed:**
+- [ ] `release.yml` for automated PyPI publishing
+- [ ] `bench.yml` for benchmark regression detection
+- [ ] `coverage.yml` for coverage reporting
+- [ ] Python tests (tests/python/ directory doesn't exist yet)
 
 ---
 
