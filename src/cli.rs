@@ -6,7 +6,8 @@ use mantis::cost_sensitivity::{
     run_cost_sensitivity_analysis, CostSensitivityAnalysis, CostSensitivityConfig,
 };
 use mantis::data::{
-    data_quality_report, load_csv, load_data, load_parquet, resample, DataConfig, ResampleInterval,
+    data_quality_report, load_csv, load_data, load_dir, load_parquet, resample, DataConfig,
+    ResampleInterval,
 };
 use mantis::engine::{BacktestConfig, Engine};
 use mantis::error::Result;
@@ -15,6 +16,12 @@ use mantis::experiments::{
 };
 use mantis::features::{FeatureConfig, FeatureExtractor, TimeSeriesSplitter};
 use mantis::monte_carlo::{MonteCarloConfig, MonteCarloResult, MonteCarloSimulator};
+use mantis::multi_asset::{
+    DriftEqualWeightStrategy, DriftMomentumStrategy, EqualWeightStrategy,
+    HierarchicalRiskParityStrategy, InverseVolatilityStrategy, MeanVarianceObjective,
+    MeanVarianceStrategy, MomentumPortfolioStrategy, MultiAssetEngine, MultiAssetResult,
+    PortfolioConstraints, PortfolioStrategy, RiskParityStrategy,
+};
 use mantis::portfolio::{CostModel, MarginConfig};
 use mantis::sensitivity::{
     ParameterRange, SensitivityAnalysis, SensitivityConfig, SensitivityMetric,
@@ -649,6 +656,81 @@ pub enum Commands {
         format: DataFormatArg,
     },
 
+    /// Run a multi-asset portfolio backtest with portfolio allocation strategies
+    Portfolio {
+        /// Directory containing data files (CSV or Parquet)
+        #[arg(short, long)]
+        data_dir: PathBuf,
+
+        /// File pattern to match (e.g., "*.csv", "*.parquet")
+        #[arg(short, long, default_value = "*.csv")]
+        pattern: String,
+
+        /// Portfolio allocation strategy
+        #[arg(short = 'S', long, value_enum, default_value = "equal-weight")]
+        strategy: PortfolioStrategyType,
+
+        /// Initial capital
+        #[arg(short, long, default_value = "100000")]
+        capital: f64,
+
+        /// Commission percentage (e.g., 0.1 for 0.1%)
+        #[arg(long, default_value = "0.1")]
+        commission: f64,
+
+        /// Slippage percentage (e.g., 0.1 for 0.1%)
+        #[arg(long, default_value = "0.1")]
+        slippage: f64,
+
+        /// Annual borrow cost for short positions (e.g., 3.0 for 3%)
+        #[arg(long, default_value = "3.0")]
+        borrow_cost: f64,
+
+        /// Allow short selling
+        #[arg(long)]
+        allow_short: bool,
+
+        /// Rebalancing frequency in bars (e.g., 21 for monthly with daily data)
+        #[arg(long, default_value = "21")]
+        rebalance_freq: usize,
+
+        /// Maximum position size per asset as fraction (e.g., 0.25 for 25%)
+        #[arg(long, default_value = "0.25")]
+        max_position: f64,
+
+        /// Maximum leverage (e.g., 1.0 for no leverage, 2.0 for 2x)
+        #[arg(long, default_value = "1.0")]
+        max_leverage: f64,
+
+        /// Maximum turnover per rebalance as fraction (e.g., 0.30 for 30%)
+        #[arg(long)]
+        max_turnover: Option<f64>,
+
+        /// Minimum number of holdings
+        #[arg(long)]
+        min_holdings: Option<usize>,
+
+        /// Maximum number of holdings
+        #[arg(long)]
+        max_holdings: Option<usize>,
+
+        /// Momentum lookback period (for momentum strategy)
+        #[arg(long, default_value = "60")]
+        lookback: usize,
+
+        /// Target volatility for mean-variance (e.g., 0.15 for 15%)
+        #[arg(long, default_value = "0.10")]
+        target_vol: f64,
+
+        /// Drift threshold for rebalancing (e.g., 0.05 for 5% drift)
+        #[arg(long, default_value = "0.05")]
+        drift_threshold: f64,
+
+        /// Data file format (auto-detects from extension if not specified)
+        #[arg(short, long, value_enum, default_value = "auto")]
+        format: DataFormatArg,
+    },
+
     /// Experiment tracking and management
     #[command(subcommand)]
     Experiments(ExperimentsCommands),
@@ -701,6 +783,37 @@ pub enum StrategyType {
     Rsi,
     Breakout,
     Macd,
+}
+
+/// Portfolio allocation strategy types for multi-asset backtesting.
+#[derive(Debug, Copy, Clone, PartialEq, Eq, ValueEnum)]
+#[value(rename_all = "kebab-case")]
+pub enum PortfolioStrategyType {
+    /// Equal weight allocation across all assets
+    #[value(name = "equal-weight")]
+    EqualWeight,
+    /// Momentum-based allocation (overweight recent winners)
+    Momentum,
+    /// Inverse volatility allocation (lower volatility = higher weight)
+    #[value(name = "inverse-vol")]
+    InverseVolatility,
+    /// Risk parity allocation (equal risk contribution)
+    #[value(name = "risk-parity")]
+    RiskParity,
+    /// Mean-variance optimization (minimum variance portfolio)
+    #[value(name = "min-variance")]
+    MinVariance,
+    /// Mean-variance optimization (maximum Sharpe portfolio)
+    #[value(name = "max-sharpe")]
+    MaxSharpe,
+    /// Hierarchical Risk Parity (machine learning-based)
+    Hrp,
+    /// Equal weight with drift-based rebalancing
+    #[value(name = "drift-equal")]
+    DriftEqual,
+    /// Momentum with drift-based rebalancing
+    #[value(name = "drift-momentum")]
+    DriftMomentum,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, ValueEnum)]
@@ -1324,6 +1437,47 @@ pub fn run() -> Result<()> {
             *metric,
             *steps,
             heatmap_output.clone(),
+            *format,
+            cli.output,
+        ),
+
+        Commands::Portfolio {
+            data_dir,
+            pattern,
+            strategy,
+            capital,
+            commission,
+            slippage,
+            borrow_cost,
+            allow_short,
+            rebalance_freq,
+            max_position,
+            max_leverage,
+            max_turnover,
+            min_holdings,
+            max_holdings,
+            lookback,
+            target_vol,
+            drift_threshold,
+            format,
+        } => run_portfolio(
+            data_dir,
+            pattern,
+            *strategy,
+            *capital,
+            *commission,
+            *slippage,
+            *borrow_cost,
+            *allow_short,
+            *rebalance_freq,
+            *max_position,
+            *max_leverage,
+            *max_turnover,
+            *min_holdings,
+            *max_holdings,
+            *lookback,
+            *target_vol,
+            *drift_threshold,
             *format,
             cli.output,
         ),
@@ -3730,6 +3884,251 @@ fn experiments_delete(id: &str) -> Result<()> {
     }
 
     Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_portfolio(
+    data_dir: &PathBuf,
+    pattern: &str,
+    strategy_type: PortfolioStrategyType,
+    capital: f64,
+    commission: f64,
+    slippage: f64,
+    borrow_cost: f64,
+    allow_short: bool,
+    rebalance_freq: usize,
+    max_position: f64,
+    max_leverage: f64,
+    max_turnover: Option<f64>,
+    min_holdings: Option<usize>,
+    max_holdings: Option<usize>,
+    lookback: usize,
+    _target_vol: f64,
+    drift_threshold: f64,
+    _format: DataFormatArg,
+    output: OutputFormat,
+) -> Result<()> {
+    use mantis::multi_asset::DriftRebalancingConfig;
+
+    info!(
+        "Loading data from directory: {} with pattern: {}",
+        data_dir.display(),
+        pattern
+    );
+
+    // Load all matching files using load_dir(dir, pattern, config)
+    let multi_data = load_dir(data_dir, pattern, &DataConfig::default())?;
+
+    if multi_data.is_empty() {
+        return Err(mantis::BacktestError::NoData);
+    }
+
+    println!(
+        "\n{} Loaded {} symbols:",
+        "Portfolio Setup".bright_cyan().bold(),
+        multi_data.len()
+    );
+    for (symbol, bars) in &multi_data {
+        println!("  {} - {} bars", symbol.bright_yellow(), bars.len());
+    }
+    println!();
+
+    // Build cost model
+    let cost_model = CostModel {
+        commission_pct: commission / 100.0,
+        slippage_pct: slippage / 100.0,
+        borrow_cost_rate: borrow_cost / 100.0,
+        ..Default::default()
+    };
+
+    // Build constraints
+    let constraints = PortfolioConstraints {
+        max_position_size: Some(max_position),
+        min_position_size: None,
+        max_leverage,
+        min_holdings,
+        max_holdings,
+        max_turnover,
+        max_correlation: None,
+        sector_limits: std::collections::HashMap::new(),
+        symbol_limits: std::collections::HashMap::new(),
+    };
+
+    // Build backtest config
+    let config = BacktestConfig {
+        initial_capital: capital,
+        cost_model,
+        allow_short,
+        show_progress: true,
+        ..Default::default()
+    };
+
+    // Create engine and add data
+    let mut engine = MultiAssetEngine::new(config).with_constraints(constraints);
+    for (symbol, bars) in multi_data {
+        engine.add_data(symbol, bars);
+    }
+
+    // Number of top holdings for momentum strategy
+    let top_n = max_holdings.unwrap_or(10);
+
+    // Create the appropriate strategy
+    let mut strategy: Box<dyn PortfolioStrategy> = match strategy_type {
+        PortfolioStrategyType::EqualWeight => {
+            Box::new(EqualWeightStrategy::new(rebalance_freq))
+        }
+        PortfolioStrategyType::Momentum => {
+            Box::new(MomentumPortfolioStrategy::new(lookback, top_n, rebalance_freq))
+        }
+        PortfolioStrategyType::InverseVolatility => {
+            Box::new(InverseVolatilityStrategy::new(lookback, rebalance_freq))
+        }
+        PortfolioStrategyType::RiskParity => {
+            Box::new(RiskParityStrategy::new(lookback, rebalance_freq))
+        }
+        PortfolioStrategyType::MinVariance => {
+            Box::new(MeanVarianceStrategy::new(
+                lookback,
+                rebalance_freq,
+                MeanVarianceObjective::MinimumVariance,
+                0.02, // risk-free rate
+            ))
+        }
+        PortfolioStrategyType::MaxSharpe => {
+            Box::new(MeanVarianceStrategy::new(
+                lookback,
+                rebalance_freq,
+                MeanVarianceObjective::MaximumSharpe,
+                0.02, // risk-free rate
+            ))
+        }
+        PortfolioStrategyType::Hrp => {
+            Box::new(HierarchicalRiskParityStrategy::new(lookback, rebalance_freq))
+        }
+        PortfolioStrategyType::DriftEqual => {
+            let drift_config = DriftRebalancingConfig {
+                drift_threshold,
+                ..Default::default()
+            };
+            Box::new(DriftEqualWeightStrategy::new(drift_config))
+        }
+        PortfolioStrategyType::DriftMomentum => {
+            let drift_config = DriftRebalancingConfig {
+                drift_threshold,
+                ..Default::default()
+            };
+            Box::new(DriftMomentumStrategy::new(lookback, top_n, drift_config, rebalance_freq))
+        }
+    };
+
+    // Run backtest
+    let start_time = std::time::Instant::now();
+    let result = engine.run(strategy.as_mut())?;
+    let duration_ms = start_time.elapsed().as_millis();
+
+    // Output results
+    match output {
+        OutputFormat::Text => print_portfolio_result_text(&result, duration_ms),
+        OutputFormat::Json => {
+            let json = serde_json::to_string_pretty(&result)?;
+            println!("{}", json);
+        }
+        OutputFormat::Csv => print_portfolio_result_csv(&result),
+    }
+
+    Ok(())
+}
+
+fn print_portfolio_result_text(result: &MultiAssetResult, duration_ms: u128) {
+    println!(
+        "\n{}\n{}",
+        "Portfolio Backtest Results".bright_cyan().bold(),
+        "=".repeat(50)
+    );
+
+    println!("\n{}", "Summary".bright_yellow());
+    println!(
+        "  Strategy:      {}",
+        result.strategy_name.bright_white()
+    );
+    println!("  Symbols:       {}", result.symbols.len());
+    println!(
+        "  Period:        {} to {}",
+        result.start_time.format("%Y-%m-%d"),
+        result.end_time.format("%Y-%m-%d")
+    );
+    println!(
+        "  Initial:       ${:.2}",
+        result.initial_capital
+    );
+    println!(
+        "  Final:         ${:.2}",
+        result.final_equity
+    );
+
+    println!("\n{}", "Performance".bright_yellow());
+    let return_colored = if result.total_return_pct >= 0.0 {
+        format!("{:.2}%", result.total_return_pct).green()
+    } else {
+        format!("{:.2}%", result.total_return_pct).red()
+    };
+    println!("  Total Return:  {}", return_colored);
+    println!(
+        "  Annual Return: {:.2}%",
+        result.annual_return_pct
+    );
+    println!(
+        "  Max Drawdown:  {:.2}%",
+        result.max_drawdown_pct
+    );
+
+    println!("\n{}", "Risk Metrics".bright_yellow());
+    let sharpe_colored = if result.sharpe_ratio >= 1.0 {
+        format!("{:.3}", result.sharpe_ratio).green()
+    } else if result.sharpe_ratio >= 0.5 {
+        format!("{:.3}", result.sharpe_ratio).yellow()
+    } else {
+        format!("{:.3}", result.sharpe_ratio).red()
+    };
+    println!("  Sharpe Ratio:  {}", sharpe_colored);
+    println!(
+        "  Sortino Ratio: {:.3}",
+        result.sortino_ratio
+    );
+
+    println!("\n{}", "Trading Activity".bright_yellow());
+    println!("  Total Trades:  {}", result.total_trades);
+    println!("  Trades by Symbol:");
+    for (symbol, &count) in &result.trades_by_symbol {
+        println!("    {}: {}", symbol.bright_white(), count);
+    }
+
+    println!(
+        "\n{} in {}ms",
+        "Backtest completed".green().bold(),
+        duration_ms
+    );
+}
+
+fn print_portfolio_result_csv(result: &MultiAssetResult) {
+    println!(
+        "strategy,symbols,start_date,end_date,initial_capital,final_equity,total_return_pct,annual_return_pct,max_drawdown_pct,sharpe_ratio,sortino_ratio,total_trades"
+    );
+    println!(
+        "{},{},{},{},{:.2},{:.2},{:.4},{:.4},{:.4},{:.4},{:.4},{}",
+        result.strategy_name,
+        result.symbols.len(),
+        result.start_time.format("%Y-%m-%d"),
+        result.end_time.format("%Y-%m-%d"),
+        result.initial_capital,
+        result.final_equity,
+        result.total_return_pct,
+        result.annual_return_pct,
+        result.max_drawdown_pct,
+        result.sharpe_ratio,
+        result.sortino_ratio,
+        result.total_trades,
+    );
 }
 
 #[cfg(test)]

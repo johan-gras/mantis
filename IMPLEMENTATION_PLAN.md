@@ -241,25 +241,34 @@ All 3 previously failing tests now pass:
 
 ---
 
-### 10. Multi-Symbol Engine Documentation [VERIFIED - DOCUMENTATION GAP]
-**Status:** MultiAssetEngine exists (5583 lines) but needs documentation
+### 10. Multi-Symbol CLI Command [COMPLETE]
+**Status:** COMPLETE
 
-**Current state:**
-- `src/engine.rs:213` - Engine.run() processes single symbol only
-- `src/multi_asset.rs` - Complete MultiAssetEngine with:
-  - Black-Litterman (lines 2181-2582)
-  - Mean-Variance optimization (lines 1519-1958)
-  - HRP, Risk Parity, Momentum, Drift strategies
-  - Portfolio constraints (leverage, sector limits, turnover)
-- NOT integrated: MultiAssetEngine uses Portfolio directly, not Engine
-- Separate from main Engine - documentation gap only
+**Implementation details:**
+- Added `mantis portfolio` CLI command for multi-asset backtesting
+- Supports 9 portfolio allocation strategies:
+  - `equal-weight` - Equal weight allocation across all assets
+  - `momentum` - Momentum-based allocation (overweight recent winners)
+  - `inverse-vol` - Inverse volatility allocation
+  - `risk-parity` - Risk parity allocation (equal risk contribution)
+  - `min-variance` - Mean-variance optimization (minimum variance)
+  - `max-sharpe` - Mean-variance optimization (maximum Sharpe)
+  - `hrp` - Hierarchical Risk Parity
+  - `drift-equal` - Equal weight with drift-based rebalancing
+  - `drift-momentum` - Momentum with drift-based rebalancing
+- Loads multiple data files from directory using glob patterns
+- Supports portfolio constraints: max-position, max-leverage, max-turnover, min/max-holdings
+- Configurable rebalancing frequency and lookback periods
+- Output formats: text (default), JSON, CSV
+- Uses existing MultiAssetEngine infrastructure
 
-**Resolution options:**
-1. Document that MultiAssetEngine is the intended multi-symbol solution
-2. OR add multi-symbol execution path to Engine
+**CLI usage:**
+```bash
+mantis portfolio -d ./data/stocks/ -p "*.csv" --strategy risk-parity --rebalance-freq 21
+```
 
 **Dependencies:** None
-**Effort:** Small (documentation) or Medium (integration)
+**Effort:** Medium (completed)
 
 ---
 
@@ -439,7 +448,7 @@ All 3 previously failing tests now pass:
 | 7 | load_multi/load_dir | **COMPLETE** | P1 | Small | None |
 | 8 | Cost Sensitivity CLI | **COMPLETE** | P1 | Small | None |
 | 9 | Position Sizing Integration | **COMPLETE** | P1 | Medium | None |
-| 10 | Multi-Symbol Documentation | DOC GAP | P1 | Small | None |
+| 10 | Multi-Symbol CLI Command | **COMPLETE** | P1 | Medium | None |
 | 11 | Parameter Sensitivity | **COMPLETE** | P2 | Medium | None |
 | 12 | Visualization Module | **COMPLETE** | P2 | Medium | None |
 | 13 | HTML Reports | **COMPLETE** | P2 | Small | None |
@@ -491,6 +500,7 @@ All 3 previously failing tests now pass:
 | **Python Bindings (PyO3)** | **COMPLETE**: src/python/ module with mod.rs, types.rs, data.rs, backtest.rs, results.rs; pyproject.toml with maturin config; python/mantis/ wrapper with __init__.py, __init__.pyi type stubs, py.typed marker; load(), load_multi(), load_dir(), backtest(), signal_check(), validate() functions; 6 built-in strategies; compare(), sweep() helpers; BacktestResult with metrics and equity_curve; ValidationResult with is_robust(), fold_details() returning List[FoldDetail]; FoldDetail class with is_sharpe, oos_sharpe, is_return, oos_return, efficiency, is_bars, oos_bars |
 | **Visualization Module** | **COMPLETE**: src/viz.rs (~845 lines), ASCII sparklines (sparkline(), sparkline_with_config(), equity_sparkline()), strategy comparison (compare_strategies(), StrategyComparison), walk-forward visualization (walkforward_fold_chart(), walkforward_summary()), SVG heatmaps (heatmap_to_svg(), export_heatmap_svg()), ASCII heatmaps (heatmap_to_ascii()), result summaries (result_summary(), result_with_verdict()), all exported from lib.rs, 13 unit tests |
 | **Sample Data Bundling** | **COMPLETE**: load_sample(), list_samples() functions; data/samples/AAPL.csv, SPY.csv, BTC.csv (~10 years daily OHLCV 2014-2024); embedded via include_str!(); Python bindings mt.load_sample(), mt.list_samples(); type stubs; 6 unit tests |
+| **Multi-Symbol CLI Command** | **COMPLETE**: `mantis portfolio` CLI command with 9 portfolio strategies (equal-weight, momentum, inverse-vol, risk-parity, min-variance, max-sharpe, hrp, drift-equal, drift-momentum), glob pattern loading, portfolio constraints (max-position, max-leverage, max-turnover, min/max-holdings), text/JSON/CSV output |
 | Codebase Cleanliness | **VERIFIED**: No TODOs/FIXMEs in codebase |
 | ALL TESTS | **PASSING**: 558+ lib tests (0 failures) |
 
@@ -510,7 +520,7 @@ All 3 previously failing tests now pass:
 
 **Phase 2 - Integration (Week 4):**
 7. ~~Position Sizing Integration (#9)~~ - **COMPLETE**
-8. Multi-Symbol Documentation (#10) - 1 day
+8. ~~Multi-Symbol CLI Command (#10)~~ - **COMPLETE**
 
 **Phase 3 - Analysis (Week 5):**
 9. Parameter Sensitivity (#11) - 3-4 days
