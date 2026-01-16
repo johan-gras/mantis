@@ -632,25 +632,139 @@ def compare(
     """
     ...
 
+class SweepResultItem:
+    """Result of a single parameter combination in a sweep."""
+
+    @property
+    def params(self) -> Dict[str, float]:
+        """The parameter combination as a dictionary."""
+        ...
+
+    @property
+    def result(self) -> BacktestResult:
+        """The backtest result for this combination."""
+        ...
+
+
+class SweepResult:
+    """
+    Result of a parallel parameter sweep.
+
+    Provides methods for analyzing and visualizing parameter sweep results.
+    """
+
+    @property
+    def num_combinations(self) -> int:
+        """Total number of parameter combinations tested."""
+        ...
+
+    @property
+    def parallel(self) -> bool:
+        """Whether parallel execution was used."""
+        ...
+
+    def items(self) -> List[SweepResultItem]:
+        """Get all results as a list of SweepResultItem objects."""
+        ...
+
+    def to_dict(self) -> Dict[str, BacktestResult]:
+        """Get all results as a dictionary mapping param strings to BacktestResult."""
+        ...
+
+    def best(
+        self, metric: str = "sharpe", maximize: bool = True
+    ) -> Optional[SweepResultItem]:
+        """
+        Get the best result by a given metric.
+
+        Args:
+            metric: Metric to optimize ("sharpe", "sortino", "return", "calmar", "profit_factor")
+            maximize: Whether to maximize (default True) or minimize the metric
+
+        Returns:
+            The SweepResultItem with the best metric value.
+        """
+        ...
+
+    def best_params(
+        self, metric: str = "sharpe", maximize: bool = True
+    ) -> Optional[Dict[str, float]]:
+        """Get the best parameters by a given metric."""
+        ...
+
+    def sorted_by(
+        self, metric: str = "sharpe", descending: bool = True
+    ) -> List[SweepResultItem]:
+        """Get results sorted by a metric."""
+        ...
+
+    def top(self, n: int = 10, metric: str = "sharpe") -> List[SweepResultItem]:
+        """Get top N results by a metric."""
+        ...
+
+    def summary(self) -> Dict[str, Any]:
+        """Get summary statistics across all parameter combinations."""
+        ...
+
+    def plot(
+        self,
+        x_param: Optional[str] = None,
+        y_param: Optional[str] = None,
+        metric: str = "sharpe",
+    ) -> Any:
+        """
+        Plot sweep results.
+
+        In Jupyter with plotly installed, shows an interactive heatmap.
+        Otherwise, prints a summary table.
+
+        Args:
+            x_param: Parameter for X axis (auto-detected if not provided)
+            y_param: Parameter for Y axis (auto-detected if not provided)
+            metric: Metric to visualize (default "sharpe")
+
+        Returns:
+            Plotly Figure in Jupyter, None otherwise.
+        """
+        ...
+
+
 def sweep(
     data: Any,
     signal_fn: Callable[..., NDArray[np.float64]],
     params: Dict[str, List[Any]],
     n_jobs: int = -1,
+    parallel: bool = True,
     **backtest_kwargs: Any,
-) -> Dict[str, BacktestResult]:
+) -> SweepResult:
     """
     Run a parameter sweep, testing multiple parameter combinations.
+
+    Uses Rust's rayon for parallel execution across all CPU cores.
 
     Args:
         data: Data dictionary from load() or file path
         signal_fn: Function that takes params and returns a signal array
         params: Dictionary of parameter names to lists of values
-        n_jobs: Number of parallel jobs (-1 for all cores)
+        n_jobs: Number of parallel jobs (-1 for all cores). Deprecated, use `parallel`.
+        parallel: Whether to use parallel execution (default True)
         **backtest_kwargs: Additional arguments passed to backtest()
 
     Returns:
-        Dictionary with results for each parameter combination
+        SweepResult object with results for each parameter combination.
+        Use .best() to get the best result, .to_dict() for dict format.
+
+    Example:
+        >>> def generate_signal(threshold):
+        ...     return (predictions > threshold).astype(int)
+        >>>
+        >>> sweep_results = mt.sweep(
+        ...     data,
+        ...     generate_signal,
+        ...     params={"threshold": [0.1, 0.2, 0.3, 0.4, 0.5]}
+        ... )
+        >>> best = sweep_results.best()  # Get best by Sharpe
+        >>> print(best.params, best.result.sharpe)
     """
     ...
 

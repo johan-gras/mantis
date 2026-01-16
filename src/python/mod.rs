@@ -12,6 +12,7 @@ mod backtest;
 mod data;
 mod results;
 mod sensitivity;
+mod sweep;
 mod types;
 
 use pyo3::prelude::*;
@@ -47,6 +48,9 @@ fn _mantis(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(sensitivity::discrete_range, m)?)?;
     m.add_function(wrap_pyfunction!(sensitivity::centered_range, m)?)?;
 
+    // Register parallel sweep function
+    m.add_function(wrap_pyfunction!(sweep::sweep, m)?)?;
+
     // Register classes
     m.add_class::<results::PyBacktestResult>()?;
     m.add_class::<results::PyValidationResult>()?;
@@ -63,6 +67,10 @@ fn _mantis(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<sensitivity::PyPlateau>()?;
     m.add_class::<sensitivity::PyCostSensitivityResult>()?;
     m.add_class::<sensitivity::PyCostScenario>()?;
+
+    // Register sweep classes
+    m.add_class::<sweep::PySweepResult>()?;
+    m.add_class::<sweep::PySweepResultItem>()?;
 
     Ok(())
 }

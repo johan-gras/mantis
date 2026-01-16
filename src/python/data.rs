@@ -12,9 +12,8 @@ use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
 
 use crate::data::{
-    adjust_for_dividends, adjust_for_splits,
-    list_samples as rust_list_samples, load_csv, load_parquet, load_sample as rust_load_sample,
-    DataConfig,
+    adjust_for_dividends, adjust_for_splits, list_samples as rust_list_samples, load_csv,
+    load_parquet, load_sample as rust_load_sample, DataConfig,
 };
 use crate::types::{Bar, CorporateAction, CorporateActionType, DividendAdjustMethod, DividendType};
 
@@ -557,9 +556,7 @@ fn parse_dividends(dividends_list: &Bound<'_, PyList>) -> PyResult<Vec<Corporate
         // Parse amount
         let amount: f64 = dict
             .get_item("amount")?
-            .ok_or_else(|| {
-                pyo3::exceptions::PyKeyError::new_err("Dividend missing 'amount' key")
-            })?
+            .ok_or_else(|| pyo3::exceptions::PyKeyError::new_err("Dividend missing 'amount' key"))?
             .extract()?;
 
         if amount <= 0.0 {
@@ -610,13 +607,9 @@ fn parse_date_from_dict(
 
     // Try as integer (Unix timestamp)
     if let Ok(ts) = value.extract::<i64>() {
-        return chrono::Utc
-            .timestamp_opt(ts, 0)
-            .single()
-            .ok_or_else(|| pyo3::exceptions::PyValueError::new_err(format!(
-                "Invalid Unix timestamp: {}",
-                ts
-            )));
+        return chrono::Utc.timestamp_opt(ts, 0).single().ok_or_else(|| {
+            pyo3::exceptions::PyValueError::new_err(format!("Invalid Unix timestamp: {}", ts))
+        });
     }
 
     // Try as string (ISO date or date string)
@@ -628,14 +621,12 @@ fn parse_date_from_dict(
 
         // Try simple date format (YYYY-MM-DD)
         if let Ok(naive_date) = chrono::NaiveDate::parse_from_str(&date_str, "%Y-%m-%d") {
-            return Ok(chrono::Utc
-                .from_utc_datetime(&naive_date.and_hms_opt(0, 0, 0).unwrap()));
+            return Ok(chrono::Utc.from_utc_datetime(&naive_date.and_hms_opt(0, 0, 0).unwrap()));
         }
 
         // Try US date format (MM/DD/YYYY)
         if let Ok(naive_date) = chrono::NaiveDate::parse_from_str(&date_str, "%m/%d/%Y") {
-            return Ok(chrono::Utc
-                .from_utc_datetime(&naive_date.and_hms_opt(0, 0, 0).unwrap()));
+            return Ok(chrono::Utc.from_utc_datetime(&naive_date.and_hms_opt(0, 0, 0).unwrap()));
         }
 
         return Err(pyo3::exceptions::PyValueError::new_err(format!(

@@ -102,7 +102,10 @@ fn parse_stop_loss(py: Python<'_>, obj: &PyObject) -> PyResult<Option<StopSpec>>
         // Check for trailing format: "5%trailing", "trailing5%", "trail5"
         if s_lower.contains("trail") {
             // Extract numeric part
-            let num_str: String = s_lower.chars().filter(|c| c.is_ascii_digit() || *c == '.').collect();
+            let num_str: String = s_lower
+                .chars()
+                .filter(|c| c.is_ascii_digit() || *c == '.')
+                .collect();
             if !num_str.is_empty() {
                 let pct: f64 = num_str.parse().map_err(|_| {
                     pyo3::exceptions::PyValueError::new_err(format!(
@@ -165,7 +168,10 @@ fn parse_take_profit(py: Python<'_>, obj: &PyObject) -> PyResult<Option<TakeProf
         // Check for risk-reward format: "2rr", "2:1", "2R"
         if s_lower.ends_with("rr") || s_lower.ends_with('r') || s_lower.contains(':') {
             // Extract numeric part
-            let num_str: String = s_lower.chars().filter(|c| c.is_ascii_digit() || *c == '.').collect();
+            let num_str: String = s_lower
+                .chars()
+                .filter(|c| c.is_ascii_digit() || *c == '.')
+                .collect();
             if !num_str.is_empty() {
                 let ratio: f64 = num_str.parse().map_err(|_| {
                     pyo3::exceptions::PyValueError::new_err(format!(

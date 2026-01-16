@@ -58,6 +58,10 @@ from mantis._mantis import (
     Plateau,
     CostSensitivityResult as _CostSensitivityResult,
     CostScenario,
+    # Parallel sweep
+    sweep as _sweep_raw,
+    SweepResult as _SweepResult,
+    SweepResultItem,
 )
 
 
@@ -813,20 +817,25 @@ def sweep(
     signal_fn: callable,
     params: Dict[str, List[Any]],
     n_jobs: int = -1,
+    parallel: bool = True,
     **backtest_kwargs,
-) -> Dict[str, Any]:
+) -> "SweepResult":
     """
     Run a parameter sweep, testing multiple parameter combinations.
+
+    Uses Rust's rayon for parallel execution across all CPU cores.
 
     Args:
         data: Data dictionary from load() or file path
         signal_fn: Function that takes params and returns a signal array
         params: Dictionary of parameter names to lists of values to test
-        n_jobs: Number of parallel jobs (-1 for all cores)
+        n_jobs: Number of parallel jobs (-1 for all cores). Deprecated, use `parallel` instead.
+        parallel: Whether to use parallel execution (default True)
         **backtest_kwargs: Additional arguments passed to backtest()
 
     Returns:
-        Dictionary with results for each parameter combination
+        SweepResult object with results for each parameter combination.
+        Use .best() to get the best result, .to_dict() for dict format.
 
     Example:
         >>> def generate_signal(threshold):
@@ -837,31 +846,69 @@ def sweep(
         ...     generate_signal,
         ...     params={"threshold": [0.1, 0.2, 0.3, 0.4, 0.5]}
         ... )
-        >>> best = max(sweep_results.items(), key=lambda x: x[1].sharpe)
+        >>> best = sweep_results.best()  # Get best by Sharpe
+        >>> print(best.params, best.result.sharpe)
     """
     from itertools import product
 
-    # Generate all parameter combinations
+    # Generate all parameter combinations and pre-compute signals
     param_names = list(params.keys())
     param_values = list(params.values())
     combinations = list(product(*param_values))
 
-    results = {}
+    # Pre-compute all signals in Python (signal_fn can't be called from Rust)
+    signals_list = []
     for combo in combinations:
-        param_dict = dict(zip(param_names, combo))
-        param_key = str(param_dict)
+        param_dict = dict(zip(param_names, (float(v) for v in combo)))
 
         # Generate signal with these parameters
         if len(param_names) == 1:
             signal = signal_fn(combo[0])
         else:
-            signal = signal_fn(**param_dict)
+            signal = signal_fn(**dict(zip(param_names, combo)))
 
-        # Run backtest
-        result = backtest(data, signal, **backtest_kwargs)
-        results[param_key] = result
+        # Convert to numpy array and then to list for Rust
+        if hasattr(signal, 'tolist'):
+            signal = signal.tolist()
+        elif hasattr(signal, 'to_list'):
+            signal = signal.to_list()
 
-    return results
+        signals_list.append((param_dict, signal))
+
+    # Determine parallelism - use parallel flag, n_jobs is for backwards compat
+    use_parallel = parallel and (n_jobs != 0)
+
+    # Extract backtest config from kwargs
+    commission = backtest_kwargs.pop('commission', 0.001)
+    slippage = backtest_kwargs.pop('slippage', 0.001)
+    size = backtest_kwargs.pop('size', 0.10)
+    cash = backtest_kwargs.pop('cash', 100_000.0)
+    stop_loss = backtest_kwargs.pop('stop_loss', None)
+    take_profit = backtest_kwargs.pop('take_profit', None)
+    allow_short = backtest_kwargs.pop('allow_short', True)
+    borrow_cost = backtest_kwargs.pop('borrow_cost', 0.03)
+    max_position = backtest_kwargs.pop('max_position', 1.0)
+    fill_price = backtest_kwargs.pop('fill_price', 'next_open')
+
+    # Call the Rust parallel sweep function
+    rust_result = _sweep_raw(
+        data,
+        signals_list,
+        parallel=use_parallel,
+        commission=commission,
+        slippage=slippage,
+        size=size,
+        cash=cash,
+        stop_loss=stop_loss,
+        take_profit=take_profit,
+        allow_short=allow_short,
+        borrow_cost=borrow_cost,
+        max_position=max_position,
+        fill_price=fill_price,
+    )
+
+    # Wrap in Python SweepResult for enhanced functionality
+    return SweepResult(rust_result)
 
 
 def _format_comparison_table(comparison: Dict[str, Dict[str, Any]]) -> str:
@@ -880,6 +927,200 @@ def _format_comparison_table(comparison: Dict[str, Dict[str, Any]]) -> str:
         lines.append(line)
 
     return "\n".join(lines)
+
+
+class SweepResult:
+    """
+    Result of a parallel parameter sweep.
+
+    Wraps the Rust SweepResult with additional Python functionality
+    including Plotly visualization support in Jupyter.
+
+    Attributes:
+        num_combinations: Total number of parameter combinations tested
+        parallel: Whether parallel execution was used
+
+    Example:
+        >>> results = mt.sweep(data, signal_fn, params={"threshold": [0.1, 0.2, 0.3]})
+        >>> best = results.best()  # Get best by Sharpe
+        >>> print(best.params, best.result.sharpe)
+        >>> results.plot()  # Interactive heatmap in Jupyter
+    """
+
+    def __init__(self, rust_result: _SweepResult):
+        """Initialize from a Rust SweepResult."""
+        self._inner = rust_result
+
+    @property
+    def num_combinations(self) -> int:
+        """Total number of parameter combinations tested."""
+        return self._inner.num_combinations
+
+    @property
+    def parallel(self) -> bool:
+        """Whether parallel execution was used."""
+        return self._inner.parallel
+
+    def items(self) -> List[SweepResultItem]:
+        """Get all results as a list of SweepResultItem objects."""
+        return self._inner.items()
+
+    def to_dict(self) -> Dict[str, "BacktestResult"]:
+        """Get all results as a dictionary mapping param strings to BacktestResult."""
+        result = self._inner.to_dict()
+        # Wrap results in BacktestResult class
+        return {k: BacktestResult(v) if hasattr(v, 'sharpe') else v for k, v in result.items()}
+
+    def best(self, metric: str = "sharpe", maximize: bool = True) -> Optional[SweepResultItem]:
+        """
+        Get the best result by a given metric.
+
+        Args:
+            metric: Metric to optimize ("sharpe", "sortino", "return", "calmar", "profit_factor")
+            maximize: Whether to maximize (default True) or minimize the metric
+
+        Returns:
+            The SweepResultItem with the best metric value, or None if empty.
+        """
+        return self._inner.best(metric, maximize)
+
+    def best_params(self, metric: str = "sharpe", maximize: bool = True) -> Optional[Dict[str, float]]:
+        """
+        Get the best parameters by a given metric.
+
+        Args:
+            metric: Metric to optimize
+            maximize: Whether to maximize or minimize
+
+        Returns:
+            Dictionary of parameter values for the best combination.
+        """
+        return self._inner.best_params(metric, maximize)
+
+    def sorted_by(self, metric: str = "sharpe", descending: bool = True) -> List[SweepResultItem]:
+        """Get results sorted by a metric."""
+        return self._inner.sorted_by(metric, descending)
+
+    def top(self, n: int = 10, metric: str = "sharpe") -> List[SweepResultItem]:
+        """Get top N results by a metric."""
+        return self._inner.top(n, metric)
+
+    def summary(self) -> Dict[str, Any]:
+        """Get summary statistics across all parameter combinations."""
+        return self._inner.summary()
+
+    def plot(self, x_param: Optional[str] = None, y_param: Optional[str] = None, metric: str = "sharpe"):
+        """
+        Plot sweep results.
+
+        In Jupyter with plotly installed, shows an interactive heatmap.
+        Otherwise, prints a summary table.
+
+        Args:
+            x_param: Parameter for X axis (auto-detected if not provided)
+            y_param: Parameter for Y axis (auto-detected if not provided)
+            metric: Metric to visualize (default "sharpe")
+
+        Returns:
+            Plotly Figure in Jupyter, None otherwise.
+        """
+        if _is_jupyter() and _has_plotly():
+            return self._plot_plotly(x_param, y_param, metric)
+        else:
+            # ASCII fallback - print summary
+            summary = self.summary()
+            best = self.best(metric)
+            print(f"Sweep Results: {summary['num_combinations']} combinations")
+            print(f"  Parallel: {summary['parallel']}")
+            print(f"  Sharpe range: {summary['sharpe_min']:.2f} to {summary['sharpe_max']:.2f}")
+            print(f"  Return range: {summary['return_min']*100:.1f}% to {summary['return_max']*100:.1f}%")
+            if best:
+                print(f"  Best params: {best.params}")
+                print(f"  Best sharpe: {best.result.sharpe:.4f}")
+            return None
+
+    def _plot_plotly(self, x_param: Optional[str], y_param: Optional[str], metric: str):
+        """Create interactive Plotly visualization."""
+        import plotly.graph_objects as go
+
+        items = self.items()
+        if not items:
+            return None
+
+        # Extract parameter names
+        param_names = list(items[0].params.keys())
+
+        if len(param_names) == 1:
+            # 1D plot - line chart
+            x_param = param_names[0]
+            x_vals = [item.params[x_param] for item in items]
+            y_vals = [getattr(item.result, metric, item.result.sharpe) for item in items]
+
+            fig = go.Figure(data=go.Scatter(x=x_vals, y=y_vals, mode='lines+markers'))
+            fig.update_layout(
+                title=f"Parameter Sweep: {metric.title()} vs {x_param}",
+                xaxis_title=x_param,
+                yaxis_title=metric.title(),
+            )
+            return fig
+
+        elif len(param_names) >= 2:
+            # 2D plot - heatmap
+            if x_param is None:
+                x_param = param_names[0]
+            if y_param is None:
+                y_param = param_names[1]
+
+            # Get unique values for each param
+            x_vals = sorted(set(item.params[x_param] for item in items))
+            y_vals = sorted(set(item.params[y_param] for item in items))
+
+            # Build heatmap matrix
+            z_matrix = [[None for _ in x_vals] for _ in y_vals]
+            for item in items:
+                try:
+                    xi = x_vals.index(item.params[x_param])
+                    yi = y_vals.index(item.params[y_param])
+                    z_matrix[yi][xi] = getattr(item.result, metric, item.result.sharpe)
+                except (ValueError, AttributeError):
+                    pass
+
+            fig = go.Figure(data=go.Heatmap(
+                z=z_matrix,
+                x=[str(v) for v in x_vals],
+                y=[str(v) for v in y_vals],
+                colorscale='RdYlGn',
+                colorbar=dict(title=metric.title()),
+            ))
+            fig.update_layout(
+                title=f"Parameter Sweep: {metric.title()}",
+                xaxis_title=x_param,
+                yaxis_title=y_param,
+            )
+            return fig
+
+        return None
+
+    def __len__(self) -> int:
+        return self.num_combinations
+
+    def __repr__(self) -> str:
+        return repr(self._inner)
+
+    def _repr_html_(self) -> str:
+        """Rich display for Jupyter notebooks."""
+        summary = self.summary()
+        best = self.best()
+        best_info = f"Best Sharpe: {best.result.sharpe:.4f}" if best else "No results"
+        return f"""
+        <div style="font-family: monospace;">
+            <strong>SweepResult</strong><br>
+            Combinations: {summary['num_combinations']}<br>
+            Parallel: {summary['parallel']}<br>
+            Sharpe range: {summary['sharpe_min']:.2f} - {summary['sharpe_max']:.2f}<br>
+            {best_info}
+        </div>
+        """
 
 
 class Backtest:

@@ -740,22 +740,28 @@ result.plot()  # Interactive Plotly in Jupyter
 
 ---
 
-### 23. Parallel Parameter Sweep [NOT IMPLEMENTED]
-**Status:** DOCUMENTED BUT NON-FUNCTIONAL
+### 23. Parallel Parameter Sweep [COMPLETE]
+**Status:** COMPLETE
 **Priority:** P3
 
-**Issue:** The `n_jobs` parameter in `mt.sweep()` is accepted but ignored. Sweeps run sequentially.
+**Implementation details:**
+- Created `src/python/sweep.rs` module (~400 lines) with rayon-based parallel execution
+- `PySweepResult` class with `best()`, `sorted_by()`, `top()`, `summary()`, `plot()` methods
+- `PySweepResultItem` class for individual param/result pairs
+- Signals are pre-computed in Python (since signal_fn can't be called from Rust)
+- Rust parallel loop runs backtests using rayon's `par_iter()` with GIL released
+- Python `SweepResult` wrapper class with Plotly visualization support in Jupyter
+- Updated type stubs in `__init__.pyi`
+- Function signature updated: `parallel=True` parameter (`n_jobs` kept for backwards compat but deprecated)
 
-**Specification requires:**
-- "1000 parameter combinations: < 30 seconds (parallel via rayon)"
-- `n_jobs=-1` should use all cores
+**Files created/modified:**
+- `src/python/sweep.rs` (new)
+- `src/python/mod.rs` (added sweep module and functions)
+- `python/mantis/__init__.py` (updated sweep function, added SweepResult class)
+- `python/mantis/__init__.pyi` (added type stubs)
 
-**Current implementation:**
-- Pure Python sequential loop in `__init__.py` lines 746-799
-- No rayon integration for sweep
-
-**Effort:** Medium (2-3 days)
-**Dependencies:** None (could add rayon-based sweep in Rust or use Python multiprocessing)
+**Effort:** Medium (completed)
+**Dependencies:** None
 
 ---
 
@@ -790,7 +796,7 @@ result.plot()  # Interactive Plotly in Jupyter
 | 20 | Python Benchmark Comparison | **COMPLETE** | P2 | Small | None |
 | 21 | Python Split/Dividend Adjustment | **COMPLETE** | P2 | Small | None |
 | 22 | ATR-Based Stop-Loss in Python | **COMPLETE** | P2 | Small | None |
-| 23 | Parallel Parameter Sweep | NOT FUNCTIONAL | P3 | Medium | None |
+| 23 | Parallel Parameter Sweep | **COMPLETE** | P3 | Medium | None |
 
 ---
 
@@ -844,6 +850,7 @@ result.plot()  # Interactive Plotly in Jupyter
 | **Frequency Auto-Detection** | **COMPLETE**: DataFrequency enum with 14 variants (Second1-Month); detect() analyzes timestamp gaps; annualization_factor(trading_hours_24) for traditional (252 days) or 24/7 (365 days) markets; is_likely_crypto() heuristic; BacktestConfig.data_frequency and .trading_hours_24 overrides; Engine auto-detects frequency for Sharpe/Sortino; 13 unit tests |
 | **Python Split/Dividend Adjustment** | **COMPLETE**: mt.adjust() function with splits (date, ratio, reverse) and dividends (date, amount, type) parameters; method options (proportional, absolute, none); parse_splits(), parse_dividends(), parse_date_from_dict() helpers; type stubs; Files: src/python/data.rs, src/python/mod.rs, python/mantis/__init__.py, python/mantis/__init__.pyi |
 | **ATR-Based Stop-Loss/Take-Profit** | **COMPLETE**: stop_loss and take_profit accept float or string; ATR syntax ("2atr"), trailing ("5trail"), risk-reward ("2rr"); StopSpec, TakeProfitSpec enums; parse_stop_loss(), parse_take_profit() helpers; 14-period ATR auto-calculated; works with backtest() and Backtest fluent API; type stubs updated; Files: src/python/backtest.rs, python/mantis/__init__.py, python/mantis/__init__.pyi |
+| **Parallel Parameter Sweep** | **COMPLETE**: src/python/sweep.rs (~400 lines) with rayon-based parallel execution; PySweepResult class with best(), sorted_by(), top(), summary(), plot() methods; PySweepResultItem for individual param/result pairs; signals pre-computed in Python (signal_fn not callable from Rust); Rust parallel loop using rayon par_iter() with GIL released; Python SweepResult wrapper with Plotly visualization in Jupyter; parallel=True parameter (n_jobs deprecated); Files: src/python/sweep.rs (new), src/python/mod.rs, python/mantis/__init__.py, python/mantis/__init__.pyi |
 | Codebase Cleanliness | **VERIFIED**: No TODOs/FIXMEs in codebase |
 | ALL TESTS | **PASSING**: 571 lib tests (0 failures) |
 | Python Bindings Build | **VERIFIED**: `cargo check --features python` compiles successfully (API drift fix 2026-01-16) |
