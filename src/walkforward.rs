@@ -31,9 +31,9 @@ pub struct WalkForwardConfig {
 impl Default for WalkForwardConfig {
     fn default() -> Self {
         Self {
-            num_windows: 5,
-            in_sample_ratio: 0.7,
-            anchored: false,
+            num_windows: 12,
+            in_sample_ratio: 0.75,
+            anchored: true,
             min_bars_per_window: 50,
         }
     }

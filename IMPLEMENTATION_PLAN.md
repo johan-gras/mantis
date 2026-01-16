@@ -14,43 +14,96 @@ The Mantis backtesting framework has a solid core implementation with excellent 
 - Monte Carlo simulation with confidence intervals
 - Walk-forward analysis with OOS degradation metrics
 - CPCV (Combinatorial Purged Cross-Validation)
-- Multi-asset portfolio optimization (Black-Litterman, Mean-Variance)
+- Multi-asset portfolio optimization (Black-Litterman, Mean-Variance, HRP, Risk Parity)
 - Options pricing (Black-Scholes, Binomial, Greeks)
 - Regime detection (trend, volatility, volume)
 - Streaming indicators for real-time applications
 - Feature extraction for ML (40+ features, sequence building)
 - Experiment tracking with SQLite
-- Comprehensive CLI with 10+ commands
+- Comprehensive CLI with 11 commands
 - Export formats: CSV, JSON, Parquet, NPY, Markdown
 - Performance benchmarks (9 benchmark groups in benches/backtest_bench.rs)
 
-**Critical Issues Discovered:**
-- 9 statistical tests broken in analytics.rs (**fixed 2026-01-16**)
-- Multi-symbol backtesting not integrated with main Engine
-- Monthly returns use synthetic uniform distribution instead of actual aggregation
+**Critical Issues Discovered (Verified 2026-01-16):**
+- **LOOKAHEAD BUG (CONFIRMED)**: Orders fill on bar[i].open when strategy sees bar[i].close
+- Python bindings (PyO3) completely missing
 
-**Total Effort Estimate:** 8-12 weeks for full completion
+**Items Verified as CORRECT:**
+- Config defaults: slippage (0.1%), commission (0.1%), position_size (10%)
+- Limit order fill logic in portfolio.rs
+- DSR/PSR implementation in analytics.rs
+- Black-Litterman & Mean-Variance optimization fully implemented
+- Walk-forward OOS degradation calculation correct
+- Statistical tests (ADF, autocorrelation, Ljung-Box) - fixed in commit 0b67bff
+- Walk-forward defaults (num_windows=12, in_sample_ratio=0.75, anchored=true)
+
+---
+
+## Test Status Summary
+
+**Last Run:** 2026-01-16
+- **Passed:** 515 tests (470 unit + 5 main + 28 integration + 12 doc tests)
+- **Failed:** 0 tests
+- **Ignored:** 0 tests
 
 ---
 
 ## P0 - Critical (Blocking Core Functionality)
 
-### 1. Statistical Tests Fix [COMPLETED - 2026-01-16]
-**Summary:** All nine failing statistical tests in `analytics.rs` now pass (`cargo test analytics::tests::`).
-Implemented adaptive lag selection for the ADF test (fall back when regression matrix is singular),
-centered Durbin-Watson residuals to catch constant-series edge cases, and replaced fragile
-`sin()`/integer-based pseudo-random data in the Jarque-Bera/Ljung-Box/autocorrelation tests with
-seeded `StdRng` noise to avoid integer overflow and obtain realistic p-values. As a result, the
-statistical validation toolkit matches the specs for normality, autocorrelation, and stationarity.
+### 1. Lookahead Bias in Order Execution [CONFIRMED - CRITICAL]
+**Status:** VERIFIED via deep Opus code analysis
 
-**Next steps:** None — this item is closed.
+**Current behavior (engine.rs:306-435):**
+```rust
+for i in 0..bars.len() {
+    let bar = &bars[i];           // bar[i] with full OHLCV
+    let ctx = StrategyContext { bar_index: i, bars: &bars, ... };
+    let signal = strategy.on_bar(&ctx);  // Strategy sees bar[i].close
+    portfolio.execute_with_fill_probability(&order, bar, ...)  // Fills at bar[i].open
+}
+```
+
+**Problem:** Strategy can see bar[i].close and execute at bar[i].open (lookahead).
+
+**Spec requirement:** Signals generated from bar[i] should fill at bar[i+1].open.
+
+**Evidence chain:**
+- `engine.rs:307` - `bar = &bars[i]`
+- `engine.rs:390-392` - Strategy context gets `bar_index: i` and `bars: &bars`
+- `strategy.rs:30-31` - `current_bar()` returns `bars[bar_index]` (bar[i] with full OHLCV)
+- `engine.rs:430` - `signal = strategy.on_bar(&ctx)` - strategy sees bar[i].close
+- `engine.rs:432-434` - `execute_with_fill_probability(&order, bar, ...)` - passes bar[i]
+- `portfolio.rs:667-669` - Default fills at `bar.open`
+
+**Fix approaches:**
+1. **Order buffering**: Store orders from bar[i], execute at bar[i+1]
+2. **Data offset**: Strategy at step i sees bar[i-1].close, executes at bar[i].open
+
+**Files affected:**
+- `src/engine.rs` - Main execution loop (lines 306-435)
+- `src/portfolio.rs` - market_execution_price() (lines 667-689)
+
+**Dependencies:** None
+**Effort:** Medium (2-3 days) - architectural change
 
 ---
 
-### 2. Python Bindings (PyO3) [MISSING]
-**Description:** Specs require `pip install mantis` with native Python integration, pandas/polars DataFrame support via Arrow, and type stubs for IDE autocomplete.
+### 2. Python Bindings (PyO3) [MISSING - VERIFIED]
+**Status:** Not implemented - CLI subprocess model used instead
 
-**Current state:** Only subprocess-based CLI integration exists in `python/mantis_bt/`.
+**Current state:**
+- No PyO3 dependency in Cargo.toml
+- No src/python/ directory
+- No maturin configuration
+- No .pyi type stub files
+- Only subprocess-based CLI integration (see examples/pytorch_integration.py)
+
+**Spec requirements:**
+- `pip install mantis` with native Python integration
+- pandas/polars DataFrame support via Arrow
+- Type stubs for IDE autocomplete
+- Results display in Jupyter notebooks
+- `results.plot()` works inline in Jupyter
 
 **Files to create/modify:**
 - `src/python/mod.rs` - PyO3 module wiring
@@ -62,356 +115,315 @@ statistical validation toolkit matches the specs for normality, autocorrelation,
 - `Cargo.toml` - Add pyo3, arrow2 dependencies
 
 **Dependencies:** None (foundational)
-
 **Effort:** Large (2-3 weeks)
 
 ---
 
-### 3. ONNX Module Re-enablement [PARTIAL]
-**Description:** Complete infrastructure exists (524 lines in `src/onnx.rs`) but disabled due to `ort` crate instability (v2.0 in RC, v1.x packages yanked).
+### 3. ONNX Module Re-enablement [PARTIAL - VERIFIED]
+**Status:** Complete infrastructure exists (524 lines), but disabled
 
-**Current state:** Commented out in `src/lib.rs:113` and `Cargo.toml:48-51`.
+**Current state:**
+- `src/lib.rs:113-115` - Module commented out with TODO
+- `Cargo.toml` - ort and ndarray dependencies commented out
+- `src/onnx.rs` - Full implementation with CUDA support, batch inference
 
-**Files affected:**
-- `src/lib.rs` - Uncomment `mod onnx` declaration
-- `Cargo.toml` - Uncomment ort dependency
-- `src/onnx.rs` - May need API updates for ort v2.0
+**Blocking issue:** `ort` crate instability (v2.0 API in flux, v1.x yanked)
 
-**Action:** Monitor `ort` crate releases. Re-enable when v2.0 stabilizes or alternative emerges.
+**Action:** Monitor `ort` crate releases. Re-enable when v2.0 stabilizes.
 
 **Dependencies:** External (ort crate stability)
-
 **Effort:** Small once unblocked
 
 ---
 
-### 4. Helpful Error Messages [MISSING]
-**Description:** Specs require errors with "Common causes" and "Quick fix" guidance. Missing error variants: `SignalShapeMismatch`, `LookaheadError`, `InvalidSignalError`.
+### 4. Helpful Error Messages [MISSING - VERIFIED]
+**Status:** Only basic error types exist (16 variants in 59 lines)
 
-**Current state:** Errors in `src/error.rs` are minimal strings without user guidance.
+**Current state (src/error.rs):**
+- NO `SignalShapeMismatch` error
+- NO `LookaheadError` error
+- NO `InvalidSignalError` error
+- NO "Common causes" or "Quick fix" guidance anywhere
 
-**Files affected:**
-- `src/error.rs` - Add new error types with structured help
-- `src/validation.rs` - Signal validation with helpful errors
-- `src/backtest.rs` - Lookahead detection
-
-**Example target:**
+**Spec requirements:**
 ```
 SignalShapeMismatch: Signal has 250 rows but data has 252 rows
   Common causes: Weekend/holiday filtering mismatch, date alignment
-  Quick fix: Use `mt.align(signal, data)` to match indices
+  Quick fix: Use `signal.reindex(data.index, fill_value=0)` to match indices
 ```
 
-**Dependencies:** None
+**Files affected:**
+- `src/error.rs` - Add new error types with structured help
+- `src/validation.rs` (new) - Signal validation with helpful errors
 
+**Dependencies:** None
 **Effort:** Medium (3-5 days)
 
 ---
 
 ## P1 - High Priority (Significant Feature Gaps)
 
-### 5. Multi-Symbol Backtesting Integration [NEW]
-**Description:** Engine only supports single-symbol per run. Spec requires dict of DataFrames with portfolio-level metrics.
+### 5. Monthly Returns Synthetic [VERIFIED]
+**Status:** Uses synthetic uniform distribution
 
-**Current state:** `engine.rs:213` processes single symbol. `multi_asset.rs` exists but not integrated with main Engine.
+**Current implementation (src/analytics.rs:924-933):**
+```rust
+fn monthly_returns(result: &BacktestResult) -> Vec<f64> {
+    let months = (result.end_time - result.start_time).num_days() / 30;
+    let monthly_return = result.total_return_pct / months as f64;
+    vec![monthly_return; months as usize]  // All values identical!
+}
+```
 
-**Files affected:**
-- `src/engine.rs` - Add multi-symbol execution path
-- `src/multi_asset.rs` - Integration with Engine
-- `src/results.rs` - Portfolio-level aggregation
+**Problem:** Returns same value for all months instead of actual calendar-month aggregation.
 
-**Dependencies:** None
-
-**Effort:** Medium (3-5 days)
-
----
-
-### 6. Monthly Returns Synthetic [NEW]
-**Description:** Monthly returns use synthetic uniform distribution instead of actual calendar-month aggregation.
-
-**Current state:** `analytics.rs:924-933` uses `vec![monthly_return; months as usize]` which creates uniform distribution.
-
-**Files affected:**
-- `src/analytics.rs` - Replace synthetic with actual calendar-month aggregation
-
-**Implementation notes:**
-- Group returns by calendar month
-- Handle partial months at start/end
-- Maintain proper date alignment
+**Fix:** Group equity curve returns by actual calendar month.
 
 **Dependencies:** None
-
 **Effort:** Small (1 day)
 
 ---
 
-### 7. Auto-Warnings for Suspicious Metrics [MISSING]
-**Description:** Spec requires warnings when Sharpe > 3, Win rate > 80%, trades < 30.
+### 6. Auto-Warnings for Suspicious Metrics [MISSING - VERIFIED]
+**Status:** No warning system exists
 
-**Current state:** No `check_suspicious_metrics()` function exists.
+**Spec requirements:**
+| Metric | Threshold | Warning |
+|--------|-----------|---------|
+| Sharpe | > 3 | "Verify data and execution" |
+| Win rate | > 80% | "Check for lookahead bias" |
+| Max drawdown | < 5% | "Verify execution logic" |
+| Trades | < 30 | "Limited statistical significance" |
+| OOS/IS | < 0.60 | "Likely overfit" |
 
 **Files affected:**
 - `src/analytics.rs` - Add `check_suspicious_metrics()` function
-- `src/validation.rs` - Integrate warnings into validation workflow
-- `src/cli/backtest.rs` - Display warnings in CLI output
+- `src/cli.rs` - Display warnings in CLI output
 
 **Dependencies:** None
-
 **Effort:** Small (1-2 days)
 
 ---
 
-### 8. Walk-Forward Default Folds [PARTIAL]
-**Description:** Spec requires 12 folds by default; current default is 5.
+### 7. Rolling Metrics [MISSING - VERIFIED]
+**Status:** Not implemented
 
-**Current state:** `src/walkforward.rs:34` - `n_folds: usize = 5`
+**Spec requirements:**
+- `rolling_sharpe(window=252)` - Rolling Sharpe ratio
+- `rolling_drawdown()` - Rolling drawdown series
 
-**Files affected:**
-- `src/walkforward.rs` - Change default from 5 to 12
-
-**Dependencies:** None
-
-**Effort:** Trivial (config change)
-
----
-
-### 9. Rolling Metrics [MISSING]
-**Description:** Specs require `rolling_sharpe(window)`, `rolling_drawdown()` functions.
-
-**Current state:** No rolling window calculations in `src/analytics.rs`.
+**Current state:** Only aggregate full-period metrics calculated.
 
 **Files affected:**
 - `src/analytics.rs` - Add rolling metric functions
-- `src/results.rs` - Expose rolling metrics in results struct
-
-**Implementation notes:**
-- Rolling Sharpe: window-based mean/std of returns
-- Rolling drawdown: track peak within window
 
 **Dependencies:** None
-
 **Effort:** Medium (2-3 days)
 
 ---
 
-### 10. Short Borrow Costs [MISSING]
-**Description:** Only margin interest charged for shorts. Missing: stock borrow fees, locate requirements, rebates.
+### 8. Short Borrow Costs [PARTIAL - VERIFIED]
+**Status:** Only margin interest exists (no dedicated borrow fees)
 
-**Current state:** `src/portfolio.rs` (CostModel struct) handles commissions, slippage, margin interest but not borrow costs.
+**Current state (src/portfolio.rs:755-768):**
+- Margin interest charged on negative cash balance (3% default)
+- NO dedicated stock borrow fees
+- NO locate fee fields
+- NO hard-to-borrow list support
+
+**Spec requirement:** Short positions should incur borrow costs (typically 5-50+ bps annually).
 
 **Files affected:**
-- `src/portfolio.rs` - Add `BorrowCost` struct with fee schedules to CostModel
-- `src/portfolio.rs` - Apply borrow costs to short positions
+- `src/portfolio.rs` - Add `BorrowCost` struct to CostModel
 - `src/config.rs` - Add borrow cost configuration
 
-**Implementation notes:**
-- Hard-to-borrow list with elevated fees
-- Daily accrual based on short notional
-- Rebate rates for cash collateral
-
 **Dependencies:** None
-
 **Effort:** Medium (2-3 days)
 
 ---
 
-### 11. load_multi / load_dir Functions [MISSING]
-**Description:** Spec requires bulk directory loading with glob patterns.
+### 9. load_multi / load_dir Functions [MISSING - VERIFIED]
+**Status:** Not implemented
 
-**Current state:** Only individual file loading; `DataManager` requires manual symbol-by-symbol API.
-
-**Files affected:**
-- `src/data.rs` - Add `load_dir()`, `load_multi()` functions
-- `src/data.rs` - Add glob pattern support
-
-**Example target:**
+**Spec requirements:**
 ```rust
-let data = load_dir("data/prices/*.parquet")?;
-let data = load_multi(&["AAPL", "MSFT", "GOOGL"], "data/")?;
+let data = mt.load_dir("data/prices/*.parquet")?;
+let data = mt.load_multi(&["AAPL", "MSFT", "GOOGL"], "data/")?;
+let sample = mt.load_sample("AAPL")?;  // Works offline
 ```
 
-**Dependencies:** None
+**Current state (src/data.rs):**
+- `load_csv()` exists (line 119)
+- `load_parquet()` exists (line 226)
+- `load_data()` exists (line 572, auto-detect format)
+- `align_series()` exists (line 1508, multi-symbol alignment)
+- NO `load_multi()`, `load_dir()`, `load_sample()` functions
+- NO glob pattern support
 
+**Files affected:**
+- `src/data.rs` - Add bulk loading functions
+
+**Dependencies:** None
 **Effort:** Small (1-2 days)
 
 ---
 
-### 12. Cost Sensitivity Integration [PARTIAL]
-**Description:** Module complete (`src/cost_sensitivity.rs`) but standalone; not integrated into validation workflow.
+### 10. Cost Sensitivity CLI Command [PARTIAL - VERIFIED]
+**Status:** Module complete (724 lines), CLI command missing
 
-**Current state:** Works independently via CLI but not accessible as `validation.cost_sensitivity`.
+**Current state:**
+- `src/cost_sensitivity.rs` - Full implementation with 1x/2x/5x/10x multipliers
+- `src/cli.rs` - NO dedicated cost-sensitivity command
 
 **Files affected:**
-- `src/validation.rs` - Add cost sensitivity to ValidationResult
-- `src/cli/validate.rs` - Include in validation output
+- `src/cli.rs` - Add `CostSensitivity` command variant
 
 **Dependencies:** None
-
 **Effort:** Small (1 day)
+
+---
+
+### 11. Position Sizing Integration [PARTIAL - VERIFIED]
+**Status:** Utilities exist but not integrated into Engine
+
+**Current state:**
+- `src/engine.rs:527-549` - Only percent-of-equity sizing implemented
+- `src/risk.rs:273-331` - PositionSizer utilities exist but NOT called:
+  - `size_by_risk()` (line 273)
+  - `size_by_volatility()` (line 284)
+  - `size_by_kelly()` (line 302)
+- NO FixedDollar sizing
+- NO signal-scaled sizing
+
+**Files affected:**
+- `src/engine.rs` - Integrate PositionSizer into `signal_to_order()`
+- Add `PositionSizingMethod` enum to BacktestConfig
+- `src/risk.rs` - Add FixedDollar and SignalScaled methods
+
+**Dependencies:** None
+**Effort:** Medium (2-3 days)
+
+---
+
+### 12. Multi-Symbol Engine Integration [VERIFIED - DOCUMENTATION GAP]
+**Status:** MultiAssetEngine exists (5583 lines) but separate from Engine
+
+**Current state:**
+- `src/engine.rs:213` - Engine.run() processes single symbol only
+- `src/multi_asset.rs` - Complete MultiAssetEngine with:
+  - Black-Litterman (lines 2181-2582)
+  - Mean-Variance optimization (lines 1519-1958)
+  - HRP, Risk Parity, Momentum, Drift strategies
+  - Portfolio constraints (leverage, sector limits, turnover)
+- NOT integrated: MultiAssetEngine uses Portfolio directly, not Engine
+
+**Resolution options:**
+1. Document that MultiAssetEngine is the intended multi-symbol solution
+2. OR add multi-symbol execution path to Engine
+
+**Dependencies:** None
+**Effort:** Small (documentation) or Medium (integration)
 
 ---
 
 ## P2 - Medium Priority (Enhanced Functionality)
 
-### 13. Additional Position Sizing Methods [PARTIAL]
-**Description:** Missing `FixedDollar` and signal-scaled sizing methods.
+### 13. Parameter Sensitivity Analysis [PARTIAL]
+**Status:** Walk-forward has parameter stability, no dedicated sweep module
 
-**Current state:** Only risk-based and volatility-targeted implemented in `src/position_sizing.rs`.
-
-**Files affected:**
-- `src/position_sizing.rs` - Add `FixedDollar`, signal-scaled variants
-
-**Dependencies:** None
-
-**Effort:** Small (1 day)
-
----
-
-### 14. Parameter Sensitivity Analysis [PARTIAL]
-**Description:** Walk-forward tracks parameter stability but no dedicated parameter sweep module.
-
-**Current state:** `src/walkforward.rs` has `parameter_stability` field.
+**Current state:**
+- `src/walkforward.rs` - `parameter_stability` field (line 426)
+- CLI has Optimize command for grid search
+- No dedicated sensitivity analysis/heatmap generation
 
 **Files affected:**
 - `src/sensitivity.rs` (new) - Parameter sweep analysis
-- `src/cli/sensitivity.rs` (new) - CLI command
+- `src/cli.rs` - Add sensitivity command
 
-**Implementation notes:**
-- Grid search over parameter ranges
-- Heatmaps of metric vs parameter
-- Cliff detection for fragile strategies
-
-**Dependencies:** None (could integrate with cost_sensitivity pattern)
-
+**Dependencies:** None
 **Effort:** Medium (3-4 days)
 
 ---
 
-### 15. Visualization Module [MISSING]
-**Description:** Specs require `results.plot()`, `mt.compare()` charts with Plotly; ASCII sparkline fallback.
+### 14. Visualization Module [MISSING - VERIFIED]
+**Status:** Not implemented
 
-**Current state:** No visualization in Rust code.
+**Spec requirements:**
+- `results.plot()` - Interactive Plotly charts
+- ASCII sparkline fallback in terminal
+- `mt.compare()` - Multi-strategy comparison charts
+- `validation.plot()` - Fold-by-fold performance
+
+**Current state:**
+- No viz.rs or visualization module
+- Only terminal-based output using `colored` and `tabled` crates
+- Export to Markdown reports only
 
 **Files affected:**
-- `src/viz.rs` (new) - Plotly JSON generation
+- `src/viz.rs` (new) - Plotly JSON generation, ASCII sparklines
 - `src/results.rs` - Add plot methods
-- `python/mantis_bt/viz.py` - Python-side rendering (if PyO3 route)
 
-**Implementation notes:**
-- Generate Plotly JSON specs from Rust
-- Render in Python/browser
-- ASCII fallback for terminal
-
-**Dependencies:** Depends on Python bindings for full functionality
-
+**Dependencies:** Python bindings for full functionality
 **Effort:** Medium (3-4 days)
+
+---
+
+### 15. HTML Report Generation [MISSING - VERIFIED]
+**Status:** Not implemented
+
+**Current state (src/export.rs):**
+- Supports: CSV, JSON, Parquet, NPY, Markdown
+- Documentation claims HTML (line 4) but NOT implemented
+- NO `export_html()` method
+
+**Files affected:**
+- `src/export.rs` - Add `export_html()` function
+
+**Dependencies:** Visualization module
+**Effort:** Small (1-2 days)
 
 ---
 
 ## P3 - Lower Priority (Nice to Have)
 
 ### 16. Polars Backend Support [PARTIAL]
-**Description:** Specs mention polars as first-class citizen; Arrow-based Parquet exists.
+**Status:** Arrow compatibility provides foundation
 
-**Current state:** Arrow compatibility provides foundation. Full polars integration depends on Python bindings.
-
-**Files affected:**
-- `src/data.rs` - Polars-specific optimizations
-- Python bindings - `.to_polars()` method
-
-**Dependencies:** Python bindings (P0 item 3)
-
+**Dependencies:** Python bindings (P0 item 2)
 **Effort:** Small (1-2 days)
 
 ---
 
 ### 17. Sample Data Bundling [MISSING]
-**Description:** Spec requires `mt.load_sample("AAPL")` working offline.
+**Status:** Not implemented
 
-**Current state:** No bundled sample data.
+**Spec requirement:** `mt.load_sample("AAPL")` works offline with bundled data
 
 **Files affected:**
 - `data/samples/` (new) - Bundled sample files
 - `src/data.rs` - Add `load_sample()` function
 - `build.rs` - Include data in binary
 
-**Implementation notes:**
-- Small representative dataset (~1 year)
-- Include in package or download on first use
-
 **Dependencies:** None
-
 **Effort:** Small (1 day)
 
 ---
 
 ### 18. Documentation Site [MISSING]
-**Description:** Spec requires mkdocs/sphinx with search.
+**Status:** Not implemented
 
-**Current state:** Rustdoc exists; no user-facing docs site.
+**Spec requirements:**
+- mkdocs/sphinx with search
+- Quick Start (5-minute guide)
+- Cookbook/recipes
+- Auto-generated API reference
 
 **Files affected:**
 - `docs/` (new) - mkdocs content
 - `mkdocs.yml` (new) - Site configuration
-- `.github/workflows/docs.yml` (new) - Deploy workflow
 
 **Dependencies:** None
-
 **Effort:** Medium (ongoing)
-
----
-
-## CLEANUP - Codebase Hygiene Tasks
-
-These are quick fixes that should be addressed alongside other work:
-
-### C2. Fix Statistical Tests [DONE 2026-01-16]
-**Task:** Repair 9 broken tests in analytics.rs (ADF, Durbin-Watson, Jarque-Bera, Ljung-Box).
-**Status:** Completed in this loop (adaptive ADF lag fallback, deterministic test harness).
-
-### C3. Fix Monthly Returns
-**Task:** Replace synthetic uniform distribution with actual calendar-month aggregation.
-**File:** `src/analytics.rs:924-933`
-**Effort:** 1 day
-
-### C4. Update Walk-Forward Default
-**Task:** Change n_folds from 5 to 12.
-**File:** `src/walkforward.rs:34`
-**Effort:** 5 minutes
-
-### C5. Remove Dead TODO
-**Task:** Address or remove the single TODO comment (lib.rs:113 for ONNX).
-**File:** `src/lib.rs:113`
-**Effort:** 5 minutes (comment update)
-
-### C6. Update DSR/PSR Location Reference
-**Task:** DSR/PSR is implemented in analytics.rs (lines 846-922), not walkforward.rs. Update any internal documentation.
-**Effort:** 5 minutes
-
-### C7. Fix File Reference Error in Item 11
-**Task:** Item 11 (Short Borrow Costs) references `src/costs.rs` which doesn't exist. CostModel is in `src/portfolio.rs`.
-**File:** This document - update Item 11 file references
-**Effort:** 5 minutes
-
-### C8. Reduce Excessive unwrap() Calls
-**Task:** Codebase has 578 `unwrap()` calls vs only 25 `expect()` calls. Consider replacing critical path unwraps with proper error handling or `expect("meaningful message")`.
-**Files:** Throughout `src/` (highest counts: data.rs:119, multi_asset.rs:79, analytics.rs:66, portfolio.rs:52)
-**Effort:** Medium (ongoing refactor)
-**Priority:** Low - cosmetic but improves debugging
-
-### C9. Consolidate Duplicate Monthly Returns Items
-**Task:** Monthly returns fix appears in both P1 #7 and C3. Consolidate into single item.
-**Effort:** 5 minutes (documentation fix)
-
-### C10. Fix Jarque-Bera Integer Overflow
-**Task:** Test `test_jarque_bera_normal_data` fails with "attempt to multiply with overflow" at analytics.rs:4742. Use checked arithmetic or larger integer types.
-**File:** `src/analytics.rs:4742`
-**Effort:** 1 hour
-
-### C11. Fix Rustdoc Warnings
-**Task:** `cargo doc` generates 3 warnings for unresolved links to `[R]` in Black-Litterman formula documentation. Escape brackets or use code blocks.
-**File:** `src/multi_asset.rs:2136, 2143, 2370`
-**Effort:** 10 minutes
 
 ---
 
@@ -419,97 +431,134 @@ These are quick fixes that should be addressed alongside other work:
 
 | ID | Item | Status | Priority | Effort | Dependencies |
 |----|------|--------|----------|--------|--------------|
-| 1 | Statistical Tests Fix | **COMPLETED 2026-01-16** | P0 | — | None |
+| 1 | **Lookahead Bug Fix** | CONFIRMED | P0 | Medium | None |
 | 2 | Python Bindings (PyO3) | MISSING | P0 | Large | None |
 | 3 | ONNX Module | PARTIAL | P0 | Small | ort crate |
 | 4 | Helpful Error Messages | MISSING | P0 | Medium | None |
-| 5 | Multi-Symbol Integration | NEW | P1 | Medium | None |
-| 6 | Monthly Returns Fix | NEW | P1 | Small | None |
-| 7 | Auto-Warnings | MISSING | P1 | Small | None |
-| 8 | Walk-Forward Folds | PARTIAL | P1 | Trivial | None |
-| 9 | Rolling Metrics | MISSING | P1 | Medium | None |
-| 10 | Short Borrow Costs | MISSING | P1 | Medium | None |
-| 11 | load_multi/load_dir | MISSING | P1 | Small | None |
-| 12 | Cost Sensitivity Integration | PARTIAL | P1 | Small | None |
-| 13 | Position Sizing Methods | PARTIAL | P2 | Small | None |
-| 14 | Parameter Sensitivity | PARTIAL | P2 | Medium | None |
-| 15 | Visualization Module | MISSING | P2 | Medium | Item 3 |
-| 16 | Polars Backend | PARTIAL | P3 | Small | Item 3 |
+| 5 | Monthly Returns Fix | VERIFIED | P1 | Small | None |
+| 6 | Auto-Warnings | MISSING | P1 | Small | None |
+| 7 | Rolling Metrics | MISSING | P1 | Medium | None |
+| 8 | Short Borrow Costs | PARTIAL | P1 | Medium | None |
+| 9 | load_multi/load_dir | MISSING | P1 | Small | None |
+| 10 | Cost Sensitivity CLI | PARTIAL | P1 | Small | None |
+| 11 | Position Sizing Integration | PARTIAL | P1 | Medium | None |
+| 12 | Multi-Symbol Integration | DOC GAP | P1 | Small | None |
+| 13 | Parameter Sensitivity | PARTIAL | P2 | Medium | None |
+| 14 | Visualization Module | MISSING | P2 | Medium | Item 2 |
+| 15 | HTML Reports | MISSING | P2 | Small | Item 14 |
+| 16 | Polars Backend | PARTIAL | P3 | Small | Item 2 |
 | 17 | Sample Data Bundling | MISSING | P3 | Small | None |
 | 18 | Documentation Site | MISSING | P3 | Medium | None |
 
-### Items Removed from Previous Plan (Now Verified Complete):
-| Item | Reason |
-|------|--------|
-| Performance Benchmarks | EXISTS in benches/backtest_bench.rs (9 benchmark groups) |
-| Limit Order Fill Logic | IMPLEMENTED correctly in portfolio.rs:1581-1643 |
+---
 
-### Completed Items
-| Item | Date | Notes |
-|------|------|-------|
-| Config Defaults Fix | 2026-01-16 | Updated default position size to 10% of equity and slippage to 0.1% across config/engine/CLI/tests |
-| Statistical Tests Fix | 2026-01-16 | `src/analytics.rs`: adaptive ADF lag fallback, centered Durbin-Watson, deterministic RNG-based tests |
+## Items Verified as COMPLETE
+
+| Item | Verification |
+|------|-------------|
+| Config Defaults | CORRECT: slippage=0.1%, commission=0.1%, position_size=10% |
+| Performance Benchmarks | EXISTS in benches/backtest_bench.rs (9 benchmark groups) |
+| Limit Order Fill Logic | IMPLEMENTED correctly in portfolio.rs:1584-1639 |
+| DSR/PSR Implementation | IMPLEMENTED in analytics.rs:846-922 with tests passing |
+| Black-Litterman | IMPLEMENTED in multi_asset.rs:2181-2582 (fully tested) |
+| Mean-Variance Optimization | IMPLEMENTED in multi_asset.rs:1519-1958 (fully tested) |
+| Walk-Forward OOS Degradation | IMPLEMENTED in walkforward.rs:173-182, 354-359, 414-419 |
+| CPCV | IMPLEMENTED in cpcv.rs with purging/embargo (663 lines) |
+| Monte Carlo | IMPLEMENTED in monte_carlo.rs with CI, bootstrap (726 lines) |
+| Cost Sensitivity Module | IMPLEMENTED in cost_sensitivity.rs (724 lines) |
+| Multi-Asset Strategies | 8 strategies: EqualWeight, Momentum, InverseVol, RiskParity, MVO, BL, HRP, Drift |
+| Options Pricing | IMPLEMENTED: Black-Scholes, Binomial, Greeks, put-call parity |
+| Streaming Indicators | IMPLEMENTED in streaming.rs (SMA, EMA, RSI, MACD, BB, ATR, StdDev) |
+| Statistical Tests | FIXED in commit 0b67bff: ADF, autocorrelation, Ljung-Box all passing |
+| Walk-Forward Defaults | FIXED: num_windows=12, in_sample_ratio=0.75, anchored=true |
 
 ---
 
 ## Recommended Execution Order
 
 **Phase 0 - Immediate Fixes (Day 1):**
-1. Walk-Forward Folds fix (C4) - 5 minutes
-2. Remove dead TODO (C5) - 5 minutes
+1. Monthly Returns fix (#5) - 1 day
 
-**Phase 1 - Critical Fixes (Week 1):**
-3. Monthly Returns Fix (P1 #6) - 1 day
+**Phase 1 - Critical Fixes (Week 1-2):**
+2. **Lookahead Bug Fix (#1)** - 2-3 days (MOST CRITICAL FOR CORRECTNESS)
+3. Helpful Error Messages (#4) - 3-5 days
 
-**Phase 2 - Foundation (Weeks 2-4):**
-5. Python Bindings (P0 #2) - 2-3 weeks (parallel track)
-6. Helpful Error Messages (P0 #4) - 3-5 days
+**Phase 2 - Foundation (Weeks 3-5):**
+4. Python Bindings (#2) - 2-3 weeks (parallel track)
+5. Auto-Warnings (#6) - 1-2 days
+6. Cost Sensitivity CLI (#10) - 1 day
 
-**Phase 3 - Core Features (Weeks 5-6):**
-7. Multi-Symbol Integration (P1 #5) - 3-5 days
-8. Auto-Warnings (P1 #7) - 1-2 days
-9. Rolling Metrics (P1 #9) - 2-3 days
-10. load_multi/load_dir (P1 #11) - 1-2 days
-11. Cost Sensitivity Integration (P1 #12) - 1 day
+**Phase 3 - Core Features (Weeks 6-7):**
+7. Rolling Metrics (#7) - 2-3 days
+8. load_multi/load_dir (#9) - 1-2 days
+9. Position Sizing Integration (#11) - 2-3 days
+10. Multi-Symbol Documentation (#12) - 1 day
 
-**Phase 4 - Realism (Week 7):**
-12. Short Borrow Costs (P1 #10) - 2-3 days
-13. Position Sizing Methods (P2 #13) - 1 day
+**Phase 4 - Realism (Week 8):**
+11. Short Borrow Costs (#8) - 2-3 days
+12. Parameter Sensitivity (#13) - 3-4 days
 
-**Phase 5 - Polish (Weeks 8+):**
-14. Visualization Module (P2 #15) - 3-4 days
-15. Parameter Sensitivity (P2 #14) - 3-4 days
-16. ONNX re-enablement (when ort stabilizes)
-17. Lower priority items as time permits
+**Phase 5 - Polish (Weeks 9+):**
+13. Visualization Module (#14) - 3-4 days
+14. HTML Reports (#15) - 1-2 days
+15. ONNX re-enablement (when ort stabilizes)
+16. Lower priority items as time permits
 
 ---
 
-## Notes
+## Technical Notes
+
+### Lookahead Bug Details (CONFIRMED via Opus Analysis)
+
+The current execution model in engine.rs (lines 306-435):
+
+```rust
+for i in 0..bars.len() {
+    let bar = &bars[i];                    // bar[i] with full OHLCV
+    let ctx = StrategyContext {
+        bar_index: i,
+        bars: &bars,                       // Strategy can see bar[i].close
+        ...
+    };
+    let signal = strategy.on_bar(&ctx);    // Signal based on bar[i].close
+    portfolio.execute(..., bar, ...)       // Fills at bar[i].open - LOOKAHEAD!
+}
+```
+
+**Two fix approaches:**
+1. **Order buffering**: Store orders from bar[i], execute at bar[i+1].open
+2. **Data offset**: At step i, strategy sees bar[i-1].close, executes at bar[i].open
 
 ### ONNX Blocking Issue
-The `ort` crate situation requires monitoring. Check https://github.com/pykeio/ort/releases periodically. Alternative: consider `tract` crate as fallback.
 
-### Python Bindings Architecture Decision
+The `ort` crate situation requires monitoring:
+- v1.x yanked from crates.io
+- v2.0 API still in flux (RC stage)
+- Check https://github.com/pykeio/ort/releases periodically
+- Alternative consideration: `tract` crate as fallback
+
+### Python Bindings Architecture
+
 Two paths available:
-1. **Full PyO3 with maturin (recommended)** - native speed, proper types
-2. **Enhanced subprocess (current)** - simpler but limited
-
-### Testing Strategy
-Each new feature should include unit tests. Target: maintain >80% coverage.
+1. **Full PyO3 with maturin (recommended)** - native speed, proper types, Jupyter integration
+2. **Enhanced subprocess (current)** - simpler but limited, no in-process DataFrames
 
 ### What's Already Excellent (No Action Needed)
+
 - Core backtest engine with comprehensive cost modeling
 - 40+ technical indicators in analytics.rs
 - Monte Carlo simulation with confidence intervals
-- Walk-forward analysis with OOS degradation
-- CPCV (Combinatorial Purged Cross-Validation)
-- Multi-asset portfolio optimization (Black-Litterman, Mean-Variance)
+- Walk-forward analysis with OOS degradation (needs fold default fix)
+- CPCV (Combinatorial Purged Cross-Validation) with purging/embargo
+- Multi-asset portfolio optimization (Black-Litterman, Mean-Variance, HRP)
 - Options pricing (Black-Scholes, Binomial, Greeks)
 - Regime detection (trend, volatility, volume)
-- Streaming indicators for real-time
+- Streaming indicators for real-time applications
 - Feature extraction for ML (40+ features, sequence building)
 - Experiment tracking with SQLite
-- Comprehensive CLI with 10+ commands
+- Comprehensive CLI with 11 commands
 - Export formats: CSV, JSON, Parquet, NPY, Markdown
 - Performance benchmarks (9 benchmark groups)
-- Limit order fill logic (fills at limit price when bar touches)
+- Limit order fill logic
+- Position sizing utilities in risk.rs (need integration)
+- Deflated Sharpe Ratio and Probabilistic Sharpe Ratio
