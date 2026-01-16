@@ -16,6 +16,7 @@ crate-type = ["cdylib", "rlib"]
 [features]
 default = []
 python = ["pyo3/extension-module", "pyo3/abi3-py38", "numpy"]
+onnx = ["dep:ort", "dep:ndarray"]
 
 [dependencies]
 # CLI and configuration
@@ -54,10 +55,9 @@ indicatif = "0.17"
 # Parallelism (for parameter optimization)
 rayon = "1.8"
 
-# ML/AI - ONNX Runtime for model inference
-# TODO: Re-enable when ort crate stabilizes (v2.0 in RC, v1.x yanked)
-# ort = "2.0.0-rc.11"
-# ndarray = "0.15"
+# ML/AI - ONNX Runtime for model inference (optional, enable with --features onnx)
+ort = { version = "2.0.0-rc.11", optional = true }
+ndarray = { version = "0.16", optional = true }
 
 # Output formatting
 tabled = "0.15"

@@ -18,7 +18,7 @@
 //!
 //! // Load ONNX model
 //! let config = ModelConfig::default();
-//! let model = OnnxModel::from_file("model.onnx", config).unwrap();
+//! let mut model = OnnxModel::from_file("model.onnx", config).unwrap();
 //!
 //! // Perform inference
 //! let features = vec![0.1, 0.2, 0.3, 0.4, 0.5];
@@ -27,13 +27,22 @@
 //! ```
 
 use anyhow::{Context, Result};
-use ndarray::{Array1, ArrayD, IxDyn};
-use ort::{Environment, ExecutionProvider, GraphOptimizationLevel, Session, Value};
+use ort::session::{builder::GraphOptimizationLevel, Session};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::Once;
 use std::time::Instant;
 use tracing::{debug, warn};
+
+// Global initialization for ort runtime (done once per process)
+static ORT_INIT: Once = Once::new();
+
+fn ensure_ort_initialized() {
+    ORT_INIT.call_once(|| {
+        // ort 2.0: init() returns a builder, commit() returns ()
+        let _ = ort::init().with_name("mantis").commit();
+    });
+}
 
 /// Configuration for ONNX model inference.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -222,9 +231,6 @@ pub struct OnnxModel {
 
     /// Inference statistics.
     stats: InferenceStats,
-
-    /// ONNX Runtime environment (shared across models).
-    _environment: Arc<Environment>,
 }
 
 impl OnnxModel {
@@ -255,34 +261,23 @@ impl OnnxModel {
             config.name, config.version
         );
 
-        // Create ONNX Runtime environment
-        let environment = Arc::new(
-            Environment::builder()
-                .with_name(&config.name)
-                .with_log_level(ort::LoggingLevel::Warning)
-                .build()
-                .context("Failed to create ONNX Runtime environment")?,
-        );
+        // Ensure ONNX Runtime is initialized (global, done once)
+        ensure_ort_initialized();
 
-        // Build session
-        let mut session_builder = Session::builder(&environment)?
+        // Build session with ort 2.0 API
+        let session_builder = Session::builder()?
             .with_optimization_level(GraphOptimizationLevel::Level3)?
             .with_intra_threads(1)?;
 
-        // Enable CUDA if requested and available
+        // CUDA support: Currently disabled as it requires additional setup
+        // To enable CUDA, add the ort 'cuda' feature and configure execution providers
         if config.use_cuda {
-            if ExecutionProvider::CUDA(Default::default()).is_available() {
-                session_builder = session_builder
-                    .with_execution_providers([ExecutionProvider::CUDA(Default::default())])?;
-                debug!("CUDA execution provider enabled");
-            } else {
-                warn!("CUDA requested but not available, falling back to CPU");
-            }
+            warn!("CUDA requested but CUDA execution provider not enabled in this build. Using CPU.");
         }
 
-        // Load model from file
+        // Load model from file (ort 2.0: commit_from_file instead of with_model_from_file)
         let session = session_builder
-            .with_model_from_file(path)
+            .commit_from_file(path)
             .with_context(|| format!("Failed to load ONNX model from {:?}", path))?;
 
         debug!("ONNX model loaded successfully");
@@ -291,7 +286,6 @@ impl OnnxModel {
             session,
             config,
             stats: InferenceStats::default(),
-            _environment: environment,
         })
     }
 
@@ -309,7 +303,7 @@ impl OnnxModel {
     ///
     /// ```no_run
     /// # use mantis::onnx::{OnnxModel, ModelConfig};
-    /// # let model = OnnxModel::from_file("model.onnx", ModelConfig::default()).unwrap();
+    /// # let mut model = OnnxModel::from_file("model.onnx", ModelConfig::default()).unwrap();
     /// let features = vec![0.1, 0.2, 0.3];
     /// let prediction = model.predict(&features).unwrap();
     /// ```
@@ -394,25 +388,27 @@ impl OnnxModel {
     }
 
     /// Internal inference method.
-    fn run_inference_internal(&self, input: &[f32]) -> Result<f32> {
+    fn run_inference_internal(&mut self, input: &[f32]) -> Result<f32> {
         // Create input tensor (shape: [1, input_size] for batch size 1)
-        let input_array = Array1::from_vec(input.to_vec());
-        let input_array = input_array.insert_axis(ndarray::Axis(0)).into_dyn();
+        // ort 2.0 API uses (shape, data) tuple for OwnedTensorArrayData
+        let shape = vec![1usize, input.len()];
+        let data = input.to_vec();
 
-        // Create ONNX tensor
-        let input_tensor = Value::from_array(self.session.allocator(), &input_array)?;
+        // Create tensor from shape and data using ort 2.0 API
+        let input_tensor = ort::value::Tensor::<f32>::from_array((shape, data))?;
 
-        // Run inference
-        let outputs = self.session.run(vec![input_tensor])?;
+        // Run inference with ort 2.0 API
+        let outputs = self.session.run(ort::inputs![input_tensor])?;
 
-        // Extract output
-        let output: ArrayD<f32> = outputs[0].try_extract()?;
-        let output = output.into_dimensionality::<IxDyn>()?;
+        // Extract output with ort 2.0 API
+        // try_extract_tensor returns (shape, data_slice) tuple
+        let (_shape, data) = outputs[0]
+            .try_extract_tensor::<f32>()
+            .context("Failed to extract output tensor")?;
 
         // Get first output value
-        let prediction = output
-            .iter()
-            .next()
+        let prediction = data
+            .first()
             .copied()
             .ok_or_else(|| anyhow::anyhow!("No output from model"))?;
 

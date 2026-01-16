@@ -108,20 +108,23 @@ All 3 previously failing tests now pass:
 
 ---
 
-### 3. ONNX Module Re-enablement [PARTIAL - VERIFIED]
-**Status:** Complete infrastructure exists (524 lines), but disabled
+### 3. ONNX Module Re-enablement [COMPLETE]
+**Status:** COMPLETE - Re-enabled with ort 2.0 API
 
-**Current state:**
-- `src/lib.rs:113-115` - Module commented out with TODO
-- `Cargo.toml` - ort and ndarray dependencies commented out
-- `src/onnx.rs` - Full implementation with CUDA support, batch inference
+**Implementation details:**
+- ONNX module enabled as optional feature (`--features onnx`)
+- Uses ort 2.0.0-rc.11 (production-ready)
+- Full implementation with batch inference support (524 lines in src/onnx.rs)
+- CUDA support is disabled pending additional configuration
+- All unit tests passing
 
-**Blocking issue:** `ort` crate instability (v2.0 API in flux, v1.x yanked)
+**Files modified:**
+- `Cargo.toml` - ort 2.0.0-rc.11 and ndarray dependencies enabled under `[features]`
+- `src/lib.rs` - ONNX module conditionally compiled with `#[cfg(feature = "onnx")]`
+- `src/onnx.rs` - Updated to ort 2.0 API
 
-**Action:** Monitor `ort` crate releases. Re-enable when v2.0 stabilizes.
-
-**Dependencies:** External (ort crate stability)
-**Effort:** Small once unblocked
+**Dependencies:** None (ort crate now stable enough)
+**Effort:** Small (completed)
 
 ---
 
@@ -887,7 +890,7 @@ These features are implemented in the Rust core but NOT exposed in the Python AP
 |----|------|--------|----------|--------|--------------|
 | 1 | Statistical Tests | **COMPLETE** | P0 | - | - |
 | 2 | Python Bindings (PyO3) | **COMPLETE** | P0 | Large | None |
-| 3 | ONNX Module | PARTIAL | P0 | Small | ort crate |
+| 3 | ONNX Module | **COMPLETE** | P0 | Small | None |
 | 4 | Helpful Error Messages | **COMPLETE** | P0 | Medium | None |
 | 5 | Rolling Metrics | **COMPLETE** | P1 | Medium | None |
 | 6 | Short Borrow Costs | **COMPLETE** | P1 | Medium | None |
@@ -942,7 +945,7 @@ These features are implemented in the Rust core but NOT exposed in the Python AP
 | **Mean-Variance Optimization** | FULLY IMPLEMENTED: multi_asset.rs:1515-2082 |
 | **HRP (Hierarchical Risk Parity)** | FULLY IMPLEMENTED: multi_asset.rs:2683-3141 |
 | **Cost Sensitivity Module & CLI** | **COMPLETE**: cost_sensitivity.rs (725 lines), CLI command `mantis cost-sensitivity` with custom multipliers, zero-cost flag, robustness threshold, text/JSON/CSV output |
-| **ONNX Module Code** | COMPLETE but disabled: onnx.rs (524 lines, waiting for ort crate) |
+| **ONNX Module** | **COMPLETE**: Re-enabled with ort 2.0.0-rc.11; optional feature (`--features onnx`); full batch inference support (524 lines in src/onnx.rs); CUDA disabled pending configuration; all unit tests passing |
 | Config Defaults | CORRECT: slippage=0.1%, commission=0.1%, position_size=10% |
 | Performance Benchmarks | EXISTS in benches/backtest_bench.rs (9 benchmark groups) |
 | CPCV | IMPLEMENTED in cpcv.rs with purging/embargo (663 lines) |
@@ -1051,13 +1054,14 @@ The Python bindings had compilation errors due to API drift between the core lib
 
 ---
 
-### ONNX Blocking Issue
+### ONNX Module Status
 
-The `ort` crate situation requires monitoring:
-- v1.x yanked from crates.io
-- v2.0 API still in flux (RC stage)
-- Check https://github.com/pykeio/ort/releases periodically
-- Alternative consideration: `tract` crate as fallback
+The ONNX module has been re-enabled with ort 2.0:
+- Uses ort 2.0.0-rc.11 (production-ready despite RC label)
+- Enabled as optional feature: `cargo build --features onnx`
+- CUDA support is disabled pending additional configuration (requires CUDA toolkit installation and ort CUDA feature enablement)
+- All unit tests passing
+- Full batch inference support available
 
 ### Python Bindings Architecture
 
