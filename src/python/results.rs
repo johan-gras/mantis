@@ -16,11 +16,11 @@ use crate::analytics::{
 };
 use crate::engine::{BacktestConfig, BacktestResult, Engine};
 use crate::export::{export_walkforward_html, Exporter, PerformanceSummary};
+use crate::monte_carlo::{MonteCarloConfig, MonteCarloResult, MonteCarloSimulator};
 use crate::strategy::{Strategy, StrategyContext};
 use crate::types::{Bar, Signal};
 use crate::viz::{sparkline, walkforward_fold_chart};
 use crate::walkforward::{WalkForwardConfig, WalkForwardResult, WalkForwardWindow, WindowResult};
-use crate::monte_carlo::{MonteCarloConfig, MonteCarloResult, MonteCarloSimulator};
 
 use super::types::PyTrade;
 
@@ -1593,7 +1593,8 @@ impl PyMonteCarloResult {
             return Ok(0.0);
         }
 
-        let idx = (percentile as f64 / 100.0 * (self.return_distribution.len() - 1) as f64) as usize;
+        let idx =
+            (percentile as f64 / 100.0 * (self.return_distribution.len() - 1) as f64) as usize;
         Ok(self.return_distribution[idx])
     }
 
@@ -1605,10 +1606,7 @@ impl PyMonteCarloResult {
     fn __repr__(&self) -> String {
         format!(
             "MonteCarloResult(simulations={}, median_return={:+.2}%, sharpe_ci=[{:.2}, {:.2}])",
-            self.num_simulations,
-            self.median_return,
-            self.sharpe_ci.0,
-            self.sharpe_ci.1
+            self.num_simulations, self.median_return, self.sharpe_ci.0, self.sharpe_ci.1
         )
     }
 
