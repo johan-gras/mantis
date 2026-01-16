@@ -194,6 +194,28 @@ Per spec (`specs/position-sizing.md`), position sizes are rounded to **whole sha
 
 ---
 
+## Known Limitations & Future Enhancements
+
+### Output Type Preservation (Not Implemented)
+
+The Python API spec (`specs/python-api.md` lines 97-105) suggests that `results.equity_curve` should return `pandas.Series` when input was a pandas DataFrame, and `polars.Series` when input was polars.
+
+**Current Behavior:**
+- `results.equity_curve` always returns `numpy.ndarray` regardless of input type
+- Users can easily convert: `pd.Series(results.equity_curve)` or `pl.Series(results.equity_curve)`
+
+**Why Not Implemented:**
+- Requires tracking input type through the call chain
+- Adds complexity to the Rust/Python boundary
+- numpy arrays are the common denominator and work with both pandas and polars
+- Manual conversion is straightforward
+
+**Potential Future Implementation:**
+- Add `output_format` parameter to `backtest()`: `"numpy"` (default), `"pandas"`, `"polars"`
+- Store preference in `BacktestResult` and convert on access
+
+---
+
 ## What's Already Excellent (No Action Needed)
 
 - Core backtest engine with comprehensive cost modeling
