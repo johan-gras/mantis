@@ -6,8 +6,12 @@
 use numpy::PyArray1;
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
+use std::fs::File;
+use std::io::Write;
 
 use crate::engine::BacktestResult;
+use crate::export::{Exporter, PerformanceSummary};
+use crate::viz::{sparkline, walkforward_fold_chart};
 use crate::walkforward::WalkForwardResult;
 
 use super::types::PyTrade;
@@ -58,6 +62,9 @@ pub struct PyBacktestResult {
     equity_values: Vec<f64>,
     equity_timestamps: Vec<i64>,
     trades_data: Vec<PyTrade>,
+
+    // Original result for export methods
+    rust_result: BacktestResult,
 }
 
 #[pymethods]
@@ -177,6 +184,73 @@ impl PyBacktestResult {
         Ok(PyList::new_bound(py, warnings))
     }
 
+    /// Display an ASCII sparkline visualization of the equity curve.
+    ///
+    /// Args:
+    ///     width: Width of the sparkline in characters (default: 40)
+    ///
+    /// Returns:
+    ///     A string containing the formatted equity curve visualization.
+    ///
+    /// Example:
+    ///     >>> results = mt.backtest(data, signal)
+    ///     >>> print(results.plot())
+    #[pyo3(signature = (width=40))]
+    fn plot(&self, width: usize) -> String {
+        let spark = sparkline(&self.equity_values, width);
+        format!(
+            "Backtest Results: {}\n[{}] equity curve\nTotal Return: {:+.1}%  |  Sharpe: {:.2}  |  Max DD: {:.1}%",
+            self.symbols.join(", "),
+            spark,
+            self.total_return * 100.0,
+            self.sharpe,
+            self.max_drawdown * 100.0
+        )
+    }
+
+    /// Save the backtest results to a JSON file.
+    ///
+    /// The file contains all metrics, equity curve, and trades.
+    ///
+    /// Args:
+    ///     path: Path to the output JSON file.
+    ///
+    /// Example:
+    ///     >>> results = mt.backtest(data, signal)
+    ///     >>> results.save("experiment_042.json")
+    fn save(&self, path: &str) -> PyResult<()> {
+        let summary = PerformanceSummary::from_result(&self.rust_result);
+        let file = File::create(path).map_err(|e| {
+            pyo3::exceptions::PyIOError::new_err(format!("Failed to create file: {}", e))
+        })?;
+        serde_json::to_writer_pretty(file, &summary).map_err(|e| {
+            pyo3::exceptions::PyIOError::new_err(format!("Failed to write JSON: {}", e))
+        })?;
+        Ok(())
+    }
+
+    /// Generate a self-contained HTML report.
+    ///
+    /// The report includes:
+    /// - Summary metrics table
+    /// - Equity curve chart (SVG)
+    /// - Drawdown chart (SVG)
+    /// - Trade list with P&L
+    ///
+    /// Args:
+    ///     path: Path to the output HTML file.
+    ///
+    /// Example:
+    ///     >>> results = mt.backtest(data, signal)
+    ///     >>> results.report("experiment_042.html")
+    fn report(&self, path: &str) -> PyResult<()> {
+        let exporter = Exporter::new(self.rust_result.clone());
+        exporter.export_report_html(path).map_err(|e| {
+            pyo3::exceptions::PyIOError::new_err(format!("Failed to generate HTML report: {}", e))
+        })?;
+        Ok(())
+    }
+
     fn __repr__(&self) -> String {
         format!(
             "BacktestResult(return={:+.1}%, sharpe={:.2}, max_dd={:.1}%, trades={})",
@@ -225,6 +299,7 @@ impl PyBacktestResult {
             equity_values,
             equity_timestamps,
             trades_data,
+            rust_result: result.clone(),
         }
     }
 }
@@ -289,6 +364,9 @@ pub struct PyValidationResult {
 
     // Internal data for fold_details method
     fold_data: Vec<PyFoldDetail>,
+
+    // Original result for visualization
+    rust_result: WalkForwardResult,
 }
 
 #[pymethods]
@@ -319,6 +397,25 @@ impl PyValidationResult {
     /// Check if the validation result indicates a robust strategy.
     fn is_robust(&self) -> bool {
         self.verdict == "robust" || self.verdict == "borderline"
+    }
+
+    /// Display an ASCII visualization of fold-by-fold performance.
+    ///
+    /// Shows in-sample vs out-of-sample returns for each fold with
+    /// bar chart representation and efficiency metrics.
+    ///
+    /// Args:
+    ///     width: Width of the bar charts (default: 20)
+    ///
+    /// Returns:
+    ///     A string containing the formatted walk-forward visualization.
+    ///
+    /// Example:
+    ///     >>> validation = mt.validate(data, signal)
+    ///     >>> print(validation.plot())
+    #[pyo3(signature = (width=20))]
+    fn plot(&self, width: usize) -> String {
+        walkforward_fold_chart(&self.rust_result, width)
     }
 
     fn __repr__(&self) -> String {
@@ -377,6 +474,7 @@ impl PyValidationResult {
             efficiency_ratio: result.avg_efficiency_ratio,
             parameter_stability: result.parameter_stability,
             fold_data,
+            rust_result: result.clone(),
         }
     }
 }

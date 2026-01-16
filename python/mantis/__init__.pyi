@@ -84,6 +84,53 @@ class BacktestResult:
     def metrics(self) -> Dict[str, Any]: ...
     def summary(self) -> str: ...
     def warnings(self) -> List[str]: ...
+    def plot(self, width: int = 40) -> str:
+        """
+        Display an ASCII sparkline visualization of the equity curve.
+
+        Args:
+            width: Width of the sparkline in characters (default: 40)
+
+        Returns:
+            A string containing the formatted equity curve visualization.
+
+        Example:
+            >>> results = mt.backtest(data, signal)
+            >>> print(results.plot())
+        """
+        ...
+    def save(self, path: str) -> None:
+        """
+        Save the backtest results to a JSON file.
+
+        The file contains all metrics, equity curve, and trades.
+
+        Args:
+            path: Path to the output JSON file.
+
+        Example:
+            >>> results = mt.backtest(data, signal)
+            >>> results.save("experiment_042.json")
+        """
+        ...
+    def report(self, path: str) -> None:
+        """
+        Generate a self-contained HTML report.
+
+        The report includes:
+        - Summary metrics table
+        - Equity curve chart (SVG)
+        - Drawdown chart (SVG)
+        - Trade list with P&L
+
+        Args:
+            path: Path to the output HTML file.
+
+        Example:
+            >>> results = mt.backtest(data, signal)
+            >>> results.report("experiment_042.html")
+        """
+        ...
 
 class FoldDetail:
     """Details for a single fold in walk-forward validation."""
@@ -113,6 +160,24 @@ class ValidationResult:
     def fold_details(self) -> List[FoldDetail]: ...
     def is_robust(self) -> bool: ...
     def summary(self) -> str: ...
+    def plot(self, width: int = 20) -> str:
+        """
+        Display an ASCII visualization of fold-by-fold performance.
+
+        Shows in-sample vs out-of-sample returns for each fold with
+        bar chart representation and efficiency metrics.
+
+        Args:
+            width: Width of the bar charts (default: 20)
+
+        Returns:
+            A string containing the formatted walk-forward visualization.
+
+        Example:
+            >>> validation = mt.validate(data, signal)
+            >>> print(validation.plot())
+        """
+        ...
 
 def load(
     path: str,
