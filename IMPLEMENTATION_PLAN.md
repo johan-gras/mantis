@@ -481,8 +481,8 @@ mantis portfolio -d ./data/stocks/ -p "*.csv" --strategy risk-parity --rebalance
 
 ---
 
-### 18. Python API Spec Gaps [PARTIAL]
-**Status:** Gaps discovered 2026-01-16
+### 18. Python API Spec Gaps [COMPLETE]
+**Status:** All sub-items complete (2026-01-16)
 
 **Missing per python-api.md specification:**
 
