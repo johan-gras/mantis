@@ -17,11 +17,13 @@ struct CsvRow {
     #[serde(
         alias = "Date",
         alias = "date",
+        alias = "DATE",
         alias = "Timestamp",
         alias = "timestamp",
         alias = "Time",
         alias = "time",
-        alias = "datetime"
+        alias = "datetime",
+        alias = "Datetime"
     )]
     date: String,
     #[serde(alias = "Open", alias = "open", alias = "o")]
@@ -32,7 +34,7 @@ struct CsvRow {
     low: f64,
     #[serde(alias = "Close", alias = "close", alias = "c", alias = "Adj Close")]
     close: f64,
-    #[serde(alias = "Volume", alias = "volume", alias = "v", default)]
+    #[serde(alias = "Volume", alias = "volume", alias = "v", alias = "vol", alias = "Vol", default)]
     volume: f64,
 }
 
@@ -169,7 +171,16 @@ fn parse_datetime(s: &str, format: Option<&str>) -> Result<DateTime<Utc>> {
     }
 
     // Try date-only formats
-    let date_formats = ["%Y-%m-%d", "%Y/%m/%d", "%d-%m-%Y", "%d/%m/%Y", "%m/%d/%Y"];
+    let date_formats = [
+        "%Y-%m-%d",
+        "%Y/%m/%d",
+        "%d-%m-%Y",
+        "%d/%m/%Y",
+        "%m/%d/%Y",
+        "%d-%b-%Y", // 15-Jan-2024
+        "%d %b %Y", // 15 Jan 2024
+        "%b %d, %Y", // Jan 15, 2024
+    ];
 
     for fmt in &date_formats {
         if let Ok(d) = NaiveDate::parse_from_str(s, fmt) {
@@ -2614,6 +2625,24 @@ mod tests {
         let dt2 = parse_datetime("2024-01-15 09:30:00", None).unwrap();
         assert_eq!(dt2.hour(), 9);
         assert_eq!(dt2.minute(), 30);
+
+        // Named month format: 15-Jan-2024
+        let dt3 = parse_datetime("15-Jan-2024", None).unwrap();
+        assert_eq!(dt3.year(), 2024);
+        assert_eq!(dt3.month(), 1);
+        assert_eq!(dt3.day(), 15);
+
+        // Named month with spaces: 15 Jan 2024
+        let dt4 = parse_datetime("15 Jan 2024", None).unwrap();
+        assert_eq!(dt4.year(), 2024);
+        assert_eq!(dt4.month(), 1);
+        assert_eq!(dt4.day(), 15);
+
+        // US named month format: Jan 15, 2024
+        let dt5 = parse_datetime("Jan 15, 2024", None).unwrap();
+        assert_eq!(dt5.year(), 2024);
+        assert_eq!(dt5.month(), 1);
+        assert_eq!(dt5.day(), 15);
     }
 
     #[test]
