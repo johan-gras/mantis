@@ -121,15 +121,13 @@ Mantis is a high-performance Rust CLI backtest engine for quantitative trading w
 
 ---
 
-### 2.3 CHANGELOG.md Missing
+### 2.3 ~~CHANGELOG.md Missing~~ RESOLVED
 
-| Issue | No changelog file exists |
-|-------|-------------------------|
-| **Verified** | `ls CHANGELOG.md` shows file does not exist |
-| **Impact** | Cannot publish proper release without version history |
-
-**Required for:** Release documentation, version tracking, PyPI description
-**Format:** Keep a Changelog (https://keepachangelog.com)
+| Status | ✅ FIXED - CHANGELOG.md created |
+|--------|--------------------------------|
+| **Fix Date** | 2026-01-16 |
+| **Format** | Keep a Changelog (https://keepachangelog.com) |
+| **Content** | Comprehensive 1.0.0 release notes + Unreleased section |
 
 ---
 
