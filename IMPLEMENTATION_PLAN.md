@@ -313,13 +313,16 @@ python3 scripts/test_doc_examples.py --file path  # Test single file
 
 ---
 
-### 4.3 Base Slippage Cap Not Enforced
+### 4.3 ~~Base Slippage Cap Not Enforced~~ RESOLVED
 
-| Issue | Only market impact is capped at 10%; base slippage can exceed |
-|-------|-------------------------------------------------------------|
-| **Location** | `src/portfolio.rs:266` caps market impact but line 251-262 doesn't cap base |
-| **Spec says** | "Slippage > 10% -> Cap at 10%, log warning" |
-| **Impact** | Low (users rarely set slippage > 10%) |
+| Status | ✅ FIXED - Base slippage now capped at 10% with warning |
+|--------|--------------------------------------------------------|
+| **Fix Date** | 2026-01-16 |
+
+**Implementation:**
+- `calculate_slippage()` now checks if `slippage_pct > MAX_SLIPPAGE_CAP` (10%)
+- If exceeded, logs warning and caps at 10%
+- Consistent with market impact cap behavior
 
 ---
 

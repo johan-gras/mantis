@@ -247,9 +247,27 @@ impl CostModel {
         commission.max(self.min_commission)
     }
 
+    /// Maximum slippage/market impact cap as fraction of price (10% per spec).
+    const MAX_SLIPPAGE_CAP: f64 = 0.10;
+
     /// Calculate slippage for a trade.
+    ///
+    /// Per spec: Slippage > 10% is capped at 10% with a warning.
     pub fn calculate_slippage(&self, price: f64, side: Side) -> f64 {
-        let slippage_amount = price * self.slippage_pct;
+        // Cap slippage percentage at MAX_SLIPPAGE_CAP per spec
+        let effective_slippage_pct = if self.slippage_pct > Self::MAX_SLIPPAGE_CAP {
+            tracing::warn!(
+                "Slippage {:.2}% exceeds maximum {:.2}%, capping at {:.2}%",
+                self.slippage_pct * 100.0,
+                Self::MAX_SLIPPAGE_CAP * 100.0,
+                Self::MAX_SLIPPAGE_CAP * 100.0
+            );
+            Self::MAX_SLIPPAGE_CAP
+        } else {
+            self.slippage_pct
+        };
+
+        let slippage_amount = price * effective_slippage_pct;
         match side {
             Side::Buy => slippage_amount,   // Pay more when buying
             Side::Sell => -slippage_amount, // Receive less when selling
@@ -262,9 +280,6 @@ impl CostModel {
     }
 
     /// Calculate additional market impact adjustment in absolute price terms.
-    /// Maximum slippage/market impact cap as fraction of price (10% per spec).
-    const MAX_SLIPPAGE_CAP: f64 = 0.10;
-
     pub fn calculate_market_impact(&self, order_size: f64, avg_volume: f64, price: f64) -> f64 {
         let impact = self.market_impact.impact(order_size, avg_volume, price);
         let max_impact = price * Self::MAX_SLIPPAGE_CAP;
