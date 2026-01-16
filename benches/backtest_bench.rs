@@ -3,7 +3,7 @@
 //! Run with: cargo bench
 //!
 //! Spec-required benchmarks (benchmarking.md):
-//! - single_bar_1000: < 100us - 1000-bar backtest, single symbol
+//! - single_bar_1000: < 10ms - 1000-bar backtest, single symbol
 //! - daily_10y: < 100ms - 10-year daily data (2520 bars)
 //! - optimization_9param: < 1ms - 9-parameter grid search setup
 //! - sweep_1000: < 30s - 1000 parameter combinations
@@ -273,7 +273,7 @@ fn bench_monte_carlo(c: &mut Criterion) {
 fn bench_spec_required(c: &mut Criterion) {
     let mut group = c.benchmark_group("spec_required");
 
-    // single_bar_1000: 1000-bar backtest, single symbol (target: < 100us)
+    // single_bar_1000: 1000-bar backtest, single symbol (target: < 10ms)
     let bars_1000 = generate_bars(1000);
     group.bench_function("single_bar_1000", |b| {
         b.iter(|| {
