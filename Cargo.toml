@@ -9,6 +9,14 @@ repository = "https://github.com/johan/mantis"
 keywords = ["trading", "backtest", "quantitative", "finance", "cli"]
 categories = ["command-line-utilities", "finance", "simulation"]
 
+[lib]
+name = "mantis"
+crate-type = ["cdylib", "rlib"]
+
+[features]
+default = []
+python = ["pyo3/extension-module", "pyo3/abi3-py38", "numpy"]
+
 [dependencies]
 # CLI and configuration
 clap = { version = "4.4", features = ["derive"] }
@@ -54,6 +62,10 @@ rayon = "1.8"
 # Output formatting
 tabled = "0.15"
 colored = "2.1"
+
+# Python bindings (optional, enabled with --features python)
+pyo3 = { version = "0.22", optional = true }
+numpy = { version = "0.22", optional = true }
 
 [dev-dependencies]
 tempfile = "3.10"

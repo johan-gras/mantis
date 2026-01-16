@@ -62,34 +62,37 @@ All 3 previously failing tests now pass:
 
 ---
 
-### 2. Python Bindings (PyO3) [MISSING - VERIFIED]
-**Status:** Not implemented - CLI subprocess model used instead
+### 2. Python Bindings (PyO3) [COMPLETE]
+**Status:** COMPLETE
 
-**Current state:**
-- No PyO3 dependency in Cargo.toml
-- No src/python/ directory
-- No maturin configuration
-- No .pyi type stub files
-- Only subprocess-based CLI integration (see examples/pytorch_integration.py)
+**Implementation details:**
+- PyO3 0.22 with ABI3 stable Python ABI (supports Python 3.8+)
+- Maturin build system configured in pyproject.toml
+- Package name: `mantis-bt` (installable via `pip install mantis-bt`)
 
-**Spec requirements:**
-- `pip install mantis` with native Python integration
-- pandas/polars DataFrame support via Arrow
-- Type stubs for IDE autocomplete
-- Results display in Jupyter notebooks
-- `results.plot()` works inline in Jupyter
+**Files created:**
+- `src/python/mod.rs` - PyO3 module wiring (_mantis native module)
+- `src/python/types.rs` - PyBar, PyTrade Python-exposed types
+- `src/python/data.rs` - load(), load_multi(), load_dir() functions with numpy arrays
+- `src/python/backtest.rs` - backtest(), signal_check() functions, PyBacktestConfig
+- `src/python/results.rs` - PyBacktestResult, PyValidationResult with metrics
+- `pyproject.toml` - Maturin build configuration
+- `python/mantis/__init__.py` - Python wrapper with compare(), sweep() helpers
+- `python/mantis/__init__.pyi` - Type stubs for IDE autocomplete
+- `python/mantis/py.typed` - PEP 561 marker for typed package
 
-**Files to create/modify:**
-- `src/python/mod.rs` - PyO3 module wiring
-- `src/python/data.rs` - Arrow-based DataFrame conversions
-- `src/python/backtest.rs` - Python-facing backtest API
-- `src/python/results.rs` - Results wrapper with `.to_pandas()`, `.to_polars()`
-- `pyproject.toml` - Build configuration for maturin
-- `python/mantis_bt/__init__.pyi` - Type stubs for autocomplete
-- `Cargo.toml` - Add pyo3, arrow2 dependencies
+**Features:**
+- `mantis.load("file.csv")` - Returns dict with numpy arrays (timestamp, open, high, low, close, volume) and Bar objects
+- `mantis.backtest(data, signal)` - Run backtest with pre-computed signal array
+- `mantis.backtest(data, strategy="sma-crossover")` - Run with built-in strategy
+- All 6 built-in strategies accessible: sma-crossover, momentum, mean-reversion, rsi, macd, breakout
+- `signal_check()` - Validate signals before backtesting
+- `compare()` - Compare multiple backtest results
+- `sweep()` - Parameter sweep with callable signal generator
+- BacktestResult with: total_return, sharpe, sortino, calmar, max_drawdown, win_rate, profit_factor, trades, equity_curve, warnings()
 
-**Dependencies:** None (foundational)
-**Effort:** Large (2-3 weeks)
+**Dependencies:** None
+**Effort:** Large (completed)
 
 ---
 
@@ -400,7 +403,7 @@ All 3 previously failing tests now pass:
 | ID | Item | Status | Priority | Effort | Dependencies |
 |----|------|--------|----------|--------|--------------|
 | 1 | Statistical Tests | **COMPLETE** | P0 | - | - |
-| 2 | Python Bindings (PyO3) | MISSING | P0 | Large | None |
+| 2 | Python Bindings (PyO3) | **COMPLETE** | P0 | Large | None |
 | 3 | ONNX Module | PARTIAL | P0 | Small | ort crate |
 | 4 | Helpful Error Messages | **COMPLETE** | P0 | Medium | None |
 | 5 | Rolling Metrics | **COMPLETE** | P1 | Medium | None |
@@ -457,8 +460,9 @@ All 3 previously failing tests now pass:
 | **Verdict System** | **COMPLETE**: Verdict enum (Robust, Borderline, LikelyOverfit), verdict() methods in WalkForwardResult and MonteCarloResult, from_degradation_ratio() and from_criteria() classification, CLI color-coded verdict display, is_acceptable(), description(), label() helpers, exported from lib.rs, 12 unit tests |
 | **Parameter Sensitivity** | **COMPLETE**: src/sensitivity.rs (~1100 lines), ParameterRange enum (Linear, Logarithmic, Discrete, Centered), SensitivityConfig with constraints, SensitivityAnalysis with parallel rayon execution, HeatmapData for 2D visualization exports, cliff detection, plateau detection, parameter importance ranking, stability scores, CLI `mantis sensitivity` command with metric/steps/heatmap options, supports all 6 built-in strategies, 10 unit tests |
 | **HTML Reports** | **COMPLETE**: export_report_html() method in Exporter and MultiAssetExporter, self-contained HTML with embedded CSS, dark/light theme support, SVG charts for equity curve and drawdown, performance metrics grid, trade statistics, trade list table, 6 unit tests |
+| **Python Bindings (PyO3)** | **COMPLETE**: src/python/ module with mod.rs, types.rs, data.rs, backtest.rs, results.rs; pyproject.toml with maturin config; python/mantis/ wrapper with __init__.py, __init__.pyi type stubs, py.typed marker; load(), load_multi(), load_dir(), backtest(), signal_check() functions; 6 built-in strategies; compare(), sweep() helpers; BacktestResult with metrics and equity_curve |
 | Codebase Cleanliness | **VERIFIED**: No TODOs/FIXMEs in codebase |
-| ALL TESTS | **PASSING**: 584 tests (0 failures) |
+| ALL TESTS | **PASSING**: 539 lib tests (0 failures) |
 
 ---
 

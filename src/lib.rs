@@ -128,6 +128,10 @@ pub mod types;
 pub mod validation;
 pub mod walkforward;
 
+// Python bindings (only compiled with --features python)
+#[cfg(feature = "python")]
+pub mod python;
+
 // Re-exports for convenience
 pub use analytics::{
     rolling_drawdown, rolling_drawdown_windowed, rolling_max_drawdown, rolling_sharpe,
