@@ -826,18 +826,18 @@ result.plot()  # Interactive Plotly in Jupyter
 
 These features are implemented in the Rust core but NOT exposed in the Python API:
 
-### 26. Rolling Metrics Python API [PENDING]
-**Status:** NOT IMPLEMENTED
+### 26. Rolling Metrics Python API [COMPLETE]
+**Status:** COMPLETE
 **Priority:** P2
 
-The following rolling metric functions exist in Rust (`src/analytics.rs`) but are NOT exposed in Python:
-- `rolling_sharpe(returns, window, annualization_factor)`
-- `rolling_drawdown(equity)`
-- `rolling_drawdown_windowed(equity, window)`
-- `rolling_max_drawdown(equity, window)`
-- `rolling_volatility(returns, window, annualization_factor)`
-
-**Spec reference:** `specs/performance-metrics.md` lines 96-106
+**Implementation details:**
+- Added `rolling_sharpe(window=252, annualization_factor=252.0)` method to PyBacktestResult
+- Added `rolling_drawdown(window=None)` method to PyBacktestResult
+- Added `rolling_max_drawdown(window=252)` method to PyBacktestResult
+- Added `rolling_volatility(window=21, annualization_factor=252.0)` method to PyBacktestResult
+- Added `calculate_returns()` helper method
+- Updated Python type stubs in `python/mantis/__init__.pyi`
+- Updated Python wrapper in `python/mantis/__init__.py`
 
 **Effort:** Small
 **Dependencies:** None
@@ -858,13 +858,16 @@ The spec mentions `order_type="limit"` and `limit_offset` parameters.
 
 ---
 
-### 28. Volume Participation Python API [PENDING]
-**Status:** NOT IMPLEMENTED
+### 28. Volume Participation Python API [COMPLETE]
+**Status:** COMPLETE
 **Priority:** P3
 
-Volume participation constraints (`max_volume_participation`) exist in Rust (`src/portfolio.rs` CostModel) but NOT exposed in Python API.
-
-**Spec reference:** `specs/execution-realism.md`
+**Implementation details:**
+- Added `max_volume_participation` parameter to `PyBacktestConfig` (default None = no limit)
+- Added `max_volume_participation` parameter to `backtest()` function
+- Integrated with `CostModel.max_volume_participation`
+- Added `max_volume_participation()` method to fluent `Backtest` API class
+- Updated Python type stubs and wrapper
 
 **Effort:** Small
 **Dependencies:** None
@@ -905,9 +908,9 @@ Volume participation constraints (`max_volume_participation`) exist in Rust (`sr
 | 23 | Parallel Parameter Sweep | **COMPLETE** | P3 | Medium | None |
 | 24 | Advanced Plot Features | **COMPLETE** | P2 | Small | None |
 | 25 | Python Frequency Override Params | **COMPLETE** | P1 | Small | None |
-| 26 | Rolling Metrics Python API | PENDING | P2 | Small | None |
+| 26 | Rolling Metrics Python API | **COMPLETE** | P2 | Small | None |
 | 27 | Limit Order Python API | PENDING | P3 | Medium | None |
-| 28 | Volume Participation Python API | PENDING | P3 | Small | None |
+| 28 | Volume Participation Python API | **COMPLETE** | P3 | Small | None |
 
 ---
 

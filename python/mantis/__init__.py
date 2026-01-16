@@ -708,6 +708,64 @@ class BacktestResult:
             </div>
             """
 
+    def rolling_sharpe(
+        self,
+        window: int = 252,
+        annualization_factor: float = 252.0,
+    ) -> np.ndarray:
+        """
+        Calculate rolling Sharpe ratio over a sliding window.
+
+        Args:
+            window: Number of periods for rolling calculation (default: 252 for daily data)
+            annualization_factor: Factor to annualize returns (default: 252.0 for daily)
+
+        Returns:
+            Numpy array of rolling Sharpe ratios with same length as equity curve.
+        """
+        return self._rust.rolling_sharpe(window, annualization_factor)
+
+    def rolling_drawdown(self, window: Optional[int] = None) -> np.ndarray:
+        """
+        Calculate rolling drawdown from peak equity.
+
+        Args:
+            window: Optional maximum lookback window for peak (None = all history)
+
+        Returns:
+            Numpy array of drawdown values (0 at peaks, negative otherwise).
+        """
+        return self._rust.rolling_drawdown(window)
+
+    def rolling_max_drawdown(self, window: int = 252) -> np.ndarray:
+        """
+        Calculate the worst drawdown within each rolling window.
+
+        Args:
+            window: Rolling window size in periods (default: 252 for 1 year of daily data)
+
+        Returns:
+            Numpy array of worst drawdown values for each window.
+        """
+        return self._rust.rolling_max_drawdown(window)
+
+    def rolling_volatility(
+        self,
+        window: int = 21,
+        annualization_factor: float = 252.0,
+    ) -> np.ndarray:
+        """
+        Calculate rolling volatility from equity returns.
+
+        Args:
+            window: Number of periods for rolling calculation (default: 21 for monthly)
+            annualization_factor: Factor to annualize volatility (default: 252.0)
+
+        Returns:
+            Numpy array of annualized volatility values.
+        """
+        return self._rust.rolling_volatility(window, annualization_factor)
+
     def __repr__(self) -> str:
         return repr(self._rust)
 
@@ -962,6 +1020,9 @@ def backtest(
     max_position: float = 1.0,
     fill_price: str = "next_open",
     benchmark: Optional[Any] = None,
+    freq: Optional[str] = None,
+    trading_hours_24: Optional[bool] = None,
+    max_volume_participation: Optional[float] = None,
 ) -> BacktestResult:
     """
     Run a backtest on historical data with a signal array.
@@ -978,12 +1039,16 @@ def backtest(
         benchmark: Optional benchmark data (from load()) for performance comparison.
                    When provided, the result will include alpha, beta, benchmark_return,
                    excess_return, and other benchmark comparison metrics.
+        freq: Data frequency override ("1min", "5min", "1h", "1d", etc.). Auto-detected if None.
+        trading_hours_24: Whether to use 24/7 trading hours (crypto). Auto-detected if None.
+        max_volume_participation: Maximum volume participation rate (e.g., 0.10 = 10%).
+                                  Prevents unrealistic fills in illiquid markets. None = no limit.
     """
     rust_result = _backtest_raw(
         data, signal, strategy, strategy_params, config,
         commission, slippage, size, cash, stop_loss,
         take_profit, allow_short, borrow_cost, max_position, fill_price,
-        benchmark
+        benchmark, freq, trading_hours_24, max_volume_participation
     )
     return BacktestResult(rust_result)
 
@@ -1451,6 +1516,7 @@ class Backtest:
             "borrow_cost": 0.03,
             "max_position": 1.0,
             "fill_price": "next_open",
+            "max_volume_participation": None,
         }
 
     def commission(self, rate: float) -> "Backtest":
@@ -1674,6 +1740,27 @@ class Backtest:
             >>> results = mt.Backtest(btc_data, signal).trading_hours_24().run()
         """
         self._config["trading_hours_24"] = enabled
+        return self
+
+    def max_volume_participation(self, rate: float) -> "Backtest":
+        """
+        Set the maximum volume participation rate.
+
+        This limits the maximum order size to a fraction of the bar's volume,
+        preventing unrealistic fills in illiquid markets. For example, setting
+        this to 0.10 means orders cannot exceed 10% of the bar's total volume.
+
+        Args:
+            rate: Maximum participation rate as a fraction (e.g., 0.10 = 10%)
+
+        Returns:
+            Self for method chaining
+
+        Example:
+            >>> # Limit fills to 5% of bar volume
+            >>> results = mt.Backtest(data, signal).max_volume_participation(0.05).run()
+        """
+        self._config["max_volume_participation"] = rate
         return self
 
     def run(self) -> BacktestResult:

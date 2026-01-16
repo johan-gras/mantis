@@ -45,6 +45,8 @@ class BacktestConfig:
     """Data frequency override (e.g., "1min", "5min", "1h", "1d"). Auto-detected if None."""
     trading_hours_24: Optional[bool]
     """Whether to use 24/7 trading hours for annualization (crypto). Auto-detected if None."""
+    max_volume_participation: Optional[float]
+    """Maximum volume participation rate (e.g., 0.10 = 10% of bar volume). None = no limit."""
 
     def __init__(
         self,
@@ -61,6 +63,7 @@ class BacktestConfig:
         fill_price: str = "next_open",
         freq: Optional[str] = None,
         trading_hours_24: Optional[bool] = None,
+        max_volume_participation: Optional[float] = None,
     ) -> None: ...
 
 class BacktestResult:
@@ -249,6 +252,101 @@ class BacktestResult:
             >>> results.plot(save="report.html")  # Save to HTML file
             >>> results.plot(trades=True, theme="dark")  # Show trades with dark theme
             >>> print(results.plot())  # ASCII sparkline in terminal
+        """
+        ...
+    def rolling_sharpe(
+        self,
+        window: int = 252,
+        annualization_factor: float = 252.0,
+    ) -> NDArray[np.float64]:
+        """
+        Calculate rolling Sharpe ratio over a sliding window.
+
+        Returns annualized Sharpe ratio for each rolling window. Values before
+        the window size is reached are NaN.
+
+        Args:
+            window: Number of periods for rolling calculation (default: 252 for daily data)
+            annualization_factor: Factor to annualize returns (default: 252.0 for daily)
+
+        Returns:
+            Numpy array of rolling Sharpe ratios with same length as equity curve.
+
+        Example:
+            >>> results = mt.backtest(data, signal)
+            >>> rolling = results.rolling_sharpe(window=252)
+            >>> rolling[-1]  # Most recent Sharpe ratio
+            1.45
+        """
+        ...
+    def rolling_drawdown(
+        self,
+        window: Optional[int] = None,
+    ) -> NDArray[np.float64]:
+        """
+        Calculate rolling drawdown from peak equity.
+
+        Returns drawdown as a fraction (negative values) at each point in time.
+        A value of -0.10 means the equity is 10% below its peak.
+
+        Args:
+            window: Optional maximum lookback window for peak (None = all history)
+
+        Returns:
+            Numpy array of drawdown values (0 at peaks, negative otherwise).
+
+        Example:
+            >>> results = mt.backtest(data, signal)
+            >>> dd = results.rolling_drawdown()
+            >>> dd.min()  # Maximum drawdown
+            -0.15
+            >>> dd_52week = results.rolling_drawdown(window=252)  # 52-week lookback
+        """
+        ...
+    def rolling_max_drawdown(
+        self,
+        window: int = 252,
+    ) -> NDArray[np.float64]:
+        """
+        Calculate the worst drawdown within each rolling window.
+
+        Returns the maximum (worst) drawdown observed within each window.
+        Useful for tracking strategy risk over time.
+
+        Args:
+            window: Rolling window size in periods (default: 252 for 1 year of daily data)
+
+        Returns:
+            Numpy array of worst drawdown values for each window.
+
+        Example:
+            >>> results = mt.backtest(data, signal)
+            >>> rolling_max_dd = results.rolling_max_drawdown(window=252)
+        """
+        ...
+    def rolling_volatility(
+        self,
+        window: int = 21,
+        annualization_factor: float = 252.0,
+    ) -> NDArray[np.float64]:
+        """
+        Calculate rolling volatility from equity returns.
+
+        Returns annualized volatility for each rolling window.
+        Values before the window size is reached are NaN.
+
+        Args:
+            window: Number of periods for rolling calculation (default: 21 for monthly)
+            annualization_factor: Factor to annualize volatility (default: 252.0)
+
+        Returns:
+            Numpy array of annualized volatility values.
+
+        Example:
+            >>> results = mt.backtest(data, signal)
+            >>> vol = results.rolling_volatility(window=21)
+            >>> vol[-1]  # Most recent 21-day volatility
+            0.18
         """
         ...
     def save(self, path: str) -> None:
@@ -518,6 +616,7 @@ def backtest(
     benchmark: Optional[Union[Dict[str, Any], str, _DataFrame]] = None,
     freq: Optional[str] = None,
     trading_hours_24: Optional[bool] = None,
+    max_volume_participation: Optional[float] = None,
 ) -> BacktestResult:
     """
     Run a backtest on historical data with a signal array.
@@ -552,6 +651,8 @@ def backtest(
               "1h", "4h", "1d", "1w", "1mo"). Auto-detected from bar timestamps if None.
         trading_hours_24: Whether to use 24/7 trading hours for metric annualization (crypto).
                           Auto-detected from weekend bars if None.
+        max_volume_participation: Maximum volume participation rate (e.g., 0.10 = 10% of bar volume).
+                                  Prevents unrealistic fills in illiquid markets. None = no limit.
 
     Returns:
         BacktestResult object with metrics, equity curve, and trades.
@@ -1008,6 +1109,20 @@ class Backtest:
 
         Example:
             >>> results = mt.Backtest(btc_data, signal).trading_hours_24().run()
+        """
+        ...
+    def max_volume_participation(self, rate: float) -> "Backtest":
+        """
+        Set the maximum volume participation rate.
+
+        This limits the maximum order size to a fraction of the bar's volume,
+        preventing unrealistic fills in illiquid markets.
+
+        Args:
+            rate: Maximum participation rate as a fraction (e.g., 0.10 = 10%)
+
+        Example:
+            >>> results = mt.Backtest(data, signal).max_volume_participation(0.05).run()
         """
         ...
     def run(self) -> BacktestResult:

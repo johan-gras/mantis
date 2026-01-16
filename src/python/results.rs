@@ -10,7 +10,10 @@ use std::collections::HashMap;
 use std::fs::File;
 use uuid::Uuid;
 
-use crate::analytics::{BenchmarkMetrics, PerformanceMetrics};
+use crate::analytics::{
+    rolling_drawdown, rolling_drawdown_windowed, rolling_max_drawdown, rolling_sharpe,
+    rolling_volatility, BenchmarkMetrics, PerformanceMetrics,
+};
 use crate::engine::{BacktestConfig, BacktestResult, Engine};
 use crate::export::{export_walkforward_html, Exporter, PerformanceSummary};
 use crate::strategy::{Strategy, StrategyContext};
@@ -382,6 +385,113 @@ impl PyBacktestResult {
         )
     }
 
+    /// Calculate rolling Sharpe ratio over a sliding window.
+    ///
+    /// Returns annualized Sharpe ratio for each rolling window. Values before
+    /// the window size is reached are NaN.
+    ///
+    /// Args:
+    ///     window: Number of periods for rolling calculation (default: 252 for daily data)
+    ///     annualization_factor: Factor to annualize returns (default: 252.0 for daily)
+    ///
+    /// Returns:
+    ///     Numpy array of rolling Sharpe ratios with same length as equity curve.
+    ///
+    /// Example:
+    ///     >>> results = mt.backtest(data, signal)
+    ///     >>> rolling = results.rolling_sharpe(window=252)
+    #[pyo3(signature = (window=252, annualization_factor=252.0))]
+    fn rolling_sharpe<'py>(
+        &self,
+        py: Python<'py>,
+        window: usize,
+        annualization_factor: f64,
+    ) -> Bound<'py, PyArray1<f64>> {
+        // Calculate returns from equity curve
+        let returns = self.calculate_returns();
+        let rolling = rolling_sharpe(&returns, window, annualization_factor);
+        PyArray1::from_vec_bound(py, rolling)
+    }
+
+    /// Calculate rolling drawdown from peak equity.
+    ///
+    /// Returns drawdown as a fraction (negative values) at each point in time.
+    /// A value of -0.10 means the equity is 10% below its peak.
+    ///
+    /// Args:
+    ///     window: Optional maximum lookback window for peak (None = all history)
+    ///
+    /// Returns:
+    ///     Numpy array of drawdown values (0 at peaks, negative otherwise).
+    ///
+    /// Example:
+    ///     >>> results = mt.backtest(data, signal)
+    ///     >>> dd = results.rolling_drawdown()
+    ///     >>> dd_52week = results.rolling_drawdown(window=252)
+    #[pyo3(signature = (window=None))]
+    fn rolling_drawdown<'py>(
+        &self,
+        py: Python<'py>,
+        window: Option<usize>,
+    ) -> Bound<'py, PyArray1<f64>> {
+        let dd = match window {
+            Some(w) => rolling_drawdown_windowed(&self.equity_values, w),
+            None => rolling_drawdown(&self.equity_values),
+        };
+        PyArray1::from_vec_bound(py, dd)
+    }
+
+    /// Calculate the worst drawdown within each rolling window.
+    ///
+    /// Returns the maximum (worst) drawdown observed within each window.
+    /// Useful for tracking strategy risk over time.
+    ///
+    /// Args:
+    ///     window: Rolling window size in periods (default: 252 for 1 year of daily data)
+    ///
+    /// Returns:
+    ///     Numpy array of worst drawdown values for each window.
+    ///
+    /// Example:
+    ///     >>> results = mt.backtest(data, signal)
+    ///     >>> rolling_max_dd = results.rolling_max_drawdown(window=252)
+    #[pyo3(signature = (window=252))]
+    fn rolling_max_drawdown<'py>(
+        &self,
+        py: Python<'py>,
+        window: usize,
+    ) -> Bound<'py, PyArray1<f64>> {
+        let rolling = rolling_max_drawdown(&self.equity_values, window);
+        PyArray1::from_vec_bound(py, rolling)
+    }
+
+    /// Calculate rolling volatility from equity returns.
+    ///
+    /// Returns annualized volatility for each rolling window.
+    /// Values before the window size is reached are NaN.
+    ///
+    /// Args:
+    ///     window: Number of periods for rolling calculation (default: 21 for monthly)
+    ///     annualization_factor: Factor to annualize volatility (default: 252.0)
+    ///
+    /// Returns:
+    ///     Numpy array of annualized volatility values.
+    ///
+    /// Example:
+    ///     >>> results = mt.backtest(data, signal)
+    ///     >>> vol = results.rolling_volatility(window=21)
+    #[pyo3(signature = (window=21, annualization_factor=252.0))]
+    fn rolling_volatility<'py>(
+        &self,
+        py: Python<'py>,
+        window: usize,
+        annualization_factor: f64,
+    ) -> Bound<'py, PyArray1<f64>> {
+        let returns = self.calculate_returns();
+        let rolling = rolling_volatility(&returns, window, annualization_factor);
+        PyArray1::from_vec_bound(py, rolling)
+    }
+
     /// Save the backtest results to a JSON file.
     ///
     /// The file contains all metrics, equity curve, and trades.
@@ -522,6 +632,22 @@ impl PyBacktestResult {
 }
 
 impl PyBacktestResult {
+    /// Calculate returns from equity curve for rolling calculations.
+    fn calculate_returns(&self) -> Vec<f64> {
+        if self.equity_values.len() < 2 {
+            return vec![0.0; self.equity_values.len()];
+        }
+        let mut returns = Vec::with_capacity(self.equity_values.len());
+        returns.push(0.0); // First return is 0
+        for i in 1..self.equity_values.len() {
+            let prev = self.equity_values[i - 1];
+            let curr = self.equity_values[i];
+            let ret = if prev > 0.0 { (curr - prev) / prev } else { 0.0 };
+            returns.push(ret);
+        }
+        returns
+    }
+
     /// Create from a Rust BacktestResult without validation data.
     pub fn from_result(result: &BacktestResult) -> Self {
         Self::from_result_with_data(result, None, None, None)

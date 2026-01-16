@@ -54,6 +54,10 @@ pub struct PyBacktestConfig {
     /// Whether to use 24/7 trading hours (for crypto markets).
     /// If None, this is auto-detected based on weekend bars.
     pub trading_hours_24: Option<bool>,
+    /// Maximum volume participation rate as a fraction (e.g., 0.10 = 10% of bar volume).
+    /// Prevents unrealistic fills in illiquid markets. None means no limit (default).
+    #[pyo3(get, set)]
+    pub max_volume_participation: Option<f64>,
 }
 
 /// Specification for stop loss - can be percentage or ATR-based.
@@ -249,7 +253,8 @@ impl PyBacktestConfig {
         max_position=1.0,
         fill_price="next_open",
         freq=None,
-        trading_hours_24=None
+        trading_hours_24=None,
+        max_volume_participation=None
     ))]
     #[allow(clippy::too_many_arguments)]
     fn new(
@@ -267,6 +272,7 @@ impl PyBacktestConfig {
         fill_price: &str,
         freq: Option<&str>,
         trading_hours_24: Option<bool>,
+        max_volume_participation: Option<f64>,
     ) -> PyResult<Self> {
         let sl_spec = if let Some(ref obj) = stop_loss {
             parse_stop_loss(py, obj)?
@@ -299,6 +305,7 @@ impl PyBacktestConfig {
             fill_price: fill_price.to_string(),
             freq: freq_parsed,
             trading_hours_24,
+            max_volume_participation,
         })
     }
 
@@ -363,6 +370,7 @@ impl PyBacktestConfig {
             commission_pct: self.commission,
             slippage_pct: self.slippage,
             borrow_cost_rate: self.borrow_cost,
+            max_volume_participation: self.max_volume_participation,
             ..Default::default()
         };
 
@@ -458,6 +466,8 @@ impl From<&PyBacktestConfig> for BacktestConfig {
 ///     benchmark: Optional benchmark data for performance comparison (data dict from load())
 ///     freq: Optional data frequency override ("1min", "5min", "1h", "1d", etc.). Auto-detected if None.
 ///     trading_hours_24: Whether to use 24/7 trading hours for annualization (crypto). Auto-detected if None.
+///     max_volume_participation: Maximum volume participation rate (e.g., 0.10 = 10% of bar volume).
+///         Prevents unrealistic fills in illiquid markets. None means no limit (default).
 ///
 /// Returns:
 ///     BacktestResult object with metrics, equity curve, and trades.
@@ -495,7 +505,8 @@ impl From<&PyBacktestConfig> for BacktestConfig {
     fill_price="next_open",
     benchmark=None,
     freq=None,
-    trading_hours_24=None
+    trading_hours_24=None,
+    max_volume_participation=None
 ))]
 #[allow(clippy::too_many_arguments)]
 pub fn backtest(
@@ -518,6 +529,7 @@ pub fn backtest(
     benchmark: Option<PyObject>,
     freq: Option<&str>,
     trading_hours_24: Option<bool>,
+    max_volume_participation: Option<f64>,
 ) -> PyResult<PyBacktestResult> {
     // Extract bars from data first (needed for ATR calculation)
     let bars = extract_bars(py, &data)?;
@@ -547,6 +559,7 @@ pub fn backtest(
             fill_price,
             freq,
             trading_hours_24,
+            max_volume_participation,
         )?;
         py_config.to_backtest_config(Some(&bars))
     };
@@ -1448,6 +1461,7 @@ pub fn validate(
             fill_price: "next_open".to_string(),
             freq: None,
             trading_hours_24: None,
+            max_volume_participation: None,
         };
         py_config.to_backtest_config(Some(&bars))
     };
