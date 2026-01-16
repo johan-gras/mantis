@@ -81,6 +81,38 @@ class BacktestResult:
     def equity_timestamps(self) -> NDArray[np.int64]: ...
     @property
     def trades(self) -> List[Any]: ...
+    @property
+    def deflated_sharpe(self) -> float:
+        """
+        Get the Deflated Sharpe Ratio.
+
+        The Deflated Sharpe Ratio (DSR) adjusts the Sharpe ratio for the
+        number of trials conducted during strategy development. With more
+        parameter combinations tested, the probability of finding a high
+        Sharpe ratio by chance increases. DSR accounts for this multiple
+        testing bias.
+
+        Returns a value between 0 and the raw Sharpe ratio. Lower values
+        indicate higher probability that the observed Sharpe is due to
+        overfitting rather than genuine alpha.
+        """
+        ...
+    @property
+    def psr(self) -> float:
+        """
+        Get the Probabilistic Sharpe Ratio.
+
+        The Probabilistic Sharpe Ratio (PSR) represents the probability
+        that the true Sharpe ratio is greater than a benchmark (default 0).
+        It accounts for the length of the track record, skewness, and
+        kurtosis of returns.
+
+        Returns a value between 0 and 1:
+        - > 0.95: High confidence the strategy is genuinely profitable
+        - 0.80-0.95: Moderate confidence
+        - < 0.80: Low confidence, results may be due to chance
+        """
+        ...
     def metrics(self) -> Dict[str, Any]: ...
     def summary(self) -> str: ...
     def warnings(self) -> List[str]: ...
@@ -178,10 +210,28 @@ class ValidationResult:
             >>> print(validation.plot())
         """
         ...
+    def report(self, path: str) -> None:
+        """
+        Generate a self-contained HTML report for the validation results.
+
+        The report includes:
+        - Summary metrics (folds, window type, IS ratio)
+        - Verdict classification with color coding
+        - Performance metrics (IS/OOS Sharpe, returns, efficiency)
+        - Fold-by-fold results table
+        - Bar chart comparing IS vs OOS performance
+
+        Args:
+            path: Path to the output HTML file.
+
+        Example:
+            >>> validation = mt.validate(data, signal)
+            >>> validation.report("validation_report.html")
+        """
+        ...
 
 def load(
     path: str,
-    date_column: Optional[str] = None,
     date_format: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
@@ -189,7 +239,6 @@ def load(
 
     Args:
         path: Path to the data file (.csv or .parquet)
-        date_column: Optional name of the date column
         date_format: Optional date format string (e.g., "%Y-%m-%d")
 
     Returns:
@@ -204,7 +253,6 @@ def load(
 
 def load_multi(
     paths: Dict[str, str],
-    date_column: Optional[str] = None,
     date_format: Optional[str] = None,
 ) -> Dict[str, Dict[str, Any]]:
     """
@@ -212,7 +260,6 @@ def load_multi(
 
     Args:
         paths: Dictionary mapping symbol names to file paths
-        date_column: Optional name of the date column
         date_format: Optional date format string
 
     Returns:
@@ -225,7 +272,6 @@ def load_multi(
 
 def load_dir(
     pattern: str,
-    date_column: Optional[str] = None,
     date_format: Optional[str] = None,
 ) -> Dict[str, Dict[str, Any]]:
     """
@@ -233,7 +279,6 @@ def load_dir(
 
     Args:
         pattern: Glob pattern (e.g., "data/*.csv")
-        date_column: Optional name of the date column
         date_format: Optional date format string
 
     Returns:

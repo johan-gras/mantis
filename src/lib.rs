@@ -182,6 +182,9 @@ pub use sensitivity::{
     SensitivityConfig, SensitivityMetric, SensitivitySummary,
 };
 
+// Export utilities
+pub use export::export_walkforward_html;
+
 // Visualization utilities
 pub use viz::{
     compare_strategies, equity_sparkline, export_heatmap_svg, heatmap_to_ascii, heatmap_to_svg,

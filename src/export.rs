@@ -1743,6 +1743,411 @@ fn write_drawdown_svg<W: Write>(writer: &mut W, equity_curve: &[EquityPoint]) ->
     Ok(())
 }
 
+// ============================================================================
+// Walk-Forward Report Export
+// ============================================================================
+
+use crate::walkforward::WalkForwardResult;
+
+/// Export walk-forward validation results to a self-contained HTML report.
+///
+/// Creates an HTML file with embedded CSS and SVG charts showing:
+/// - Summary metrics (IS/OOS Sharpe, degradation, verdict)
+/// - Fold-by-fold performance comparison
+/// - Efficiency metrics
+pub fn export_walkforward_html(result: &WalkForwardResult, path: impl AsRef<Path>) -> Result<()> {
+    let file = File::create(path)?;
+    let mut writer = BufWriter::new(file);
+
+    // Write HTML header
+    write!(writer, "{}", html_header("Walk-Forward Validation Report"))?;
+
+    // Summary section
+    writeln!(writer, "  <div class=\"section\">")?;
+    writeln!(writer, "    <h2>Walk-Forward Summary</h2>")?;
+    writeln!(writer, "    <div class=\"meta\">")?;
+    writeln!(
+        writer,
+        "      <p><strong>Folds:</strong> {}</p>",
+        result.windows.len()
+    )?;
+    writeln!(
+        writer,
+        "      <p><strong>Window Type:</strong> {}</p>",
+        if result.config.anchored {
+            "Anchored"
+        } else {
+            "Rolling"
+        }
+    )?;
+    writeln!(
+        writer,
+        "      <p><strong>In-Sample Ratio:</strong> {:.0}%</p>",
+        result.config.in_sample_ratio * 100.0
+    )?;
+    writeln!(writer, "    </div>")?;
+    writeln!(writer, "  </div>")?;
+
+    // Verdict section
+    let verdict = result.verdict();
+    let verdict_color = match verdict.label() {
+        "robust" => "positive",
+        "borderline" => "neutral",
+        _ => "negative",
+    };
+    writeln!(writer, "  <div class=\"section\">")?;
+    writeln!(writer, "    <h2>Verdict</h2>")?;
+    writeln!(writer, "    <div class=\"metrics-grid\">")?;
+    write_metric_card(&mut writer, "Classification", verdict.label(), verdict_color)?;
+    write_metric_card(
+        &mut writer,
+        "OOS/IS Degradation",
+        &format!("{:.0}%", result.oos_sharpe_ratio() * 100.0),
+        if result.oos_sharpe_ratio() >= 0.8 {
+            "positive"
+        } else if result.oos_sharpe_ratio() >= 0.6 {
+            "neutral"
+        } else {
+            "negative"
+        },
+    )?;
+    write_metric_card(
+        &mut writer,
+        "Walk-Forward Efficiency",
+        &format!("{:.1}%", result.walk_forward_efficiency * 100.0),
+        if result.walk_forward_efficiency >= 0.5 {
+            "positive"
+        } else {
+            "negative"
+        },
+    )?;
+    write_metric_card(
+        &mut writer,
+        "Parameter Stability",
+        &format!("{:.1}%", result.parameter_stability * 100.0),
+        if result.parameter_stability >= 0.7 {
+            "positive"
+        } else if result.parameter_stability >= 0.5 {
+            "neutral"
+        } else {
+            "negative"
+        },
+    )?;
+    writeln!(writer, "    </div>")?;
+    writeln!(writer, "  </div>")?;
+
+    // Performance metrics
+    writeln!(writer, "  <div class=\"section\">")?;
+    writeln!(writer, "    <h2>Performance Metrics</h2>")?;
+    writeln!(writer, "    <div class=\"metrics-grid\">")?;
+    write_metric_card(
+        &mut writer,
+        "Avg IS Sharpe",
+        &format!("{:.2}", result.avg_is_sharpe),
+        sharpe_color(result.avg_is_sharpe),
+    )?;
+    write_metric_card(
+        &mut writer,
+        "Avg OOS Sharpe",
+        &format!("{:.2}", result.avg_oos_sharpe),
+        sharpe_color(result.avg_oos_sharpe),
+    )?;
+    write_metric_card(
+        &mut writer,
+        "Avg IS Return",
+        &format!("{:.2}%", result.avg_is_return),
+        if result.avg_is_return >= 0.0 {
+            "positive"
+        } else {
+            "negative"
+        },
+    )?;
+    write_metric_card(
+        &mut writer,
+        "Avg OOS Return",
+        &format!("{:.2}%", result.avg_oos_return),
+        if result.avg_oos_return >= 0.0 {
+            "positive"
+        } else {
+            "negative"
+        },
+    )?;
+    write_metric_card(
+        &mut writer,
+        "Combined OOS Return",
+        &format!("{:.2}%", result.combined_oos_return),
+        if result.combined_oos_return >= 0.0 {
+            "positive"
+        } else {
+            "negative"
+        },
+    )?;
+    write_metric_card(
+        &mut writer,
+        "Avg Efficiency",
+        &format!("{:.1}%", result.avg_efficiency_ratio * 100.0),
+        if result.avg_efficiency_ratio >= 0.5 {
+            "positive"
+        } else {
+            "neutral"
+        },
+    )?;
+    writeln!(writer, "    </div>")?;
+    writeln!(writer, "  </div>")?;
+
+    // Fold-by-fold table
+    if !result.windows.is_empty() {
+        writeln!(writer, "  <div class=\"section\">")?;
+        writeln!(writer, "    <h2>Fold-by-Fold Results</h2>")?;
+        writeln!(writer, "    <div class=\"table-container\">")?;
+        writeln!(writer, "      <table>")?;
+        writeln!(writer, "        <thead>")?;
+        writeln!(writer, "          <tr>")?;
+        writeln!(writer, "            <th>Fold</th>")?;
+        writeln!(writer, "            <th>IS Bars</th>")?;
+        writeln!(writer, "            <th>OOS Bars</th>")?;
+        writeln!(writer, "            <th>IS Sharpe</th>")?;
+        writeln!(writer, "            <th>OOS Sharpe</th>")?;
+        writeln!(writer, "            <th>IS Return</th>")?;
+        writeln!(writer, "            <th>OOS Return</th>")?;
+        writeln!(writer, "            <th>Efficiency</th>")?;
+        writeln!(writer, "          </tr>")?;
+        writeln!(writer, "        </thead>")?;
+        writeln!(writer, "        <tbody>")?;
+
+        for (i, window_result) in result.windows.iter().enumerate() {
+            let is_sharpe = window_result.in_sample_result.sharpe_ratio;
+            let oos_sharpe = window_result.out_of_sample_result.sharpe_ratio;
+            let is_return = window_result.in_sample_result.total_return_pct;
+            let oos_return = window_result.out_of_sample_result.total_return_pct;
+            let efficiency = window_result.efficiency_ratio;
+
+            let row_class = if oos_return >= 0.0 { "win" } else { "loss" };
+
+            writeln!(writer, "          <tr class=\"{}\">", row_class)?;
+            writeln!(writer, "            <td>{}</td>", i + 1)?;
+            writeln!(writer, "            <td>{}</td>", window_result.window.is_bars)?;
+            writeln!(
+                writer,
+                "            <td>{}</td>",
+                window_result.window.oos_bars
+            )?;
+            writeln!(writer, "            <td>{:.2}</td>", is_sharpe)?;
+            writeln!(
+                writer,
+                "            <td class=\"{}\">{:.2}</td>",
+                if oos_sharpe >= 0.0 {
+                    "positive"
+                } else {
+                    "negative"
+                },
+                oos_sharpe
+            )?;
+            writeln!(
+                writer,
+                "            <td class=\"{}\">{:.2}%</td>",
+                if is_return >= 0.0 {
+                    "positive"
+                } else {
+                    "negative"
+                },
+                is_return
+            )?;
+            writeln!(
+                writer,
+                "            <td class=\"{}\">{:.2}%</td>",
+                if oos_return >= 0.0 {
+                    "positive"
+                } else {
+                    "negative"
+                },
+                oos_return
+            )?;
+            writeln!(
+                writer,
+                "            <td class=\"{}\">{:.0}%</td>",
+                if efficiency >= 0.5 {
+                    "positive"
+                } else {
+                    "negative"
+                },
+                efficiency * 100.0
+            )?;
+            writeln!(writer, "          </tr>")?;
+        }
+
+        writeln!(writer, "        </tbody>")?;
+        writeln!(writer, "      </table>")?;
+        writeln!(writer, "    </div>")?;
+        writeln!(writer, "  </div>")?;
+
+        // Bar chart visualization of IS vs OOS performance
+        writeln!(writer, "  <div class=\"section\">")?;
+        writeln!(writer, "    <h2>Performance Comparison</h2>")?;
+        writeln!(writer, "    <div class=\"chart-container\">")?;
+        write_walkforward_bar_chart(&mut writer, result)?;
+        writeln!(writer, "    </div>")?;
+        writeln!(writer, "  </div>")?;
+    }
+
+    // Footer
+    write!(writer, "{}", html_footer())?;
+
+    Ok(())
+}
+
+/// Write a bar chart comparing IS vs OOS performance across folds.
+fn write_walkforward_bar_chart<W: Write>(writer: &mut W, result: &WalkForwardResult) -> Result<()> {
+    if result.windows.is_empty() {
+        return Ok(());
+    }
+
+    let width = 800.0;
+    let height = 300.0;
+    let padding = 60.0;
+    let chart_width = width - 2.0 * padding;
+    let chart_height = height - 2.0 * padding;
+
+    let num_folds = result.windows.len();
+    let bar_group_width = chart_width / num_folds as f64;
+    let bar_width = bar_group_width * 0.35;
+    let gap = bar_group_width * 0.1;
+
+    // Find max/min returns for scaling
+    let mut max_return = 0.0_f64;
+    let mut min_return = 0.0_f64;
+    for w in &result.windows {
+        max_return = max_return.max(w.in_sample_result.total_return_pct);
+        max_return = max_return.max(w.out_of_sample_result.total_return_pct);
+        min_return = min_return.min(w.in_sample_result.total_return_pct);
+        min_return = min_return.min(w.out_of_sample_result.total_return_pct);
+    }
+
+    // Add padding to y range
+    let y_range = (max_return - min_return).max(1.0);
+    max_return += y_range * 0.1;
+    min_return -= y_range * 0.1;
+    let y_range = max_return - min_return;
+
+    // Zero line position
+    let zero_y = padding + ((max_return - 0.0) / y_range) * chart_height;
+
+    // Colors
+    let is_color = "#3b82f6"; // Blue for in-sample
+    let oos_color = "#10b981"; // Green for out-of-sample
+
+    writeln!(
+        writer,
+        r##"      <svg viewBox="0 0 {} {}" xmlns="http://www.w3.org/2000/svg">"##,
+        width, height
+    )?;
+
+    // Background
+    writeln!(
+        writer,
+        r##"        <rect width="{}" height="{}" fill="transparent"/>"##,
+        width, height
+    )?;
+
+    // Zero line
+    writeln!(
+        writer,
+        r##"        <line x1="{}" y1="{:.1}" x2="{}" y2="{:.1}" stroke="#666" stroke-width="1"/>"##,
+        padding,
+        zero_y,
+        width - padding,
+        zero_y
+    )?;
+
+    // Draw bars for each fold
+    for (i, window_result) in result.windows.iter().enumerate() {
+        let is_return = window_result.in_sample_result.total_return_pct;
+        let oos_return = window_result.out_of_sample_result.total_return_pct;
+
+        let x_center = padding + (i as f64 + 0.5) * bar_group_width;
+
+        // IS bar
+        let is_x = x_center - bar_width - gap / 2.0;
+        let is_height = ((is_return - 0.0) / y_range).abs() * chart_height;
+        let is_y = if is_return >= 0.0 {
+            zero_y - is_height
+        } else {
+            zero_y
+        };
+        writeln!(
+            writer,
+            r##"        <rect x="{:.1}" y="{:.1}" width="{:.1}" height="{:.1}" fill="{}" opacity="0.8"/>"##,
+            is_x, is_y, bar_width, is_height.max(1.0), is_color
+        )?;
+
+        // OOS bar
+        let oos_x = x_center + gap / 2.0;
+        let oos_height = ((oos_return - 0.0) / y_range).abs() * chart_height;
+        let oos_y = if oos_return >= 0.0 {
+            zero_y - oos_height
+        } else {
+            zero_y
+        };
+        writeln!(
+            writer,
+            r##"        <rect x="{:.1}" y="{:.1}" width="{:.1}" height="{:.1}" fill="{}" opacity="0.8"/>"##,
+            oos_x, oos_y, bar_width, oos_height.max(1.0), oos_color
+        )?;
+
+        // X-axis label (fold number)
+        writeln!(
+            writer,
+            r##"        <text x="{:.1}" y="{}" font-size="10" fill="#666" text-anchor="middle">{}</text>"##,
+            x_center,
+            height - 10.0,
+            i + 1
+        )?;
+    }
+
+    // Y-axis labels
+    let num_y_ticks = 5;
+    for i in 0..=num_y_ticks {
+        let y_val = min_return + (i as f64 / num_y_ticks as f64) * y_range;
+        let y = padding + chart_height - (i as f64 / num_y_ticks as f64) * chart_height;
+
+        writeln!(
+            writer,
+            r##"        <text x="{}" y="{:.1}" font-size="10" fill="#666" text-anchor="end">{:.1}%</text>"##,
+            padding - 5.0,
+            y + 3.0,
+            y_val
+        )?;
+    }
+
+    // Legend
+    writeln!(
+        writer,
+        r##"        <rect x="{}" y="10" width="12" height="12" fill="{}"/>"##,
+        width - 150.0,
+        is_color
+    )?;
+    writeln!(
+        writer,
+        r##"        <text x="{}" y="20" font-size="11" fill="#666">In-Sample</text>"##,
+        width - 135.0
+    )?;
+    writeln!(
+        writer,
+        r##"        <rect x="{}" y="30" width="12" height="12" fill="{}"/>"##,
+        width - 150.0,
+        oos_color
+    )?;
+    writeln!(
+        writer,
+        r##"        <text x="{}" y="40" font-size="11" fill="#666">Out-of-Sample</text>"##,
+        width - 135.0
+    )?;
+
+    writeln!(writer, "      </svg>")?;
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

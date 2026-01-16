@@ -78,7 +78,7 @@ All 3 previously failing tests now pass:
 - `src/python/results.rs` - PyBacktestResult, PyValidationResult with metrics
 - `pyproject.toml` - Maturin build configuration
 - `python/mantis/__init__.py` - Python wrapper with compare(), sweep() helpers
-- `python/mantis/__init__.pyi` - Type stubs for IDE autocomplete
+- `python/mantis/__init__.pyi` - Type stubs for IDE autocomplete (note: `date_column` parameter was removed from load/load_multi/load_dir since it was documented but not implemented)
 - `python/mantis/py.typed` - PEP 561 marker for typed package
 
 **Features:**
@@ -98,6 +98,10 @@ All 3 previously failing tests now pass:
 - `results.save("file.json")` - Export metrics to JSON file
 - `results.report("file.html")` - Generate self-contained HTML report with SVG charts
 - `validation.plot(width=20)` - ASCII visualization of fold-by-fold performance
+- `validation.report("file.html")` - Generate self-contained HTML report for validation results
+- `results.deflated_sharpe` - Deflated Sharpe Ratio property
+- `results.psr` - Probabilistic Sharpe Ratio property
+- `results.metrics()` now includes deflated_sharpe and psr
 
 **Dependencies:** None
 **Effort:** Large (completed)
@@ -519,6 +523,7 @@ mantis portfolio -d ./data/stocks/ -p "*.csv" --strategy risk-parity --rebalance
 | **Sample Data Bundling** | **COMPLETE**: load_sample(), list_samples() functions; data/samples/AAPL.csv, SPY.csv, BTC.csv (~10 years daily OHLCV 2014-2024); embedded via include_str!(); Python bindings mt.load_sample(), mt.list_samples(); type stubs; 6 unit tests |
 | **Polars Backend Support** | **COMPLETE**: pandas DataFrame input support in backtest() and validate(); polars DataFrame input support in backtest() and validate(); auto-detection of DataFrame type via __class__.__module__; case-insensitive OHLCV column detection (open/Open/o, high/High/h, etc.); timestamp extraction from DatetimeIndex, date columns, or polars datetime columns; fallback to sequential timestamps; type stubs updated with DataFrame types; Files: src/python/backtest.rs (extract_bars_from_pandas, extract_bars_from_polars, extract_pandas_timestamps, extract_polars_timestamps), python/mantis/__init__.pyi |
 | **Multi-Symbol CLI Command** | **COMPLETE**: `mantis portfolio` CLI command with 9 portfolio strategies (equal-weight, momentum, inverse-vol, risk-parity, min-variance, max-sharpe, hrp, drift-equal, drift-momentum), glob pattern loading, portfolio constraints (max-position, max-leverage, max-turnover, min/max-holdings), text/JSON/CSV output |
+| **Python Bindings Advanced Metrics** | **COMPLETE**: ValidationResult.report() method for HTML export; BacktestResult.deflated_sharpe and .psr properties; metrics() dict includes deflated_sharpe and psr |
 | Codebase Cleanliness | **VERIFIED**: No TODOs/FIXMEs in codebase |
 | ALL TESTS | **PASSING**: 558+ lib tests (0 failures) |
 

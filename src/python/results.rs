@@ -9,8 +9,9 @@ use pyo3::types::{PyDict, PyList};
 use std::fs::File;
 use std::io::Write;
 
+use crate::analytics::PerformanceMetrics;
 use crate::engine::BacktestResult;
-use crate::export::{Exporter, PerformanceSummary};
+use crate::export::{export_walkforward_html, Exporter, PerformanceSummary};
 use crate::viz::{sparkline, walkforward_fold_chart};
 use crate::walkforward::WalkForwardResult;
 
@@ -87,6 +88,40 @@ impl PyBacktestResult {
         self.trades_data.clone()
     }
 
+    /// Get the Deflated Sharpe Ratio.
+    ///
+    /// The Deflated Sharpe Ratio (DSR) adjusts the Sharpe ratio for the
+    /// number of trials conducted during strategy development. With more
+    /// parameter combinations tested, the probability of finding a high
+    /// Sharpe ratio by chance increases. DSR accounts for this multiple
+    /// testing bias.
+    ///
+    /// Returns a value between 0 and the raw Sharpe ratio. Lower values
+    /// indicate higher probability that the observed Sharpe is due to
+    /// overfitting rather than genuine alpha.
+    #[getter]
+    fn deflated_sharpe(&self) -> f64 {
+        let metrics = PerformanceMetrics::from_result(&self.rust_result);
+        metrics.deflated_sharpe_ratio
+    }
+
+    /// Get the Probabilistic Sharpe Ratio.
+    ///
+    /// The Probabilistic Sharpe Ratio (PSR) represents the probability
+    /// that the true Sharpe ratio is greater than a benchmark (default 0).
+    /// It accounts for the length of the track record, skewness, and
+    /// kurtosis of returns.
+    ///
+    /// Returns a value between 0 and 1:
+    /// - > 0.95: High confidence the strategy is genuinely profitable
+    /// - 0.80-0.95: Moderate confidence
+    /// - < 0.80: Low confidence, results may be due to chance
+    #[getter]
+    fn psr(&self) -> f64 {
+        let metrics = PerformanceMetrics::from_result(&self.rust_result);
+        metrics.probabilistic_sharpe_ratio
+    }
+
     /// Get all metrics as a dictionary.
     fn metrics<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
         let dict = PyDict::new_bound(py);
@@ -106,6 +141,10 @@ impl PyBacktestResult {
         dict.set_item("initial_capital", self.initial_capital)?;
         dict.set_item("final_equity", self.final_equity)?;
         dict.set_item("trading_days", self.trading_days)?;
+        // Add advanced metrics
+        let perf_metrics = PerformanceMetrics::from_result(&self.rust_result);
+        dict.set_item("deflated_sharpe", perf_metrics.deflated_sharpe_ratio)?;
+        dict.set_item("psr", perf_metrics.probabilistic_sharpe_ratio)?;
         Ok(dict)
     }
 
@@ -416,6 +455,31 @@ impl PyValidationResult {
     #[pyo3(signature = (width=20))]
     fn plot(&self, width: usize) -> String {
         walkforward_fold_chart(&self.rust_result, width)
+    }
+
+    /// Generate a self-contained HTML report for the validation results.
+    ///
+    /// The report includes:
+    /// - Summary metrics (folds, window type, IS ratio)
+    /// - Verdict classification with color coding
+    /// - Performance metrics (IS/OOS Sharpe, returns, efficiency)
+    /// - Fold-by-fold results table
+    /// - Bar chart comparing IS vs OOS performance
+    ///
+    /// Args:
+    ///     path: Path to the output HTML file.
+    ///
+    /// Example:
+    ///     >>> validation = mt.validate(data, signal)
+    ///     >>> validation.report("validation_report.html")
+    fn report(&self, path: &str) -> PyResult<()> {
+        export_walkforward_html(&self.rust_result, path).map_err(|e| {
+            pyo3::exceptions::PyIOError::new_err(format!(
+                "Failed to generate HTML report: {}",
+                e
+            ))
+        })?;
+        Ok(())
     }
 
     fn __repr__(&self) -> String {
