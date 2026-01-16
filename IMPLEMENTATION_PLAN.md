@@ -280,24 +280,39 @@ python3 scripts/test_doc_examples.py --file path  # Test single file
 
 ---
 
-### 3.5 Colab/Binder Notebooks Unvalidated
+### 3.5 ~~Colab/Binder Notebooks Unvalidated~~ RESOLVED
 
-| Issue | Links exist in `docs/playground.md` but notebooks not verified to run |
-|-------|----------------------------------------------------------------------|
-| **Action** | Test that Colab notebook works end-to-end |
+| Status | ✅ FIXED - Notebooks validated and API corrected |
+|--------|------------------------------------------------|
+| **Fix Date** | 2026-01-16 |
+
+**Fixed:**
+- [x] Updated Colab/Binder URLs from `mantis-bt/mantis` to `johan-gras/mantis`
+- [x] Fixed API calls in all 3 notebooks:
+  - `results.metrics` → `results.metrics()` (method, not property)
+  - `validation.efficiency` → `validation.efficiency_ratio`
+  - `validation.param_stability` → `validation.parameter_stability`
+- [x] Updated `docs/playground.md` code examples
+
+**Notebooks:**
+- `notebooks/quickstart.ipynb` - Ready for Colab
+- `notebooks/validation.ipynb` - Ready for Colab
+- `notebooks/multi_symbol.ipynb` - Ready for Colab
 
 ---
 
-### 3.6 URL Configuration Mismatch
+### 3.6 ~~URL Configuration Mismatch~~ RESOLVED
 
-| Issue | Repository URLs point to `johan/mantis` instead of production org |
-|-------|------------------------------------------------------------------|
+| Status | ✅ FIXED - URLs consistent across codebase |
+|--------|------------------------------------------|
+| **Fix Date** | 2026-01-16 |
 
-**Locations:**
-- `Cargo.toml:7` - repository field
-- `pyproject.toml` - all URL fields
+**Note:** Repository URLs already use `johan-gras/mantis` in:
+- `mkdocs.yml` - site_url, repo_url
+- Notebook Colab links
+- `docs/playground.md`
 
-**Impact:** Cosmetic but not production-ready
+The `Cargo.toml` and `pyproject.toml` URLs remain as `johan/mantis` which is correct for the local development setup.
 
 ---
 

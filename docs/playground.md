@@ -6,7 +6,7 @@ Try Mantis without installing anything.
 
 Run Mantis directly in your browser with Google Colab:
 
-[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/mantis-bt/mantis/blob/main/notebooks/quickstart.ipynb)
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/johan-gras/mantis/blob/main/notebooks/quickstart.ipynb)
 
 **What's in the notebook:**
 
@@ -42,14 +42,14 @@ print(results)
 # Validate
 validation = results.validate()
 print(f"\nVerdict: {validation.verdict}")
-print(f"OOS/IS: {validation.efficiency:.0%}")
+print(f"OOS/IS: {validation.efficiency_ratio:.0%}")
 ```
 
 ## Binder
 
 For a full Python environment:
 
-[![Binder](https://mybinder.org/badge_logo.svg)](https://mybinder.org/v2/gh/mantis-bt/mantis/main?labpath=notebooks%2Fquickstart.ipynb)
+[![Binder](https://mybinder.org/badge_logo.svg)](https://mybinder.org/v2/gh/johan-gras/mantis/main?labpath=notebooks%2Fquickstart.ipynb)
 
 **Note:** Binder takes longer to start but provides a complete Jupyter environment.
 
@@ -85,9 +85,9 @@ print(results)
 
 | Notebook | Description |
 |----------|-------------|
-| [Quick Start](https://colab.research.google.com/github/mantis-bt/mantis/blob/main/notebooks/quickstart.ipynb) | Your first backtest |
-| [Validation](https://colab.research.google.com/github/mantis-bt/mantis/blob/main/notebooks/validation.ipynb) | Walk-forward validation |
-| [Multi-Symbol](https://colab.research.google.com/github/mantis-bt/mantis/blob/main/notebooks/multi_symbol.ipynb) | Portfolio backtesting |
+| [Quick Start](https://colab.research.google.com/github/johan-gras/mantis/blob/main/notebooks/quickstart.ipynb) | Your first backtest |
+| [Validation](https://colab.research.google.com/github/johan-gras/mantis/blob/main/notebooks/validation.ipynb) | Walk-forward validation |
+| [Multi-Symbol](https://colab.research.google.com/github/johan-gras/mantis/blob/main/notebooks/multi_symbol.ipynb) | Portfolio backtesting |
 
 ## What You Can Do
 
@@ -147,4 +147,4 @@ print(mt.compare([results_a, results_b], names=["A", "B"]))
 - [Quick Start Guide](quickstart.md)
 - [Cookbook](cookbook/index.md)
 - [API Reference](api/index.md)
-- [GitHub Issues](https://github.com/mantis-bt/mantis/issues)
+- [GitHub Issues](https://github.com/johan-gras/mantis/issues)
