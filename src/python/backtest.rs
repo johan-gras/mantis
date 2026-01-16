@@ -376,7 +376,7 @@ pub fn signal_check(
     Ok(result.into())
 }
 
-/// Helper: extract bars from data object (dict or path string).
+/// Helper: extract bars from data object (dict, path string, pandas DataFrame, or polars DataFrame).
 fn extract_bars(py: Python<'_>, data: &PyObject) -> PyResult<Vec<Bar>> {
     // Try as dictionary first
     if let Ok(dict) = data.downcast_bound::<PyDict>(py) {
@@ -445,9 +445,319 @@ fn extract_bars(py: Python<'_>, data: &PyObject) -> PyResult<Vec<Bar>> {
         return Ok(bars);
     }
 
+    // Try as pandas DataFrame
+    if let Ok(bars) = extract_bars_from_pandas(py, data) {
+        return Ok(bars);
+    }
+
+    // Try as polars DataFrame
+    if let Ok(bars) = extract_bars_from_polars(py, data) {
+        return Ok(bars);
+    }
+
     Err(pyo3::exceptions::PyTypeError::new_err(
-        "Data must be a dictionary from load() or a file path string",
+        "Data must be a dictionary from load(), a file path string, a pandas DataFrame, or a polars DataFrame.\n\n\
+         For DataFrames, ensure columns are named: open/Open, high/High, low/Low, close/Close, volume/Volume.\n\
+         The index should be a DatetimeIndex or there should be a 'date'/'timestamp' column.",
     ))
+}
+
+/// Extract bars from a pandas DataFrame.
+fn extract_bars_from_pandas(py: Python<'_>, data: &PyObject) -> PyResult<Vec<Bar>> {
+    // Check if it's a pandas DataFrame by looking at module
+    let class = data.getattr(py, "__class__")?;
+    let module: String = class.getattr(py, "__module__")?.extract(py)?;
+    let class_name: String = class.getattr(py, "__name__")?.extract(py)?;
+
+    if !module.starts_with("pandas") || class_name != "DataFrame" {
+        return Err(pyo3::exceptions::PyTypeError::new_err("Not a pandas DataFrame"));
+    }
+
+    // Get column names to find OHLCV columns (case-insensitive)
+    let columns: Vec<String> = data.getattr(py, "columns")?.call_method0(py, "tolist")?.extract(py)?;
+
+    let find_column = |names: &[&str]| -> Option<String> {
+        for col in &columns {
+            let col_lower = col.to_lowercase();
+            for name in names {
+                if col_lower == *name {
+                    return Some(col.clone());
+                }
+            }
+        }
+        None
+    };
+
+    let open_col = find_column(&["open", "o"]).ok_or_else(|| {
+        pyo3::exceptions::PyKeyError::new_err("DataFrame missing 'open'/'Open' column")
+    })?;
+    let high_col = find_column(&["high", "h"]).ok_or_else(|| {
+        pyo3::exceptions::PyKeyError::new_err("DataFrame missing 'high'/'High' column")
+    })?;
+    let low_col = find_column(&["low", "l"]).ok_or_else(|| {
+        pyo3::exceptions::PyKeyError::new_err("DataFrame missing 'low'/'Low' column")
+    })?;
+    let close_col = find_column(&["close", "c"]).ok_or_else(|| {
+        pyo3::exceptions::PyKeyError::new_err("DataFrame missing 'close'/'Close' column")
+    })?;
+    let volume_col = find_column(&["volume", "vol", "v"]).ok_or_else(|| {
+        pyo3::exceptions::PyKeyError::new_err("DataFrame missing 'volume'/'Volume' column")
+    })?;
+
+    // Extract OHLCV values using .values.tolist()
+    let opens: Vec<f64> = data
+        .getattr(py, &open_col as &str)?
+        .getattr(py, "values")?
+        .call_method0(py, "tolist")?
+        .extract(py)?;
+    let highs: Vec<f64> = data
+        .getattr(py, &high_col as &str)?
+        .getattr(py, "values")?
+        .call_method0(py, "tolist")?
+        .extract(py)?;
+    let lows: Vec<f64> = data
+        .getattr(py, &low_col as &str)?
+        .getattr(py, "values")?
+        .call_method0(py, "tolist")?
+        .extract(py)?;
+    let closes: Vec<f64> = data
+        .getattr(py, &close_col as &str)?
+        .getattr(py, "values")?
+        .call_method0(py, "tolist")?
+        .extract(py)?;
+    let volumes: Vec<f64> = data
+        .getattr(py, &volume_col as &str)?
+        .getattr(py, "values")?
+        .call_method0(py, "tolist")?
+        .extract(py)?;
+
+    // Try to get timestamps from index first
+    let timestamps = extract_pandas_timestamps(py, data, &columns)?;
+
+    if timestamps.len() != opens.len() {
+        return Err(pyo3::exceptions::PyValueError::new_err(format!(
+            "Timestamp count ({}) doesn't match row count ({})",
+            timestamps.len(),
+            opens.len()
+        )));
+    }
+
+    let bars: Vec<Bar> = timestamps
+        .into_iter()
+        .zip(opens)
+        .zip(highs)
+        .zip(lows)
+        .zip(closes)
+        .zip(volumes)
+        .map(|(((((ts, o), h), l), c), v)| Bar {
+            timestamp: chrono::TimeZone::timestamp_opt(&chrono::Utc, ts, 0).unwrap(),
+            open: o,
+            high: h,
+            low: l,
+            close: c,
+            volume: v,
+        })
+        .collect();
+
+    Ok(bars)
+}
+
+/// Extract timestamps from pandas DataFrame index or date column.
+fn extract_pandas_timestamps(py: Python<'_>, data: &PyObject, columns: &[String]) -> PyResult<Vec<i64>> {
+    // First, try to get timestamps from the index
+    let index = data.getattr(py, "index")?;
+    let index_class = index.getattr(py, "__class__")?;
+    let index_name: String = index_class.getattr(py, "__name__")?.extract(py)?;
+
+    if index_name == "DatetimeIndex" {
+        // Convert DatetimeIndex to Unix timestamps
+        let timestamps: Vec<i64> = index
+            .call_method1(py, "astype", ("int64",))?
+            .call_method1(py, "__floordiv__", (1_000_000_000i64,))? // nanoseconds to seconds
+            .call_method0(py, "tolist")?
+            .extract(py)?;
+        return Ok(timestamps);
+    }
+
+    // Try to find a date/timestamp column
+    let find_date_column = |names: &[&str]| -> Option<String> {
+        for col in columns {
+            let col_lower = col.to_lowercase();
+            for name in names {
+                if col_lower == *name {
+                    return Some(col.clone());
+                }
+            }
+        }
+        None
+    };
+
+    if let Some(date_col) = find_date_column(&["date", "datetime", "timestamp", "time", "dt"]) {
+        // Try to convert the date column to timestamps
+        let date_series = data.getattr(py, &date_col as &str)?;
+
+        // Try converting via pandas.to_datetime
+        let pd = py.import_bound("pandas")?;
+        let dt_series = pd.call_method1("to_datetime", (date_series,))?;
+        let timestamps: Vec<i64> = dt_series
+            .call_method1("astype", ("int64",))?
+            .call_method1("__floordiv__", (1_000_000_000i64,))?
+            .call_method0("tolist")?
+            .extract()?;
+        return Ok(timestamps);
+    }
+
+    // Fall back to generating sequential timestamps (one day apart starting from 2020-01-01)
+    let n_rows: usize = data.call_method0(py, "__len__")?.extract(py)?;
+    let base_ts = 1577836800i64; // 2020-01-01 00:00:00 UTC
+    let timestamps: Vec<i64> = (0..n_rows).map(|i| base_ts + (i as i64) * 86400).collect();
+    Ok(timestamps)
+}
+
+/// Extract bars from a polars DataFrame.
+fn extract_bars_from_polars(py: Python<'_>, data: &PyObject) -> PyResult<Vec<Bar>> {
+    // Check if it's a polars DataFrame by looking at module
+    let class = data.getattr(py, "__class__")?;
+    let module: String = class.getattr(py, "__module__")?.extract(py)?;
+    let class_name: String = class.getattr(py, "__name__")?.extract(py)?;
+
+    if !module.starts_with("polars") || class_name != "DataFrame" {
+        return Err(pyo3::exceptions::PyTypeError::new_err("Not a polars DataFrame"));
+    }
+
+    // Get column names
+    let columns: Vec<String> = data.getattr(py, "columns")?.extract(py)?;
+
+    let find_column = |names: &[&str]| -> Option<String> {
+        for col in &columns {
+            let col_lower = col.to_lowercase();
+            for name in names {
+                if col_lower == *name {
+                    return Some(col.clone());
+                }
+            }
+        }
+        None
+    };
+
+    let open_col = find_column(&["open", "o"]).ok_or_else(|| {
+        pyo3::exceptions::PyKeyError::new_err("DataFrame missing 'open'/'Open' column")
+    })?;
+    let high_col = find_column(&["high", "h"]).ok_or_else(|| {
+        pyo3::exceptions::PyKeyError::new_err("DataFrame missing 'high'/'High' column")
+    })?;
+    let low_col = find_column(&["low", "l"]).ok_or_else(|| {
+        pyo3::exceptions::PyKeyError::new_err("DataFrame missing 'low'/'Low' column")
+    })?;
+    let close_col = find_column(&["close", "c"]).ok_or_else(|| {
+        pyo3::exceptions::PyKeyError::new_err("DataFrame missing 'close'/'Close' column")
+    })?;
+    let volume_col = find_column(&["volume", "vol", "v"]).ok_or_else(|| {
+        pyo3::exceptions::PyKeyError::new_err("DataFrame missing 'volume'/'Volume' column")
+    })?;
+
+    // Extract column data using .to_list()
+    let opens: Vec<f64> = data
+        .call_method1(py, "get_column", (&open_col,))?
+        .call_method0(py, "to_list")?
+        .extract(py)?;
+    let highs: Vec<f64> = data
+        .call_method1(py, "get_column", (&high_col,))?
+        .call_method0(py, "to_list")?
+        .extract(py)?;
+    let lows: Vec<f64> = data
+        .call_method1(py, "get_column", (&low_col,))?
+        .call_method0(py, "to_list")?
+        .extract(py)?;
+    let closes: Vec<f64> = data
+        .call_method1(py, "get_column", (&close_col,))?
+        .call_method0(py, "to_list")?
+        .extract(py)?;
+    let volumes: Vec<f64> = data
+        .call_method1(py, "get_column", (&volume_col,))?
+        .call_method0(py, "to_list")?
+        .extract(py)?;
+
+    // Get timestamps
+    let timestamps = extract_polars_timestamps(py, data, &columns)?;
+
+    if timestamps.len() != opens.len() {
+        return Err(pyo3::exceptions::PyValueError::new_err(format!(
+            "Timestamp count ({}) doesn't match row count ({})",
+            timestamps.len(),
+            opens.len()
+        )));
+    }
+
+    let bars: Vec<Bar> = timestamps
+        .into_iter()
+        .zip(opens)
+        .zip(highs)
+        .zip(lows)
+        .zip(closes)
+        .zip(volumes)
+        .map(|(((((ts, o), h), l), c), v)| Bar {
+            timestamp: chrono::TimeZone::timestamp_opt(&chrono::Utc, ts, 0).unwrap(),
+            open: o,
+            high: h,
+            low: l,
+            close: c,
+            volume: v,
+        })
+        .collect();
+
+    Ok(bars)
+}
+
+/// Extract timestamps from polars DataFrame.
+fn extract_polars_timestamps(py: Python<'_>, data: &PyObject, columns: &[String]) -> PyResult<Vec<i64>> {
+    let find_date_column = |names: &[&str]| -> Option<String> {
+        for col in columns {
+            let col_lower = col.to_lowercase();
+            for name in names {
+                if col_lower == *name {
+                    return Some(col.clone());
+                }
+            }
+        }
+        None
+    };
+
+    if let Some(date_col) = find_date_column(&["date", "datetime", "timestamp", "time", "dt"]) {
+        // Get the date column and convert to Unix timestamps
+        let date_series = data.call_method1(py, "get_column", (&date_col,))?;
+
+        // Try to cast to datetime and get timestamps
+        // In polars, we can use .dt.timestamp("s") for seconds
+        let dtype = date_series.call_method0(py, "dtype")?;
+        let dtype_str: String = dtype.call_method0(py, "__str__")?.extract(py)?;
+
+        if dtype_str.starts_with("Datetime") || dtype_str.starts_with("Date") {
+            // Get timestamp in seconds
+            let timestamps: Vec<i64> = date_series
+                .getattr(py, "dt")?
+                .call_method1(py, "timestamp", ("s",))?
+                .call_method0(py, "to_list")?
+                .extract(py)?;
+            return Ok(timestamps);
+        } else {
+            // Try to cast to datetime first
+            let pl = py.import_bound("polars")?;
+            let casted = date_series.call_method1(py, "cast", (pl.getattr("Datetime")?,))?;
+            let timestamps: Vec<i64> = casted
+                .getattr(py, "dt")?
+                .call_method1(py, "timestamp", ("s",))?
+                .call_method0(py, "to_list")?
+                .extract(py)?;
+            return Ok(timestamps);
+        }
+    }
+
+    // Fall back to sequential timestamps
+    let n_rows: usize = data.call_method0(py, "height")?.extract(py)?;
+    let base_ts = 1577836800i64; // 2020-01-01 00:00:00 UTC
+    let timestamps: Vec<i64> = (0..n_rows).map(|i| base_ts + (i as i64) * 86400).collect();
+    Ok(timestamps)
 }
 
 /// Wrapper strategy that uses pre-computed signals.

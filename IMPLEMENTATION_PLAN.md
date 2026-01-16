@@ -378,11 +378,24 @@ mantis portfolio -d ./data/stocks/ -p "*.csv" --strategy risk-parity --rebalance
 
 ## P3 - Lower Priority (Nice to Have)
 
-### 15. Polars Backend Support [PARTIAL]
-**Status:** Arrow compatibility provides foundation
+### 15. Polars Backend Support [COMPLETE]
+**Status:** COMPLETE
 
-**Dependencies:** Python bindings (P0 item 2)
-**Effort:** Small (1-2 days)
+**Implementation details:**
+- pandas DataFrame input support added to `backtest()` and `validate()` functions
+- polars DataFrame input support added to `backtest()` and `validate()` functions
+- Auto-detection of DataFrame type via `__class__.__module__`
+- Case-insensitive OHLCV column detection (open/Open/o, high/High/h, etc.)
+- Timestamp extraction from DatetimeIndex, date columns, or polars datetime columns
+- Fallback to sequential timestamps if no date info available
+- Type stubs updated to include DataFrame types
+
+**Files modified:**
+- `src/python/backtest.rs` - Added `extract_bars_from_pandas()`, `extract_bars_from_polars()`, `extract_pandas_timestamps()`, `extract_polars_timestamps()` functions
+- `python/mantis/__init__.pyi` - Updated type hints to include DataFrame types
+
+**Dependencies:** None
+**Effort:** Small (completed)
 
 ---
 
@@ -453,7 +466,7 @@ mantis portfolio -d ./data/stocks/ -p "*.csv" --strategy risk-parity --rebalance
 | 12 | Visualization Module | **COMPLETE** | P2 | Medium | None |
 | 13 | HTML Reports | **COMPLETE** | P2 | Small | None |
 | 14 | Verdict System | **COMPLETE** | P2 | Small | None |
-| 15 | Polars Backend | PARTIAL | P3 | Small | Item 2 |
+| 15 | Polars Backend | **COMPLETE** | P3 | Small | None |
 | 16 | Sample Data Bundling | **COMPLETE** | P3 | Small | None |
 | 17 | Documentation Site | MISSING | P3 | Medium | None |
 
@@ -500,6 +513,7 @@ mantis portfolio -d ./data/stocks/ -p "*.csv" --strategy risk-parity --rebalance
 | **Python Bindings (PyO3)** | **COMPLETE**: src/python/ module with mod.rs, types.rs, data.rs, backtest.rs, results.rs; pyproject.toml with maturin config; python/mantis/ wrapper with __init__.py, __init__.pyi type stubs, py.typed marker; load(), load_multi(), load_dir(), backtest(), signal_check(), validate() functions; 6 built-in strategies; compare(), sweep() helpers; BacktestResult with metrics and equity_curve; ValidationResult with is_robust(), fold_details() returning List[FoldDetail]; FoldDetail class with is_sharpe, oos_sharpe, is_return, oos_return, efficiency, is_bars, oos_bars |
 | **Visualization Module** | **COMPLETE**: src/viz.rs (~845 lines), ASCII sparklines (sparkline(), sparkline_with_config(), equity_sparkline()), strategy comparison (compare_strategies(), StrategyComparison), walk-forward visualization (walkforward_fold_chart(), walkforward_summary()), SVG heatmaps (heatmap_to_svg(), export_heatmap_svg()), ASCII heatmaps (heatmap_to_ascii()), result summaries (result_summary(), result_with_verdict()), all exported from lib.rs, 13 unit tests |
 | **Sample Data Bundling** | **COMPLETE**: load_sample(), list_samples() functions; data/samples/AAPL.csv, SPY.csv, BTC.csv (~10 years daily OHLCV 2014-2024); embedded via include_str!(); Python bindings mt.load_sample(), mt.list_samples(); type stubs; 6 unit tests |
+| **Polars Backend Support** | **COMPLETE**: pandas DataFrame input support in backtest() and validate(); polars DataFrame input support in backtest() and validate(); auto-detection of DataFrame type via __class__.__module__; case-insensitive OHLCV column detection (open/Open/o, high/High/h, etc.); timestamp extraction from DatetimeIndex, date columns, or polars datetime columns; fallback to sequential timestamps; type stubs updated with DataFrame types; Files: src/python/backtest.rs (extract_bars_from_pandas, extract_bars_from_polars, extract_pandas_timestamps, extract_polars_timestamps), python/mantis/__init__.pyi |
 | **Multi-Symbol CLI Command** | **COMPLETE**: `mantis portfolio` CLI command with 9 portfolio strategies (equal-weight, momentum, inverse-vol, risk-parity, min-variance, max-sharpe, hrp, drift-equal, drift-momentum), glob pattern loading, portfolio constraints (max-position, max-leverage, max-turnover, min/max-holdings), text/JSON/CSV output |
 | Codebase Cleanliness | **VERIFIED**: No TODOs/FIXMEs in codebase |
 | ALL TESTS | **PASSING**: 558+ lib tests (0 failures) |

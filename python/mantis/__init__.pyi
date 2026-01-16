@@ -226,8 +226,15 @@ def load_sample(name: str) -> Dict[str, Any]:
     """
     ...
 
+try:
+    import pandas as pd
+    import polars as pl
+    _DataFrame = Union[pd.DataFrame, pl.DataFrame]
+except ImportError:
+    _DataFrame = Any
+
 def backtest(
-    data: Union[Dict[str, Any], str],
+    data: Union[Dict[str, Any], str, _DataFrame],
     signal: Optional[NDArray[np.float64]] = None,
     strategy: Optional[str] = None,
     strategy_params: Optional[Dict[str, Any]] = None,
@@ -245,7 +252,8 @@ def backtest(
     Run a backtest on historical data with a signal array.
 
     Args:
-        data: Data dictionary from load() or path to CSV/Parquet file
+        data: Data dictionary from load(), path to CSV/Parquet file,
+              pandas DataFrame, or polars DataFrame with OHLCV columns
         signal: numpy array of signals (1=long, -1=short, 0=flat)
         strategy: Name of built-in strategy if signal is None
         strategy_params: Dictionary of strategy parameters
@@ -263,11 +271,22 @@ def backtest(
         BacktestResult object with metrics, equity curve, and trades.
 
     Example:
+        >>> # Using load() dictionary
         >>> data = mt.load("AAPL.csv")
         >>> signal = np.where(data['close'] > data['close'].mean(), 1, -1)
         >>> results = mt.backtest(data, signal)
         >>> print(results.sharpe)
         1.24
+
+        >>> # Using pandas DataFrame directly
+        >>> import pandas as pd
+        >>> df = pd.read_csv("AAPL.csv", index_col='date', parse_dates=True)
+        >>> results = mt.backtest(df, signal)
+
+        >>> # Using polars DataFrame directly
+        >>> import polars as pl
+        >>> df = pl.read_csv("AAPL.csv")
+        >>> results = mt.backtest(df, signal)
     """
     ...
 
@@ -293,7 +312,7 @@ def signal_check(
     ...
 
 def validate(
-    data: Union[Dict[str, Any], str],
+    data: Union[Dict[str, Any], str, _DataFrame],
     signal: NDArray[np.float64],
     folds: int = 12,
     in_sample_ratio: float = 0.75,

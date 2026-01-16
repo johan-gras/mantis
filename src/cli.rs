@@ -3974,12 +3974,12 @@ fn run_portfolio(
 
     // Create the appropriate strategy
     let mut strategy: Box<dyn PortfolioStrategy> = match strategy_type {
-        PortfolioStrategyType::EqualWeight => {
-            Box::new(EqualWeightStrategy::new(rebalance_freq))
-        }
-        PortfolioStrategyType::Momentum => {
-            Box::new(MomentumPortfolioStrategy::new(lookback, top_n, rebalance_freq))
-        }
+        PortfolioStrategyType::EqualWeight => Box::new(EqualWeightStrategy::new(rebalance_freq)),
+        PortfolioStrategyType::Momentum => Box::new(MomentumPortfolioStrategy::new(
+            lookback,
+            top_n,
+            rebalance_freq,
+        )),
         PortfolioStrategyType::InverseVolatility => {
             Box::new(InverseVolatilityStrategy::new(lookback, rebalance_freq))
         }
@@ -4002,9 +4002,10 @@ fn run_portfolio(
                 0.02, // risk-free rate
             ))
         }
-        PortfolioStrategyType::Hrp => {
-            Box::new(HierarchicalRiskParityStrategy::new(lookback, rebalance_freq))
-        }
+        PortfolioStrategyType::Hrp => Box::new(HierarchicalRiskParityStrategy::new(
+            lookback,
+            rebalance_freq,
+        )),
         PortfolioStrategyType::DriftEqual => {
             let drift_config = DriftRebalancingConfig {
                 drift_threshold,
@@ -4017,7 +4018,12 @@ fn run_portfolio(
                 drift_threshold,
                 ..Default::default()
             };
-            Box::new(DriftMomentumStrategy::new(lookback, top_n, drift_config, rebalance_freq))
+            Box::new(DriftMomentumStrategy::new(
+                lookback,
+                top_n,
+                drift_config,
+                rebalance_freq,
+            ))
         }
     };
 
@@ -4047,24 +4053,15 @@ fn print_portfolio_result_text(result: &MultiAssetResult, duration_ms: u128) {
     );
 
     println!("\n{}", "Summary".bright_yellow());
-    println!(
-        "  Strategy:      {}",
-        result.strategy_name.bright_white()
-    );
+    println!("  Strategy:      {}", result.strategy_name.bright_white());
     println!("  Symbols:       {}", result.symbols.len());
     println!(
         "  Period:        {} to {}",
         result.start_time.format("%Y-%m-%d"),
         result.end_time.format("%Y-%m-%d")
     );
-    println!(
-        "  Initial:       ${:.2}",
-        result.initial_capital
-    );
-    println!(
-        "  Final:         ${:.2}",
-        result.final_equity
-    );
+    println!("  Initial:       ${:.2}", result.initial_capital);
+    println!("  Final:         ${:.2}", result.final_equity);
 
     println!("\n{}", "Performance".bright_yellow());
     let return_colored = if result.total_return_pct >= 0.0 {
@@ -4073,14 +4070,8 @@ fn print_portfolio_result_text(result: &MultiAssetResult, duration_ms: u128) {
         format!("{:.2}%", result.total_return_pct).red()
     };
     println!("  Total Return:  {}", return_colored);
-    println!(
-        "  Annual Return: {:.2}%",
-        result.annual_return_pct
-    );
-    println!(
-        "  Max Drawdown:  {:.2}%",
-        result.max_drawdown_pct
-    );
+    println!("  Annual Return: {:.2}%", result.annual_return_pct);
+    println!("  Max Drawdown:  {:.2}%", result.max_drawdown_pct);
 
     println!("\n{}", "Risk Metrics".bright_yellow());
     let sharpe_colored = if result.sharpe_ratio >= 1.0 {
@@ -4091,10 +4082,7 @@ fn print_portfolio_result_text(result: &MultiAssetResult, duration_ms: u128) {
         format!("{:.3}", result.sharpe_ratio).red()
     };
     println!("  Sharpe Ratio:  {}", sharpe_colored);
-    println!(
-        "  Sortino Ratio: {:.3}",
-        result.sortino_ratio
-    );
+    println!("  Sortino Ratio: {:.3}", result.sortino_ratio);
 
     println!("\n{}", "Trading Activity".bright_yellow());
     println!("  Total Trades:  {}", result.total_trades);
