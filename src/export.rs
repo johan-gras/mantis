@@ -693,6 +693,303 @@ pub fn export_trades_parquet(trades: &[crate::types::Trade], path: impl AsRef<Pa
     Ok(())
 }
 
+/// Generate self-contained HTML report.
+///
+/// Creates an HTML file with embedded CSS and SVG charts that can be viewed
+/// in any browser without external dependencies.
+///
+/// # Report Sections
+/// - Summary metrics table
+/// - Equity curve chart (SVG)
+/// - Drawdown chart (SVG)
+/// - Trade list
+///
+/// # Example
+/// ```ignore
+/// let exporter = Exporter::new(result);
+/// exporter.export_report_html("report.html")?;
+/// ```
+impl Exporter {
+    /// Export a self-contained HTML report.
+    pub fn export_report_html(&self, path: impl AsRef<Path>) -> Result<()> {
+        let file = File::create(path)?;
+        let mut writer = BufWriter::new(file);
+
+        let summary = PerformanceSummary::from_result(&self.result);
+
+        // Write HTML header and styles
+        write!(writer, "{}", html_header(&self.result.strategy_name))?;
+
+        // Summary section
+        writeln!(writer, "  <div class=\"section\">")?;
+        writeln!(writer, "    <h2>Summary</h2>")?;
+        writeln!(writer, "    <div class=\"meta\">")?;
+        writeln!(
+            writer,
+            "      <p><strong>Period:</strong> {} to {}</p>",
+            self.result.start_time.format("%Y-%m-%d"),
+            self.result.end_time.format("%Y-%m-%d")
+        )?;
+        writeln!(
+            writer,
+            "      <p><strong>Symbols:</strong> {}</p>",
+            self.result.symbols.join(", ")
+        )?;
+        writeln!(
+            writer,
+            "      <p><strong>Trading Days:</strong> {}</p>",
+            summary.trading_days
+        )?;
+        writeln!(writer, "    </div>")?;
+        writeln!(writer, "  </div>")?;
+
+        // Performance metrics
+        writeln!(writer, "  <div class=\"section\">")?;
+        writeln!(writer, "    <h2>Performance Metrics</h2>")?;
+        writeln!(writer, "    <div class=\"metrics-grid\">")?;
+        write_metric_card(
+            &mut writer,
+            "Initial Capital",
+            &format!("${:.2}", summary.initial_capital),
+            "neutral",
+        )?;
+        write_metric_card(
+            &mut writer,
+            "Final Equity",
+            &format!("${:.2}", summary.final_equity),
+            if summary.final_equity >= summary.initial_capital {
+                "positive"
+            } else {
+                "negative"
+            },
+        )?;
+        write_metric_card(
+            &mut writer,
+            "Total Return",
+            &format!("{:.2}%", summary.total_return_pct),
+            if summary.total_return_pct >= 0.0 {
+                "positive"
+            } else {
+                "negative"
+            },
+        )?;
+        write_metric_card(
+            &mut writer,
+            "Annual Return",
+            &format!("{:.2}%", summary.annual_return_pct),
+            if summary.annual_return_pct >= 0.0 {
+                "positive"
+            } else {
+                "negative"
+            },
+        )?;
+        write_metric_card(
+            &mut writer,
+            "Sharpe Ratio",
+            &format!("{:.2}", summary.sharpe_ratio),
+            sharpe_color(summary.sharpe_ratio),
+        )?;
+        write_metric_card(
+            &mut writer,
+            "Sortino Ratio",
+            &format!("{:.2}", summary.sortino_ratio),
+            if summary.sortino_ratio >= 1.0 {
+                "positive"
+            } else {
+                "neutral"
+            },
+        )?;
+        write_metric_card(
+            &mut writer,
+            "Calmar Ratio",
+            &format!("{:.2}", summary.calmar_ratio),
+            if summary.calmar_ratio >= 1.0 {
+                "positive"
+            } else {
+                "neutral"
+            },
+        )?;
+        write_metric_card(
+            &mut writer,
+            "Max Drawdown",
+            &format!("{:.2}%", summary.max_drawdown_pct),
+            "negative",
+        )?;
+        writeln!(writer, "    </div>")?;
+        writeln!(writer, "  </div>")?;
+
+        // Trade statistics
+        writeln!(writer, "  <div class=\"section\">")?;
+        writeln!(writer, "    <h2>Trade Statistics</h2>")?;
+        writeln!(writer, "    <div class=\"metrics-grid\">")?;
+        write_metric_card(
+            &mut writer,
+            "Total Trades",
+            &format!("{}", summary.total_trades),
+            "neutral",
+        )?;
+        write_metric_card(
+            &mut writer,
+            "Winning Trades",
+            &format!("{}", summary.winning_trades),
+            "positive",
+        )?;
+        write_metric_card(
+            &mut writer,
+            "Losing Trades",
+            &format!("{}", summary.losing_trades),
+            "negative",
+        )?;
+        write_metric_card(
+            &mut writer,
+            "Win Rate",
+            &format!("{:.1}%", summary.win_rate),
+            if summary.win_rate >= 50.0 {
+                "positive"
+            } else {
+                "neutral"
+            },
+        )?;
+        write_metric_card(
+            &mut writer,
+            "Avg Win",
+            &format!("${:.2}", summary.avg_win),
+            "positive",
+        )?;
+        write_metric_card(
+            &mut writer,
+            "Avg Loss",
+            &format!("${:.2}", summary.avg_loss),
+            "negative",
+        )?;
+        write_metric_card(
+            &mut writer,
+            "Profit Factor",
+            &format!(
+                "{:.2}",
+                if summary.profit_factor.is_infinite() {
+                    999.99
+                } else {
+                    summary.profit_factor
+                }
+            ),
+            if summary.profit_factor >= 1.5 {
+                "positive"
+            } else {
+                "neutral"
+            },
+        )?;
+        writeln!(writer, "    </div>")?;
+        writeln!(writer, "  </div>")?;
+
+        // Equity curve chart
+        if !self.result.equity_curve.is_empty() {
+            writeln!(writer, "  <div class=\"section\">")?;
+            writeln!(writer, "    <h2>Equity Curve</h2>")?;
+            writeln!(writer, "    <div class=\"chart-container\">")?;
+            write_equity_curve_svg(&mut writer, &self.result.equity_curve)?;
+            writeln!(writer, "    </div>")?;
+            writeln!(writer, "  </div>")?;
+
+            // Drawdown chart
+            writeln!(writer, "  <div class=\"section\">")?;
+            writeln!(writer, "    <h2>Drawdown</h2>")?;
+            writeln!(writer, "    <div class=\"chart-container\">")?;
+            write_drawdown_svg(&mut writer, &self.result.equity_curve)?;
+            writeln!(writer, "    </div>")?;
+            writeln!(writer, "  </div>")?;
+        }
+
+        // Trade list
+        let closed_trades: Vec<_> = self
+            .result
+            .trades
+            .iter()
+            .filter(|t| t.is_closed())
+            .collect();
+        if !closed_trades.is_empty() {
+            writeln!(writer, "  <div class=\"section\">")?;
+            writeln!(writer, "    <h2>Trade List</h2>")?;
+            writeln!(writer, "    <div class=\"table-container\">")?;
+            writeln!(writer, "      <table>")?;
+            writeln!(writer, "        <thead>")?;
+            writeln!(writer, "          <tr>")?;
+            writeln!(writer, "            <th>#</th>")?;
+            writeln!(writer, "            <th>Symbol</th>")?;
+            writeln!(writer, "            <th>Side</th>")?;
+            writeln!(writer, "            <th>Qty</th>")?;
+            writeln!(writer, "            <th>Entry Price</th>")?;
+            writeln!(writer, "            <th>Entry Time</th>")?;
+            writeln!(writer, "            <th>Exit Price</th>")?;
+            writeln!(writer, "            <th>Exit Time</th>")?;
+            writeln!(writer, "            <th>P&amp;L</th>")?;
+            writeln!(writer, "            <th>Return %</th>")?;
+            writeln!(writer, "          </tr>")?;
+            writeln!(writer, "        </thead>")?;
+            writeln!(writer, "        <tbody>")?;
+
+            for (i, trade) in closed_trades.iter().enumerate() {
+                let pnl = trade.net_pnl().unwrap_or(0.0);
+                let pnl_pct = trade.return_pct().unwrap_or(0.0);
+                let row_class = if pnl >= 0.0 { "win" } else { "loss" };
+
+                writeln!(writer, "          <tr class=\"{}\">", row_class)?;
+                writeln!(writer, "            <td>{}</td>", i + 1)?;
+                writeln!(writer, "            <td>{}</td>", trade.symbol)?;
+                writeln!(writer, "            <td>{:?}</td>", trade.side)?;
+                writeln!(writer, "            <td>{:.4}</td>", trade.quantity)?;
+                writeln!(writer, "            <td>${:.2}</td>", trade.entry_price)?;
+                writeln!(
+                    writer,
+                    "            <td>{}</td>",
+                    trade.entry_time.format("%Y-%m-%d %H:%M")
+                )?;
+                writeln!(
+                    writer,
+                    "            <td>${:.2}</td>",
+                    trade.exit_price.unwrap_or(0.0)
+                )?;
+                writeln!(
+                    writer,
+                    "            <td>{}</td>",
+                    trade
+                        .exit_time
+                        .map(|t| t.format("%Y-%m-%d %H:%M").to_string())
+                        .unwrap_or_default()
+                )?;
+                writeln!(
+                    writer,
+                    "            <td class=\"{}\">$<!-- -->{:.2}</td>",
+                    if pnl >= 0.0 { "positive" } else { "negative" },
+                    pnl
+                )?;
+                writeln!(
+                    writer,
+                    "            <td class=\"{}\">{}<!-- -->{:.2}%</td>",
+                    if pnl_pct >= 0.0 {
+                        "positive"
+                    } else {
+                        "negative"
+                    },
+                    if pnl_pct >= 0.0 { "+" } else { "" },
+                    pnl_pct
+                )?;
+                writeln!(writer, "          </tr>")?;
+            }
+
+            writeln!(writer, "        </tbody>")?;
+            writeln!(writer, "      </table>")?;
+            writeln!(writer, "    </div>")?;
+            writeln!(writer, "  </div>")?;
+        }
+
+        // Footer
+        write!(writer, "{}", html_footer())?;
+
+        Ok(())
+    }
+}
+
 /// Multi-asset result exporter.
 pub struct MultiAssetExporter {
     result: MultiAssetResult,
@@ -825,6 +1122,625 @@ impl MultiAssetExporter {
 
         Ok(())
     }
+
+    /// Export a self-contained HTML report for multi-asset backtest.
+    pub fn export_report_html(&self, path: impl AsRef<Path>) -> Result<()> {
+        let file = File::create(path)?;
+        let mut writer = BufWriter::new(file);
+
+        // Write HTML header and styles
+        write!(writer, "{}", html_header(&self.result.strategy_name))?;
+
+        // Summary section
+        writeln!(writer, "  <div class=\"section\">")?;
+        writeln!(writer, "    <h2>Summary</h2>")?;
+        writeln!(writer, "    <div class=\"meta\">")?;
+        writeln!(
+            writer,
+            "      <p><strong>Period:</strong> {} to {}</p>",
+            self.result.start_time.format("%Y-%m-%d"),
+            self.result.end_time.format("%Y-%m-%d")
+        )?;
+        writeln!(
+            writer,
+            "      <p><strong>Assets:</strong> {}</p>",
+            self.result.symbols.join(", ")
+        )?;
+        writeln!(writer, "    </div>")?;
+        writeln!(writer, "  </div>")?;
+
+        // Performance metrics
+        writeln!(writer, "  <div class=\"section\">")?;
+        writeln!(writer, "    <h2>Performance Metrics</h2>")?;
+        writeln!(writer, "    <div class=\"metrics-grid\">")?;
+        write_metric_card(
+            &mut writer,
+            "Initial Capital",
+            &format!("${:.2}", self.result.initial_capital),
+            "neutral",
+        )?;
+        write_metric_card(
+            &mut writer,
+            "Final Equity",
+            &format!("${:.2}", self.result.final_equity),
+            if self.result.final_equity >= self.result.initial_capital {
+                "positive"
+            } else {
+                "negative"
+            },
+        )?;
+        write_metric_card(
+            &mut writer,
+            "Total Return",
+            &format!("{:.2}%", self.result.total_return_pct),
+            if self.result.total_return_pct >= 0.0 {
+                "positive"
+            } else {
+                "negative"
+            },
+        )?;
+        write_metric_card(
+            &mut writer,
+            "Annual Return",
+            &format!("{:.2}%", self.result.annual_return_pct),
+            if self.result.annual_return_pct >= 0.0 {
+                "positive"
+            } else {
+                "negative"
+            },
+        )?;
+        write_metric_card(
+            &mut writer,
+            "Sharpe Ratio",
+            &format!("{:.2}", self.result.sharpe_ratio),
+            sharpe_color(self.result.sharpe_ratio),
+        )?;
+        write_metric_card(
+            &mut writer,
+            "Sortino Ratio",
+            &format!("{:.2}", self.result.sortino_ratio),
+            if self.result.sortino_ratio >= 1.0 {
+                "positive"
+            } else {
+                "neutral"
+            },
+        )?;
+        write_metric_card(
+            &mut writer,
+            "Max Drawdown",
+            &format!("{:.2}%", self.result.max_drawdown_pct),
+            "negative",
+        )?;
+        write_metric_card(
+            &mut writer,
+            "Total Trades",
+            &format!("{}", self.result.total_trades),
+            "neutral",
+        )?;
+        writeln!(writer, "    </div>")?;
+        writeln!(writer, "  </div>")?;
+
+        // Trades by symbol
+        writeln!(writer, "  <div class=\"section\">")?;
+        writeln!(writer, "    <h2>Trades by Symbol</h2>")?;
+        writeln!(writer, "    <div class=\"table-container\">")?;
+        writeln!(writer, "      <table>")?;
+        writeln!(writer, "        <thead>")?;
+        writeln!(writer, "          <tr>")?;
+        writeln!(writer, "            <th>Symbol</th>")?;
+        writeln!(writer, "            <th>Trades</th>")?;
+        writeln!(writer, "          </tr>")?;
+        writeln!(writer, "        </thead>")?;
+        writeln!(writer, "        <tbody>")?;
+        for symbol in &self.result.symbols {
+            let trades = self
+                .result
+                .trades_by_symbol
+                .get(symbol)
+                .copied()
+                .unwrap_or(0);
+            writeln!(writer, "          <tr>")?;
+            writeln!(writer, "            <td>{}</td>", symbol)?;
+            writeln!(writer, "            <td>{}</td>", trades)?;
+            writeln!(writer, "          </tr>")?;
+        }
+        writeln!(writer, "        </tbody>")?;
+        writeln!(writer, "      </table>")?;
+        writeln!(writer, "    </div>")?;
+        writeln!(writer, "  </div>")?;
+
+        // Equity curve chart
+        if !self.result.equity_curve.is_empty() {
+            writeln!(writer, "  <div class=\"section\">")?;
+            writeln!(writer, "    <h2>Equity Curve</h2>")?;
+            writeln!(writer, "    <div class=\"chart-container\">")?;
+            write_equity_curve_svg(&mut writer, &self.result.equity_curve)?;
+            writeln!(writer, "    </div>")?;
+            writeln!(writer, "  </div>")?;
+
+            // Drawdown chart
+            writeln!(writer, "  <div class=\"section\">")?;
+            writeln!(writer, "    <h2>Drawdown</h2>")?;
+            writeln!(writer, "    <div class=\"chart-container\">")?;
+            write_drawdown_svg(&mut writer, &self.result.equity_curve)?;
+            writeln!(writer, "    </div>")?;
+            writeln!(writer, "  </div>")?;
+        }
+
+        // Footer
+        write!(writer, "{}", html_footer())?;
+
+        Ok(())
+    }
+}
+
+// ============================================================================
+// HTML Report Helper Functions
+// ============================================================================
+
+/// Generate HTML header with embedded CSS.
+fn html_header(title: &str) -> String {
+    format!(
+        r#"<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Backtest Report: {}</title>
+  <style>
+    :root {{
+      --bg-color: #ffffff;
+      --text-color: #1a1a2e;
+      --card-bg: #f8f9fa;
+      --border-color: #e9ecef;
+      --positive: #28a745;
+      --negative: #dc3545;
+      --neutral: #6c757d;
+      --accent: #007bff;
+    }}
+    @media (prefers-color-scheme: dark) {{
+      :root {{
+        --bg-color: #1a1a2e;
+        --text-color: #e9ecef;
+        --card-bg: #16213e;
+        --border-color: #0f3460;
+        --positive: #4ade80;
+        --negative: #f87171;
+        --neutral: #94a3b8;
+        --accent: #60a5fa;
+      }}
+    }}
+    * {{ box-sizing: border-box; margin: 0; padding: 0; }}
+    body {{
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+      background: var(--bg-color);
+      color: var(--text-color);
+      line-height: 1.6;
+      padding: 2rem;
+      max-width: 1200px;
+      margin: 0 auto;
+    }}
+    h1 {{
+      font-size: 1.75rem;
+      margin-bottom: 1.5rem;
+      padding-bottom: 0.5rem;
+      border-bottom: 2px solid var(--accent);
+    }}
+    h2 {{
+      font-size: 1.25rem;
+      margin-bottom: 1rem;
+      color: var(--accent);
+    }}
+    .section {{
+      margin-bottom: 2rem;
+      padding: 1.5rem;
+      background: var(--card-bg);
+      border-radius: 8px;
+      border: 1px solid var(--border-color);
+    }}
+    .meta p {{
+      margin-bottom: 0.5rem;
+    }}
+    .metrics-grid {{
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+      gap: 1rem;
+    }}
+    .metric-card {{
+      background: var(--bg-color);
+      padding: 1rem;
+      border-radius: 6px;
+      border: 1px solid var(--border-color);
+    }}
+    .metric-card .label {{
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      color: var(--neutral);
+      margin-bottom: 0.25rem;
+    }}
+    .metric-card .value {{
+      font-size: 1.25rem;
+      font-weight: 600;
+    }}
+    .metric-card .value.positive {{ color: var(--positive); }}
+    .metric-card .value.negative {{ color: var(--negative); }}
+    .metric-card .value.neutral {{ color: var(--text-color); }}
+    .chart-container {{
+      background: var(--bg-color);
+      border-radius: 6px;
+      padding: 1rem;
+      overflow-x: auto;
+    }}
+    .chart-container svg {{
+      width: 100%;
+      height: auto;
+      min-height: 200px;
+    }}
+    .table-container {{
+      overflow-x: auto;
+    }}
+    table {{
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.875rem;
+    }}
+    th, td {{
+      padding: 0.75rem 1rem;
+      text-align: left;
+      border-bottom: 1px solid var(--border-color);
+    }}
+    th {{
+      background: var(--bg-color);
+      font-weight: 600;
+      text-transform: uppercase;
+      font-size: 0.75rem;
+      color: var(--neutral);
+    }}
+    tr:hover {{
+      background: var(--bg-color);
+    }}
+    tr.win {{ background: rgba(40, 167, 69, 0.05); }}
+    tr.loss {{ background: rgba(220, 53, 69, 0.05); }}
+    td.positive {{ color: var(--positive); }}
+    td.negative {{ color: var(--negative); }}
+    .footer {{
+      text-align: center;
+      padding: 2rem;
+      color: var(--neutral);
+      font-size: 0.75rem;
+    }}
+  </style>
+</head>
+<body>
+  <h1>Backtest Report: {}</h1>
+"#,
+        title, title
+    )
+}
+
+/// Generate HTML footer.
+fn html_footer() -> String {
+    format!(
+        r#"  <div class="footer">
+    <p>Report generated on {} by Mantis Backtesting Engine</p>
+  </div>
+</body>
+</html>
+"#,
+        Utc::now().format("%Y-%m-%d %H:%M:%S UTC")
+    )
+}
+
+/// Write a metric card HTML.
+fn write_metric_card<W: Write>(
+    writer: &mut W,
+    label: &str,
+    value: &str,
+    color_class: &str,
+) -> Result<()> {
+    writeln!(writer, "      <div class=\"metric-card\">")?;
+    writeln!(writer, "        <div class=\"label\">{}</div>", label)?;
+    writeln!(
+        writer,
+        "        <div class=\"value {}\">{}</div>",
+        color_class, value
+    )?;
+    writeln!(writer, "      </div>")?;
+    Ok(())
+}
+
+/// Determine color class for Sharpe ratio.
+fn sharpe_color(sharpe: f64) -> &'static str {
+    if sharpe >= 2.0 {
+        "positive"
+    } else if sharpe >= 1.0 {
+        "neutral"
+    } else {
+        "negative"
+    }
+}
+
+/// Write equity curve as SVG.
+fn write_equity_curve_svg<W: Write>(writer: &mut W, equity_curve: &[EquityPoint]) -> Result<()> {
+    if equity_curve.is_empty() {
+        return Ok(());
+    }
+
+    let width = 800.0;
+    let height = 300.0;
+    let padding = 50.0;
+    let chart_width = width - 2.0 * padding;
+    let chart_height = height - 2.0 * padding;
+
+    // Find min/max equity values
+    let min_equity = equity_curve
+        .iter()
+        .map(|p| p.equity)
+        .fold(f64::INFINITY, f64::min);
+    let max_equity = equity_curve
+        .iter()
+        .map(|p| p.equity)
+        .fold(f64::NEG_INFINITY, f64::max);
+
+    // Add some padding to y-axis
+    let equity_range = max_equity - min_equity;
+    let y_min = min_equity - equity_range * 0.05;
+    let y_max = max_equity + equity_range * 0.05;
+    let y_range = y_max - y_min;
+
+    // Downsample if too many points
+    let points: Vec<_> = if equity_curve.len() > 500 {
+        let step = equity_curve.len() / 500;
+        equity_curve.iter().step_by(step).collect()
+    } else {
+        equity_curve.iter().collect()
+    };
+
+    // Build path
+    let mut path_d = String::new();
+    for (i, point) in points.iter().enumerate() {
+        let x = padding + (i as f64 / (points.len() - 1).max(1) as f64) * chart_width;
+        let y = padding + chart_height - ((point.equity - y_min) / y_range) * chart_height;
+
+        if i == 0 {
+            path_d.push_str(&format!("M {:.1} {:.1}", x, y));
+        } else {
+            path_d.push_str(&format!(" L {:.1} {:.1}", x, y));
+        }
+    }
+
+    // Determine if the overall return is positive or negative
+    let start_equity = equity_curve.first().map(|p| p.equity).unwrap_or(0.0);
+    let end_equity = equity_curve.last().map(|p| p.equity).unwrap_or(0.0);
+    let line_color = if end_equity >= start_equity {
+        "#28a745"
+    } else {
+        "#dc3545"
+    };
+
+    // Color constants for SVG
+    let grid_color = "#e0e0e0";
+    let text_color = "#666";
+
+    // Write SVG
+    writeln!(
+        writer,
+        r##"      <svg viewBox="0 0 {} {}" xmlns="http://www.w3.org/2000/svg">"##,
+        width, height
+    )?;
+
+    // Background
+    writeln!(
+        writer,
+        r##"        <rect width="{}" height="{}" fill="transparent"/>"##,
+        width, height
+    )?;
+
+    // Y-axis grid lines and labels
+    let num_y_ticks = 5;
+    for i in 0..=num_y_ticks {
+        let y_val = y_min + (i as f64 / num_y_ticks as f64) * y_range;
+        let y = padding + chart_height - (i as f64 / num_y_ticks as f64) * chart_height;
+
+        // Grid line
+        writeln!(
+            writer,
+            r##"        <line x1="{}" y1="{:.1}" x2="{}" y2="{:.1}" stroke="{}" stroke-dasharray="4,4"/>"##,
+            padding,
+            y,
+            width - padding,
+            y,
+            grid_color
+        )?;
+
+        // Y-axis label
+        writeln!(
+            writer,
+            r##"        <text x="{}" y="{:.1}" font-size="10" fill="{}" text-anchor="end">${:.0}k</text>"##,
+            padding - 5.0,
+            y + 3.0,
+            text_color,
+            y_val / 1000.0
+        )?;
+    }
+
+    // X-axis labels (start and end dates)
+    if let (Some(first), Some(last)) = (equity_curve.first(), equity_curve.last()) {
+        writeln!(
+            writer,
+            r##"        <text x="{}" y="{}" font-size="10" fill="{}" text-anchor="start">{}</text>"##,
+            padding,
+            height - 10.0,
+            text_color,
+            first.timestamp.format("%Y-%m-%d")
+        )?;
+        writeln!(
+            writer,
+            r##"        <text x="{}" y="{}" font-size="10" fill="{}" text-anchor="end">{}</text>"##,
+            width - padding,
+            height - 10.0,
+            text_color,
+            last.timestamp.format("%Y-%m-%d")
+        )?;
+    }
+
+    // Equity line
+    writeln!(
+        writer,
+        r##"        <path d="{}" fill="none" stroke="{}" stroke-width="2"/>"##,
+        path_d, line_color
+    )?;
+
+    writeln!(writer, "      </svg>")?;
+
+    Ok(())
+}
+
+/// Write drawdown chart as SVG.
+fn write_drawdown_svg<W: Write>(writer: &mut W, equity_curve: &[EquityPoint]) -> Result<()> {
+    if equity_curve.is_empty() {
+        return Ok(());
+    }
+
+    let width = 800.0;
+    let height = 200.0;
+    let padding = 50.0;
+    let chart_width = width - 2.0 * padding;
+    let chart_height = height - 2.0 * padding;
+
+    // Find max drawdown
+    let max_dd = equity_curve
+        .iter()
+        .map(|p| p.drawdown_pct)
+        .fold(0.0_f64, f64::max);
+
+    // Y-axis range: 0 to max_dd (inverted, since drawdown is shown below zero line)
+    let y_max = (max_dd * 1.1).max(1.0); // At least 1% for scale
+
+    // Downsample if too many points
+    let points: Vec<_> = if equity_curve.len() > 500 {
+        let step = equity_curve.len() / 500;
+        equity_curve.iter().step_by(step).collect()
+    } else {
+        equity_curve.iter().collect()
+    };
+
+    // Build area path (fill under the line)
+    let mut area_d = format!("M {:.1} {:.1}", padding, padding);
+    let mut line_d = String::new();
+
+    for (i, point) in points.iter().enumerate() {
+        let x = padding + (i as f64 / (points.len() - 1).max(1) as f64) * chart_width;
+        let y = padding + (point.drawdown_pct / y_max) * chart_height;
+
+        if i == 0 {
+            line_d.push_str(&format!("M {:.1} {:.1}", x, y));
+        } else {
+            line_d.push_str(&format!(" L {:.1} {:.1}", x, y));
+        }
+        area_d.push_str(&format!(" L {:.1} {:.1}", x, y));
+    }
+
+    // Close the area path
+    area_d.push_str(&format!(" L {:.1} {:.1} Z", padding + chart_width, padding));
+
+    // Color constants for SVG
+    let grid_color = "#e0e0e0";
+    let text_color = "#666";
+    let drawdown_color = "#dc3545";
+
+    // Write SVG
+    writeln!(
+        writer,
+        r##"      <svg viewBox="0 0 {} {}" xmlns="http://www.w3.org/2000/svg">"##,
+        width, height
+    )?;
+
+    // Background
+    writeln!(
+        writer,
+        r##"        <rect width="{}" height="{}" fill="transparent"/>"##,
+        width, height
+    )?;
+
+    // Zero line
+    writeln!(
+        writer,
+        r##"        <line x1="{}" y1="{}" x2="{}" y2="{}" stroke="{}" stroke-width="1"/>"##,
+        padding,
+        padding,
+        width - padding,
+        padding,
+        text_color
+    )?;
+
+    // Y-axis labels
+    let num_y_ticks = 4;
+    for i in 0..=num_y_ticks {
+        let y_val = (i as f64 / num_y_ticks as f64) * y_max;
+        let y = padding + (i as f64 / num_y_ticks as f64) * chart_height;
+
+        // Grid line
+        if i > 0 {
+            writeln!(
+                writer,
+                r##"        <line x1="{}" y1="{:.1}" x2="{}" y2="{:.1}" stroke="{}" stroke-dasharray="4,4"/>"##,
+                padding,
+                y,
+                width - padding,
+                y,
+                grid_color
+            )?;
+        }
+
+        // Y-axis label
+        writeln!(
+            writer,
+            r##"        <text x="{}" y="{:.1}" font-size="10" fill="{}" text-anchor="end">-{:.1}%</text>"##,
+            padding - 5.0,
+            y + 3.0,
+            text_color,
+            y_val
+        )?;
+    }
+
+    // X-axis labels
+    if let (Some(first), Some(last)) = (equity_curve.first(), equity_curve.last()) {
+        writeln!(
+            writer,
+            r##"        <text x="{}" y="{}" font-size="10" fill="{}" text-anchor="start">{}</text>"##,
+            padding,
+            height - 5.0,
+            text_color,
+            first.timestamp.format("%Y-%m-%d")
+        )?;
+        writeln!(
+            writer,
+            r##"        <text x="{}" y="{}" font-size="10" fill="{}" text-anchor="end">{}</text>"##,
+            width - padding,
+            height - 5.0,
+            text_color,
+            last.timestamp.format("%Y-%m-%d")
+        )?;
+    }
+
+    // Drawdown area (filled)
+    writeln!(
+        writer,
+        r##"        <path d="{}" fill="rgba(220, 53, 69, 0.2)"/>"##,
+        area_d
+    )?;
+
+    // Drawdown line
+    writeln!(
+        writer,
+        r##"        <path d="{}" fill="none" stroke="{}" stroke-width="1.5"/>"##,
+        line_d, drawdown_color
+    )?;
+
+    writeln!(writer, "      </svg>")?;
+
+    Ok(())
 }
 
 #[cfg(test)]
@@ -1200,5 +2116,163 @@ mod tests {
         // Check file was created and has content
         let metadata = std::fs::metadata(file.path()).unwrap();
         assert!(metadata.len() > 0);
+    }
+
+    #[test]
+    fn test_export_report_html() {
+        let mut result = create_test_result();
+
+        // Add equity curve data for chart generation
+        let start = Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap();
+        result.equity_curve = vec![
+            EquityPoint {
+                timestamp: start,
+                equity: 100000.0,
+                cash: 100000.0,
+                positions_value: 0.0,
+                drawdown: 0.0,
+                drawdown_pct: 0.0,
+            },
+            EquityPoint {
+                timestamp: start + Duration::days(30),
+                equity: 105000.0,
+                cash: 5000.0,
+                positions_value: 100000.0,
+                drawdown: 0.0,
+                drawdown_pct: 0.0,
+            },
+            EquityPoint {
+                timestamp: start + Duration::days(60),
+                equity: 102000.0,
+                cash: 2000.0,
+                positions_value: 100000.0,
+                drawdown: 3000.0,
+                drawdown_pct: 2.86,
+            },
+            EquityPoint {
+                timestamp: start + Duration::days(90),
+                equity: 110000.0,
+                cash: 10000.0,
+                positions_value: 100000.0,
+                drawdown: 0.0,
+                drawdown_pct: 0.0,
+            },
+        ];
+
+        let exporter = Exporter::new(result);
+
+        let file = NamedTempFile::new().unwrap();
+        exporter.export_report_html(file.path()).unwrap();
+
+        let content = std::fs::read_to_string(file.path()).unwrap();
+
+        // Verify HTML structure
+        assert!(content.contains("<!DOCTYPE html>"));
+        assert!(content.contains("<html lang=\"en\">"));
+        assert!(content.contains("Backtest Report: Test Strategy"));
+
+        // Verify performance metrics
+        assert!(content.contains("Performance Metrics"));
+        assert!(content.contains("$100000.00")); // Initial capital
+        assert!(content.contains("$110000.00")); // Final equity
+        assert!(content.contains("10.00%")); // Total return
+
+        // Verify trade statistics
+        assert!(content.contains("Trade Statistics"));
+        assert!(content.contains("Win Rate"));
+        assert!(content.contains("100.0%")); // Win rate
+
+        // Verify equity curve SVG
+        assert!(content.contains("<svg"));
+        assert!(content.contains("viewBox"));
+
+        // Verify trade list
+        assert!(content.contains("Trade List"));
+        assert!(content.contains("TEST"));
+        assert!(content.contains("Buy"));
+
+        // Verify footer
+        assert!(content.contains("Mantis Backtesting Engine"));
+    }
+
+    #[test]
+    fn test_export_report_html_multi_asset() {
+        let result = create_test_multi_asset_result();
+        let exporter = MultiAssetExporter::new(result);
+
+        let file = NamedTempFile::new().unwrap();
+        exporter.export_report_html(file.path()).unwrap();
+
+        let content = std::fs::read_to_string(file.path()).unwrap();
+
+        // Verify HTML structure
+        assert!(content.contains("<!DOCTYPE html>"));
+        assert!(content.contains("Backtest Report: MultiAsset Strategy"));
+
+        // Verify assets are listed
+        assert!(content.contains("AAPL"));
+        assert!(content.contains("MSFT"));
+
+        // Verify trades by symbol section
+        assert!(content.contains("Trades by Symbol"));
+
+        // Verify equity curve SVG
+        assert!(content.contains("<svg"));
+    }
+
+    #[test]
+    fn test_html_header_contains_title() {
+        let header = html_header("Test Strategy");
+        assert!(header.contains("Test Strategy"));
+        assert!(header.contains("<title>"));
+        assert!(header.contains("<style>"));
+    }
+
+    #[test]
+    fn test_sharpe_color() {
+        assert_eq!(sharpe_color(2.5), "positive");
+        assert_eq!(sharpe_color(1.5), "neutral");
+        assert_eq!(sharpe_color(0.5), "negative");
+    }
+
+    #[test]
+    fn test_export_report_html_empty_equity_curve() {
+        let result = create_test_result();
+        let exporter = Exporter::new(result);
+
+        let file = NamedTempFile::new().unwrap();
+        exporter.export_report_html(file.path()).unwrap();
+
+        let content = std::fs::read_to_string(file.path()).unwrap();
+
+        // Should still produce valid HTML without equity curve section
+        assert!(content.contains("<!DOCTYPE html>"));
+        assert!(content.contains("</html>"));
+        // No SVG since equity curve is empty
+        // (the test result has empty equity_curve by default)
+    }
+
+    #[test]
+    fn test_export_report_html_negative_returns() {
+        let mut result = create_test_result();
+        result.total_return_pct = -15.0;
+        result.final_equity = 85000.0;
+        result.sharpe_ratio = -0.5;
+        result.winning_trades = 0;
+        result.losing_trades = 1;
+        result.win_rate = 0.0;
+
+        let exporter = Exporter::new(result);
+
+        let file = NamedTempFile::new().unwrap();
+        exporter.export_report_html(file.path()).unwrap();
+
+        let content = std::fs::read_to_string(file.path()).unwrap();
+
+        // Verify negative values are displayed
+        assert!(content.contains("-15.00%"));
+        assert!(content.contains("$85000.00"));
+        // Verify negative class is applied
+        assert!(content.contains("class=\"value negative\""));
     }
 }

@@ -42,7 +42,7 @@ The Mantis backtesting framework has a solid core implementation with excellent 
 ## Test Status Summary
 
 **Last Run:** 2026-01-16
-- **Total Tests:** 578 passed
+- **Total Tests:** 584 passed
 - **Failed:** 0 tests
 - **Status:** ALL TESTS PASSING
 
@@ -303,19 +303,30 @@ All 3 previously failing tests now pass:
 
 ---
 
-### 13. HTML Report Generation [MISSING - VERIFIED]
-**Status:** Not implemented
+### 13. HTML Report Generation [COMPLETE]
+**Status:** COMPLETE
 
-**Current state (src/export.rs):**
-- Supports: CSV, JSON, Parquet, NPY, Markdown
-- Documentation claims HTML (line 4) but NOT implemented
-- NO `export_html()` method
+**Implementation details:**
+- `export_report_html()` method added to `Exporter` struct
+- `export_report_html()` method added to `MultiAssetExporter` struct
+- Self-contained HTML report with embedded CSS (no external dependencies)
+- Dark/light theme support via CSS prefers-color-scheme media query
+- Report sections:
+  - Summary (period, symbols, trading days)
+  - Performance metrics grid (color-coded: green=positive, red=negative)
+  - Trade statistics grid
+  - Equity curve SVG chart (auto-downsampled for large datasets)
+  - Drawdown SVG chart
+  - Trade list table with P&L highlighting
+- SVG charts with:
+  - Y-axis labels and grid lines
+  - X-axis date labels
+  - Responsive viewBox for any screen size
+  - Automatic color coding (green for gains, red for losses)
+- 6 new tests added for HTML export functionality
 
-**Files affected:**
-- `src/export.rs` - Add `export_html()` function
-
-**Dependencies:** Visualization module
-**Effort:** Small (1-2 days)
+**Dependencies:** None
+**Effort:** Small (1 day)
 
 ---
 
@@ -400,7 +411,7 @@ All 3 previously failing tests now pass:
 | 10 | Multi-Symbol Documentation | DOC GAP | P1 | Small | None |
 | 11 | Parameter Sensitivity | **COMPLETE** | P2 | Medium | None |
 | 12 | Visualization Module | MISSING | P2 | Medium | Item 2 |
-| 13 | HTML Reports | MISSING | P2 | Small | Item 12 |
+| 13 | HTML Reports | **COMPLETE** | P2 | Small | None |
 | 14 | Verdict System | **COMPLETE** | P2 | Small | None |
 | 15 | Polars Backend | PARTIAL | P3 | Small | Item 2 |
 | 16 | Sample Data Bundling | MISSING | P3 | Small | None |
@@ -445,8 +456,9 @@ All 3 previously failing tests now pass:
 | **Position Sizing Integration** | **COMPLETE**: PositionSizingMethod enum (PercentOfEquity, FixedDollar, VolatilityTargeted, SignalScaled, RiskBased), new PositionSizer methods (size_fixed_dollar, size_by_signal, size_by_volatility_target, size_percent_of_equity), BacktestConfig integration, signal_to_order() updated with ATR/volatility calculations, CLI options (--sizing-method, --fixed-dollar, --target-vol, --vol-lookback, --risk-per-trade, --stop-atr, --atr-period), 7 unit tests |
 | **Verdict System** | **COMPLETE**: Verdict enum (Robust, Borderline, LikelyOverfit), verdict() methods in WalkForwardResult and MonteCarloResult, from_degradation_ratio() and from_criteria() classification, CLI color-coded verdict display, is_acceptable(), description(), label() helpers, exported from lib.rs, 12 unit tests |
 | **Parameter Sensitivity** | **COMPLETE**: src/sensitivity.rs (~1100 lines), ParameterRange enum (Linear, Logarithmic, Discrete, Centered), SensitivityConfig with constraints, SensitivityAnalysis with parallel rayon execution, HeatmapData for 2D visualization exports, cliff detection, plateau detection, parameter importance ranking, stability scores, CLI `mantis sensitivity` command with metric/steps/heatmap options, supports all 6 built-in strategies, 10 unit tests |
+| **HTML Reports** | **COMPLETE**: export_report_html() method in Exporter and MultiAssetExporter, self-contained HTML with embedded CSS, dark/light theme support, SVG charts for equity curve and drawdown, performance metrics grid, trade statistics, trade list table, 6 unit tests |
 | Codebase Cleanliness | **VERIFIED**: No TODOs/FIXMEs in codebase |
-| ALL TESTS | **PASSING**: 578 tests (0 failures) |
+| ALL TESTS | **PASSING**: 584 tests (0 failures) |
 
 ---
 
