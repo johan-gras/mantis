@@ -357,6 +357,8 @@ impl PyBacktestResult {
             self.winning_trades,
             self.losing_trades
         ));
+        s.push_str(&"-".repeat(50));
+        s.push_str("\nDisclaimer: Past performance does not guarantee future results.\n");
         s
     }
 

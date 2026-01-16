@@ -1015,6 +1015,13 @@ fn html_header(title: &str) -> String {
       color: var(--neutral);
       font-size: 0.75rem;
     }}
+    .footer .disclaimer {{
+      margin-top: 1rem;
+      padding: 0.5rem;
+      background: var(--bg-color);
+      border-radius: 4px;
+      font-size: 0.7rem;
+    }}
   </style>
 </head>
 <body>
@@ -1029,6 +1036,7 @@ fn html_footer() -> String {
     format!(
         r#"  <div class="footer">
     <p>Report generated on {} by Mantis Backtesting Engine</p>
+    <p class="disclaimer"><strong>Disclaimer:</strong> Past performance does not guarantee future results. Backtest results are hypothetical and do not represent actual trading. Real trading involves risk of loss.</p>
   </div>
 </body>
 </html>

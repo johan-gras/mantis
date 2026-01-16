@@ -295,6 +295,8 @@ The engine is optimized for speed:
 
 Run benchmarks: `cargo bench`
 
+> **Disclaimer:** Past performance does not guarantee future results. Backtest results are hypothetical and do not represent actual trading. Real trading involves risk of loss. All performance metrics shown are based on historical simulations with assumptions that may not reflect actual market conditions.
+
 ## Configuration Files
 
 ```toml

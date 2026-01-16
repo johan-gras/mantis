@@ -175,19 +175,20 @@ Mantis is a high-performance Rust CLI backtest engine for quantitative trading w
 
 ## Priority 3: MEDIUM (Quality/Polish)
 
-### 3.1 Legal Disclaimers Missing
+### 3.1 ~~Legal Disclaimers Missing~~ PARTIALLY RESOLVED
 
-| Issue | No "past performance does not guarantee future results" disclaimers |
-|-------|-------------------------------------------------------------------|
-| **Verified** | Searched entire codebase for "disclaimer", "past performance", "future results" - none found |
-| **Risk** | Regulatory/legal exposure for financial software |
+| Status | ✅ Core disclaimers added |
+|--------|--------------------------|
+| **Fix Date** | 2026-01-16 |
 
-**Required per specs/documentation.md (lines 293-321):**
-- [ ] README.md performance section
+**Implemented:**
+- [x] README.md performance section - Disclaimer blockquote added
+- [x] HTML report outputs (`src/export.rs` footer) - Styled disclaimer in footer
+- [x] `results.summary()` output - Disclaimer appended to Python results summary
+
+**Still needed:**
 - [ ] docs/quickstart.md after examples
 - [ ] API docs (BacktestResults class docstring)
-- [ ] HTML report outputs (`src/export.rs` footer)
-- [ ] `results.summary()` output
 
 ---
 
