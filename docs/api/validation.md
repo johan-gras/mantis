@@ -2,6 +2,9 @@
 
 Functions and classes for validating backtests.
 
+!!! warning "Disclaimer"
+    **Past performance does not guarantee future results.** Backtest results are hypothetical and do not represent actual trading. Real trading involves risk of loss. Validation metrics help assess strategy robustness but cannot predict future performance.
+
 ## validate
 
 Run walk-forward validation on a backtest.

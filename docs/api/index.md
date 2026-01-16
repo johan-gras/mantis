@@ -2,6 +2,9 @@
 
 Complete documentation for all Mantis functions and classes.
 
+!!! warning "Disclaimer"
+    **Past performance does not guarantee future results.** Backtest results are hypothetical and do not represent actual trading. Real trading involves risk of loss.
+
 ## Quick Reference
 
 | Function | Description |

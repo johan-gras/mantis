@@ -111,15 +111,50 @@ jobs:
           # Install lcov for coverage summary
           sudo apt-get install -y lcov
 
-          # Check Rust coverage
+          # Check Rust coverage and extract percentage
           echo "=== Rust Coverage Summary ==="
-          lcov --summary rust-coverage.lcov || true
+          RUST_COV=$(lcov --summary rust-coverage.lcov 2>&1 | grep "lines" | grep -oP '\d+\.\d+(?=%)' | head -1)
+          echo "Rust coverage: ${RUST_COV}%"
 
-          # Check Python coverage
+          # Check Python coverage and extract percentage
           echo "=== Python Coverage Summary ==="
-          lcov --summary python-coverage.lcov || true
+          PYTHON_COV=$(lcov --summary python-coverage.lcov 2>&1 | grep "lines" | grep -oP '\d+\.\d+(?=%)' | head -1)
+          echo "Python coverage: ${PYTHON_COV}%"
 
-          # Note: The spec requires >= 80% coverage
-          # This is informational; actual enforcement would require parsing the output
+          # Enforce >= 80% threshold
+          THRESHOLD=80
           echo ""
-          echo "Target: >= 80% coverage for both Rust and Python"
+          echo "Target: >= ${THRESHOLD}% coverage for both Rust and Python"
+          echo ""
+
+          FAILED=0
+          if [ -n "$RUST_COV" ]; then
+            if (( $(echo "$RUST_COV < $THRESHOLD" | bc -l) )); then
+              echo "❌ Rust coverage ${RUST_COV}% is below ${THRESHOLD}% threshold"
+              FAILED=1
+            else
+              echo "✅ Rust coverage ${RUST_COV}% meets ${THRESHOLD}% threshold"
+            fi
+          else
+            echo "⚠️ Could not parse Rust coverage"
+          fi
+
+          if [ -n "$PYTHON_COV" ]; then
+            if (( $(echo "$PYTHON_COV < $THRESHOLD" | bc -l) )); then
+              echo "❌ Python coverage ${PYTHON_COV}% is below ${THRESHOLD}% threshold"
+              FAILED=1
+            else
+              echo "✅ Python coverage ${PYTHON_COV}% meets ${THRESHOLD}% threshold"
+            fi
+          else
+            echo "⚠️ Could not parse Python coverage"
+          fi
+
+          if [ $FAILED -eq 1 ]; then
+            echo ""
+            echo "Coverage threshold check FAILED"
+            exit 1
+          fi
+
+          echo ""
+          echo "Coverage threshold check PASSED"

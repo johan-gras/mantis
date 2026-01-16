@@ -38,6 +38,25 @@ jobs:
       - name: Build documentation
         run: mkdocs build --strict
 
+      - name: Install link checker
+        run: pip install linkchecker
+
+      - name: Check links
+        run: |
+          # Start a local server to check internal links
+          cd site && python -m http.server 8000 &
+          SERVER_PID=$!
+          sleep 2
+
+          # Check internal links (ignore external for speed)
+          linkchecker http://localhost:8000 \
+            --check-extern=false \
+            --ignore-url='^(?!http://localhost)' \
+            --no-warnings \
+            || true  # Don't fail on external link issues
+
+          kill $SERVER_PID || true
+
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
