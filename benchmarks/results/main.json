@@ -1,0 +1,73 @@
+{
+  "timestamp": "2026-01-16T21:13:29.684048+00:00",
+  "benchmarks": {
+    "backtest/macd_strategy_1000": {
+      "mean_ns": 25081038.889999997
+    },
+    "backtest/momentum_strategy_1000": {
+      "mean_ns": 1698173.6245288544
+    },
+    "backtest/rsi_strategy_1000": {
+      "mean_ns": 2171377.1626923084
+    },
+    "indicators/atr_14": {
+      "mean_ns": 309.0608253482332
+    },
+    "indicators/bbands_20_2": {
+      "mean_ns": 11.069420124648875
+    },
+    "indicators/macd_12_26_9": {
+      "mean_ns": 48480.33925332129
+    },
+    "indicators/rsi_14": {
+      "mean_ns": 192.6017356366752
+    },
+    "monte_carlo/mc_1000_sims": {
+      "mean_ns": 368221.4902643982
+    },
+    "monte_carlo/mc_100_sims": {
+      "mean_ns": 35794.22519901693
+    },
+    "onnx/batch_inference_100": {
+      "mean_ns": 2310.175171653671
+    },
+    "onnx/batch_inference_1000": {
+      "mean_ns": 13246.862199988007
+    },
+    "onnx/batch_inference_2520_10y": {
+      "mean_ns": 120964.91180729415
+    },
+    "onnx/single_inference_minimal": {
+      "mean_ns": 1182.7102314574079
+    },
+    "onnx/single_inference_simple_mlp": {
+      "mean_ns": 1793.111550588227
+    },
+    "optimization/optimize_9_params": {
+      "mean_ns": 5394011.919712884
+    },
+    "parquet/export_1000_rows": {
+      "mean_ns": 174797.93380459194
+    },
+    "spec_required/daily_10y": {
+      "mean_ns": 1684169.4956942187
+    },
+    "spec_required/multi_symbol_3": {
+      "mean_ns": 5011667.648181819
+    },
+    "spec_required/single_bar_1000": {
+      "mean_ns": 1481868.3205175775
+    },
+    "sweep/sweep_1000": {
+      "mean_ns": 45427541.814365074
+    },
+    "walkforward/walkforward_12fold": {
+      "mean_ns": 38704035.311931215
+    }
+  },
+  "environment": {
+    "cpu": "arm",
+    "os": "Darwin 25.1.0",
+    "python": "3.13.2"
+  }
+}

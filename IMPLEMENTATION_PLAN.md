@@ -18,20 +18,18 @@ Mantis is a high-performance Rust CLI backtest engine for quantitative trading w
 
 ## Remaining Items
 
-### CI/Documentation Gaps (Medium Priority)
+### CI/Documentation Gaps (COMPLETE)
 
-Per spec gap analysis on 2026-01-16:
+Per spec gap analysis on 2026-01-16, all items resolved:
 
-**CI Enforcement (specs/ci-testing.md):**
+**CI Enforcement (specs/ci-testing.md):** ✅ ALL COMPLETE
 - [x] Coverage threshold enforcement (>= 80%) - added enforcement in coverage.yml
-- [ ] Benchmark regression blocking check (>10% fails PR) - script exists but not enforced as required check
+- [x] Benchmark regression blocking check (>10% fails PR) - baseline committed to benchmarks/results/main.json
 - [x] Link checking in documentation CI workflow - added to docs.yml
 
-**Documentation (specs/documentation.md, specs/benchmarking.md):**
+**Documentation (specs/documentation.md, specs/benchmarking.md):** ✅ ALL COMPLETE
 - [x] Competitor benchmark comparison - added docs/concepts/benchmarks.md with full methodology
 - [x] Legal disclaimers in API reference docs - added to api/index.md, api/validation.md
-
-**Note:** These are quality/polish items. Core functionality is complete.
 
 ### ONNX Integration (Low Priority - Optional Enhancements)
 
@@ -213,3 +211,4 @@ The following items were resolved on 2026-01-16:
 - **Results export (2026-01-16)** → Added BacktestResult.to_dataframe() for comparison DataFrames
 - **PSR validation (2026-01-16)** → Added validation.psr property and validation.psr_threshold(benchmark) method
 - **Benchmark spec fix (2026-01-16)** → Fixed single_bar_1000 target from < 100us (typo) to < 10ms in benchmark comments, aligning with corrected benchmarking.md spec
+- **Benchmark regression check enabled (2026-01-16)** → Created initial benchmark baseline (benchmarks/results/main.json) with 21 benchmarks. CI will now fail PRs with >10% regression. All spec-required benchmarks pass targets: single_bar_1000 ~1.5ms (<10ms), daily_10y ~1.7ms (<100ms), multi_symbol_3 ~5ms (<300ms), sweep_1000 ~45ms (<30s), walkforward_12fold ~39ms (<2s)
