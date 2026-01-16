@@ -601,12 +601,16 @@ impl PyBacktestResult {
     ///     'borderline'
     ///     >>> print(validation.oos_degradation)
     ///     0.71
-    #[pyo3(signature = (folds=12, train_ratio=0.75, anchored=true))]
+    ///     >>> # With trials parameter for deflated Sharpe adjustment
+    ///     >>> validation = results.validate(trials=100)  # 100 parameter combinations tested
+    ///     >>> print(validation.deflated_sharpe)
+    #[pyo3(signature = (folds=12, train_ratio=0.75, anchored=true, trials=1))]
     fn validate(
         &self,
         folds: usize,
         train_ratio: f64,
         anchored: bool,
+        trials: usize,
     ) -> PyResult<PyValidationResult> {
         // Check if we have the required data
         let bars = self.bars.as_ref().ok_or_else(|| {
@@ -658,7 +662,7 @@ impl PyBacktestResult {
         // Run walk-forward validation
         let wf_result = run_walkforward_validation(bars, signal_vec, &bt_config, &wf_config)?;
 
-        Ok(PyValidationResult::from_wf_result(&wf_result))
+        Ok(PyValidationResult::from_wf_result_with_trials(&wf_result, trials))
     }
 
     fn __repr__(&self) -> String {
@@ -885,6 +889,14 @@ pub struct PyValidationResult {
     pub efficiency_ratio: f64,
     #[pyo3(get)]
     pub parameter_stability: f64,
+    /// Deflated Sharpe ratio adjusted for multiple testing bias.
+    /// Uses the `trials` parameter from validate() to account for
+    /// the number of parameter combinations tested during strategy development.
+    #[pyo3(get)]
+    pub deflated_sharpe: f64,
+    /// Number of parameter combinations tested (from trials parameter).
+    #[pyo3(get)]
+    pub trials: usize,
 
     // Internal data for fold_details method
     fold_data: Vec<PyFoldDetail>,
@@ -979,8 +991,8 @@ impl PyValidationResult {
 }
 
 impl PyValidationResult {
-    /// Create from a WalkForwardResult.
-    pub fn from_wf_result(result: &WalkForwardResult) -> Self {
+    /// Create from a WalkForwardResult with trials parameter for deflated Sharpe.
+    pub fn from_wf_result_with_trials(result: &WalkForwardResult, trials: usize) -> Self {
         let is_sharpe = result.avg_is_sharpe;
         let oos_sharpe = result.avg_oos_sharpe;
 
@@ -991,6 +1003,30 @@ impl PyValidationResult {
         };
 
         let verdict = result.verdict().to_string();
+
+        // Calculate deflated Sharpe ratio based on OOS performance
+        // Use the combined OOS bars as the number of observations
+        let n_observations: usize = result.windows.iter().map(|w| w.window.oos_bars).sum();
+        let deflated_sharpe = if trials <= 1 || oos_sharpe.is_nan() || n_observations == 0 {
+            oos_sharpe
+        } else {
+            // Calculate the expected maximum Sharpe ratio under null hypothesis
+            // Using Bailey-López de Prado formula
+            let n = n_observations as f64;
+            let t = trials as f64;
+
+            // Expected maximum of t standard normal random variables
+            let gamma = 0.5772156649; // Euler-Mascheroni constant
+            let e_max = ((2.0 * t.ln()).sqrt()) - ((gamma + (4.0 * t.ln()).ln()) / (2.0 * (2.0 * t.ln()).sqrt()));
+
+            // Variance of maximum
+            let std_max = (std::f64::consts::PI / 6.0).sqrt() / (2.0 * t.ln()).sqrt();
+
+            // Deflated Sharpe = (SR - E[SR_max]) / Var[SR_max]^0.5
+            // But we want a bounded version that still represents the Sharpe ratio
+            let deflated = (oos_sharpe - e_max * (1.0 / n.sqrt())) / (1.0 + std_max);
+            deflated.max(0.0) // Floor at 0
+        };
 
         // Extract per-fold details
         let fold_data: Vec<PyFoldDetail> = result
@@ -1019,9 +1055,16 @@ impl PyValidationResult {
             avg_oos_return: result.avg_oos_return,
             efficiency_ratio: result.avg_efficiency_ratio,
             parameter_stability: result.parameter_stability,
+            deflated_sharpe,
+            trials,
             fold_data,
             rust_result: result.clone(),
         }
+    }
+
+    /// Create from a WalkForwardResult (backwards compatible, trials=1).
+    pub fn from_wf_result(result: &WalkForwardResult) -> Self {
+        Self::from_wf_result_with_trials(result, 1)
     }
 }
 

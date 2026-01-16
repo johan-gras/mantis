@@ -7,7 +7,7 @@
 
 ## Executive Summary
 
-The Mantis backtesting framework implementation is **complete**. All 34 planned items have been verified and implemented.
+The Mantis backtesting framework implementation is **complete**. All 37 planned items have been verified and implemented.
 
 **Core Features:**
 - Core backtest engine with comprehensive cost modeling
@@ -98,6 +98,9 @@ The Mantis backtesting framework implementation is **complete**. All 34 planned 
 | 32 | Per-Share Commission Model | P1 | commission_per_share field, commission_type="per_share" support |
 | 33 | CSV Auto-Delimiter Detection | P1 | Auto-detects comma, tab, semicolon, pipe delimiters |
 | 34 | Square-Root Slippage Model | P1 | slippage="sqrt" parameter in Python API, 10% cap |
+| 35 | Position Sizing String Modes | P1 | size="volatility", "signal", "risk" in Python API |
+| 36 | max_leverage Parameter | P1 | max_leverage parameter exposed in Python backtest() |
+| 37 | Deflated Sharpe trials | P1 | trials parameter for deflated Sharpe in validate() |
 
 ---
 
@@ -266,12 +269,7 @@ The following spec items have been identified as not fully implemented:
 - Risk-free rate not subtracted in Sharpe/Sortino calculation (assumes 0)
 
 **Validation (`specs/validation-robustness.md`):**
-- `trials` parameter for deflated Sharpe not exposed in `results.validate()`
 - OOS/IS < 60% warning not in `warnings()` method
-
-**Position Sizing (`specs/position-sizing.md`):**
-- Python API doesn't support string sizing modes ("volatility", "signal", "risk") as shown in spec
-- `max_leverage` parameter not exposed in Python `mt.backtest()`
 
 These are documented as known limitations rather than bugs, as the core functionality works correctly.
 
@@ -290,6 +288,58 @@ Per spec (`specs/execution-realism.md`), added square-root slippage model suppor
 **Files modified:**
 - `src/python/backtest.rs`: Added SlippageSpec enum, parse_slippage(), slippage_factor parameter
 - `python/mantis/__init__.pyi`: Updated type stubs for slippage parameter
+
+---
+
+### Position Sizing String Modes (2026-01-16)
+
+Per spec (`specs/position-sizing.md`), added string-based sizing modes to Python API:
+- Added `SizingSpec` enum and `parse_size()` function in `src/python/backtest.rs`
+- Python API now accepts string size parameter: `size="volatility"`, `size="signal"`, `size="risk"`
+- Associated parameters added to `backtest()`:
+  - `target_vol`: Target volatility for volatility sizing (default: 0.02)
+  - `vol_lookback`: Lookback period for volatility calculation (default: 20)
+  - `base_size`: Base position size for signal sizing (default: 1000.0)
+  - `risk_per_trade`: Risk amount per trade for risk sizing (default: 100.0)
+  - `stop_atr`: Stop distance in ATR multiples for risk sizing (default: 2.0)
+  - `atr_period`: ATR calculation period (default: 14)
+- Updated Fluent API (`python/mantis/__init__.py`) with methods for each sizing parameter
+
+**Files modified:**
+- `src/python/backtest.rs`: Added SizingSpec enum, parse_size(), and sizing parameters
+- `python/mantis/__init__.py`: Added fluent API methods for sizing parameters
+- `python/mantis/__init__.pyi`: Updated type stubs
+
+**Resolves:** `specs/position-sizing.md` gap for Python API string sizing modes
+
+---
+
+### max_leverage Parameter (2026-01-16)
+
+Per spec (`specs/python-api.md`), added `max_leverage` parameter to Python API:
+- Added `max_leverage` parameter to `PyBacktestConfig` and `backtest()` function
+- Wired up to Rust's `MarginConfig.max_leverage`
+- Default value: 2.0
+
+**Files modified:**
+- `src/python/backtest.rs`: Added max_leverage parameter
+
+**Resolves:** `specs/python-api.md` gap for max_leverage exposure
+
+---
+
+### Deflated Sharpe trials Parameter (2026-01-16)
+
+Per spec (`specs/validation-robustness.md`), added `trials` parameter for Deflated Sharpe Ratio:
+- Added `trials` parameter to `results.validate()` and `mt.validate()` functions
+- Added `deflated_sharpe` and `trials` fields to `PyValidationResult`
+- Deflated Sharpe is now calculated using Bailey-Lopez de Prado formula when trials > 1
+- Default: trials=1 (no deflation)
+
+**Files modified:**
+- `src/python/backtest.rs`: Added trials parameter to validate functions, added deflated_sharpe field
+
+**Resolves:** `specs/validation-robustness.md` gap for trials parameter exposure
 
 ---
 

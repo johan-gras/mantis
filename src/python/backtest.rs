@@ -9,8 +9,8 @@ use pyo3::types::PyDict;
 use crate::analytics::BenchmarkMetrics;
 use crate::data::{atr, load_csv, load_parquet, DataConfig};
 use crate::engine::{BacktestConfig, BacktestResult, Engine};
-use crate::portfolio::{CostModel, MarketImpactModel};
-use crate::risk::{StopLoss, TakeProfit};
+use crate::portfolio::{CostModel, MarginConfig, MarketImpactModel};
+use crate::risk::{PositionSizingMethod, StopLoss, TakeProfit};
 use crate::strategies::{
     BreakoutStrategy, MacdStrategy, MeanReversion, MomentumStrategy, RsiStrategy, SmaCrossover,
 };
@@ -39,6 +39,8 @@ pub struct PyBacktestConfig {
     pub slippage_spec: SlippageSpec,
     #[pyo3(get, set)]
     pub position_size: f64,
+    /// Position sizing specification: float (percentage) or string ("volatility", "signal", "risk").
+    pub sizing_spec: SizingSpec,
     #[pyo3(get, set)]
     pub allow_short: bool,
     #[pyo3(get, set)]
@@ -75,6 +77,9 @@ pub struct PyBacktestConfig {
     /// Only used when order_type="limit".
     #[pyo3(get, set)]
     pub limit_offset: f64,
+    /// Maximum leverage allowed (gross exposure / equity). Default 2.0.
+    #[pyo3(get, set)]
+    pub max_leverage: f64,
 }
 
 /// Specification for stop loss - can be percentage or ATR-based.
@@ -269,6 +274,114 @@ fn parse_take_profit(py: Python<'_>, obj: &PyObject) -> PyResult<Option<TakeProf
 /// Maximum slippage cap as per spec (10%).
 const MAX_SLIPPAGE_PCT: f64 = 0.10;
 
+/// Specification for position sizing - can be percentage or method-based.
+#[derive(Debug, Clone)]
+pub enum SizingSpec {
+    /// Fixed percentage of equity (e.g., 0.10 for 10%)
+    Percent(f64),
+    /// Fixed dollar amount per trade
+    FixedDollar(f64),
+    /// Volatility-targeted sizing: scale inversely with asset volatility
+    Volatility {
+        target_vol: f64,
+        lookback: usize,
+    },
+    /// Signal-scaled sizing: use signal magnitude to scale position size
+    Signal { base_size: f64 },
+    /// Risk-based sizing using ATR for stop-loss distance
+    Risk {
+        risk_per_trade: f64,
+        stop_atr: f64,
+        atr_period: usize,
+    },
+}
+
+/// Parse size specification from Python object.
+///
+/// Accepts:
+/// - float: percentage of equity (e.g., 0.10 for 10%)
+/// - "volatility": volatility-targeted sizing (requires target_vol parameter)
+/// - "signal": signal-scaled sizing (requires base_size parameter)
+/// - "risk": risk-based sizing using ATR (requires risk_per_trade parameter)
+fn parse_size(
+    py: Python<'_>,
+    obj: &PyObject,
+    target_vol: Option<f64>,
+    vol_lookback: Option<usize>,
+    base_size: Option<f64>,
+    risk_per_trade: Option<f64>,
+    stop_atr: Option<f64>,
+    atr_period: Option<usize>,
+) -> PyResult<SizingSpec> {
+    // Try as float first
+    if let Ok(pct) = obj.extract::<f64>(py) {
+        return Ok(SizingSpec::Percent(pct));
+    }
+
+    // Try as string
+    if let Ok(s) = obj.extract::<String>(py) {
+        let s_lower = s.to_lowercase().trim().to_string();
+
+        match s_lower.as_str() {
+            "volatility" | "vol" => {
+                let target = target_vol.unwrap_or(0.15); // Default 15% annualized vol target
+                let lookback = vol_lookback.unwrap_or(20); // Default 20 bar lookback
+                return Ok(SizingSpec::Volatility {
+                    target_vol: target,
+                    lookback,
+                });
+            }
+            "signal" | "signal-scaled" | "signal_scaled" => {
+                let base = base_size.unwrap_or(0.10); // Default 10% base size
+                return Ok(SizingSpec::Signal { base_size: base });
+            }
+            "risk" | "risk-based" | "risk_based" | "atr" => {
+                let risk = risk_per_trade.unwrap_or(0.01); // Default 1% risk per trade
+                let stop = stop_atr.unwrap_or(2.0); // Default 2x ATR stop
+                let period = atr_period.unwrap_or(14); // Default 14-period ATR
+                return Ok(SizingSpec::Risk {
+                    risk_per_trade: risk,
+                    stop_atr: stop,
+                    atr_period: period,
+                });
+            }
+            "fixed" | "fixed-dollar" | "fixed_dollar" => {
+                // For fixed dollar, use base_size as the dollar amount
+                let amount = base_size.unwrap_or(10000.0);
+                return Ok(SizingSpec::FixedDollar(amount));
+            }
+            _ => {
+                // Try parsing as percentage (e.g., "10%" or "0.10")
+                let num_str = s_lower.trim_end_matches('%');
+                if let Ok(pct) = num_str.parse::<f64>() {
+                    // If > 1.0 and ends with %, assume it's "10%" meaning 0.10
+                    let decimal = if s_lower.ends_with('%') && pct > 1.0 {
+                        pct / 100.0
+                    } else if pct > 1.0 {
+                        pct / 100.0
+                    } else {
+                        pct
+                    };
+                    return Ok(SizingSpec::Percent(decimal));
+                }
+
+                return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                    "Invalid size: '{}'. Use:\n\
+                     - float (0.10 for 10% of equity)\n\
+                     - 'volatility' for volatility-targeted sizing (with target_vol=0.15)\n\
+                     - 'signal' for signal-scaled sizing (with base_size=0.10)\n\
+                     - 'risk' for ATR-based risk sizing (with risk_per_trade=0.01, stop_atr=2.0)",
+                    s
+                )));
+            }
+        }
+    }
+
+    Err(pyo3::exceptions::PyTypeError::new_err(
+        "size must be a float or string ('volatility', 'signal', 'risk')",
+    ))
+}
+
 /// Parse slippage specification from Python object (float or string).
 ///
 /// Accepts:
@@ -388,6 +501,7 @@ impl PyBacktestConfig {
         commission_per_share=0.0,
         slippage=None,
         position_size=0.10,
+        size=None,
         allow_short=true,
         fractional_shares=false,
         stop_loss=None,
@@ -400,7 +514,14 @@ impl PyBacktestConfig {
         max_volume_participation=None,
         order_type="market",
         limit_offset=0.0,
-        slippage_factor=None
+        slippage_factor=None,
+        max_leverage=2.0,
+        target_vol=None,
+        vol_lookback=None,
+        base_size=None,
+        risk_per_trade=None,
+        stop_atr=None,
+        atr_period=None
     ))]
     #[allow(clippy::too_many_arguments)]
     fn new(
@@ -410,6 +531,7 @@ impl PyBacktestConfig {
         commission_per_share: f64,
         slippage: Option<PyObject>,
         position_size: f64,
+        size: Option<PyObject>,
         allow_short: bool,
         fractional_shares: bool,
         stop_loss: Option<PyObject>,
@@ -423,6 +545,13 @@ impl PyBacktestConfig {
         order_type: &str,
         limit_offset: f64,
         slippage_factor: Option<f64>,
+        max_leverage: f64,
+        target_vol: Option<f64>,
+        vol_lookback: Option<usize>,
+        base_size: Option<f64>,
+        risk_per_trade: Option<f64>,
+        stop_atr: Option<f64>,
+        atr_period: Option<usize>,
     ) -> PyResult<Self> {
         let sl_spec = if let Some(ref obj) = stop_loss {
             parse_stop_loss(py, obj)?
@@ -440,6 +569,22 @@ impl PyBacktestConfig {
             parse_slippage(py, obj, slippage_factor)?
         } else {
             SlippageSpec::Percentage(0.001) // Default 0.1%
+        };
+
+        // Parse sizing specification
+        let sizing_spec = if let Some(ref obj) = size {
+            parse_size(
+                py,
+                obj,
+                target_vol,
+                vol_lookback,
+                base_size,
+                risk_per_trade,
+                stop_atr,
+                atr_period,
+            )?
+        } else {
+            SizingSpec::Percent(position_size) // Default to position_size as percent
         };
 
         let freq_parsed = if let Some(f) = freq {
@@ -463,6 +608,7 @@ impl PyBacktestConfig {
             commission_per_share,
             slippage_spec,
             position_size,
+            sizing_spec,
             allow_short,
             fractional_shares,
             stop_loss: sl_spec,
@@ -475,6 +621,7 @@ impl PyBacktestConfig {
             max_volume_participation,
             order_type: order_type_lower,
             limit_offset,
+            max_leverage,
         })
     }
 
@@ -522,6 +669,33 @@ impl PyBacktestConfig {
         match self.trading_hours_24 {
             Some(v) => v.into_py(py),
             None => py.None(),
+        }
+    }
+
+    /// Get size/sizing method as Python object.
+    /// Returns float for percentage sizing, or string for method-based sizing.
+    #[getter]
+    fn get_size(&self, py: Python<'_>) -> PyObject {
+        match &self.sizing_spec {
+            SizingSpec::Percent(p) => p.into_py(py),
+            SizingSpec::FixedDollar(amt) => format!("fixed:{}", amt).into_py(py),
+            SizingSpec::Volatility { target_vol, lookback } => {
+                format!("volatility(target={}, lookback={})", target_vol, lookback).into_py(py)
+            }
+            SizingSpec::Signal { base_size } => {
+                format!("signal(base={})", base_size).into_py(py)
+            }
+            SizingSpec::Risk {
+                risk_per_trade,
+                stop_atr,
+                atr_period,
+            } => {
+                format!(
+                    "risk(per_trade={}, stop_atr={}, period={})",
+                    risk_per_trade, stop_atr, atr_period
+                )
+                .into_py(py)
+            }
         }
     }
 
@@ -573,6 +747,38 @@ impl PyBacktestConfig {
             borrow_cost_rate: self.borrow_cost,
             max_volume_participation: self.max_volume_participation,
             market_impact,
+            ..Default::default()
+        };
+
+        // Set position sizing method based on sizing_spec
+        config.position_sizing_method = match &self.sizing_spec {
+            SizingSpec::Percent(pct) => Some(PositionSizingMethod::PercentOfEquity(*pct)),
+            SizingSpec::FixedDollar(amount) => Some(PositionSizingMethod::FixedDollar(*amount)),
+            SizingSpec::Volatility { target_vol, lookback } => {
+                Some(PositionSizingMethod::VolatilityTargeted {
+                    target_vol: *target_vol,
+                    lookback: *lookback,
+                })
+            }
+            SizingSpec::Signal { base_size } => {
+                Some(PositionSizingMethod::SignalScaled {
+                    base_size: *base_size,
+                })
+            }
+            SizingSpec::Risk {
+                risk_per_trade,
+                stop_atr,
+                atr_period,
+            } => Some(PositionSizingMethod::RiskBased {
+                risk_per_trade: *risk_per_trade,
+                stop_atr: *stop_atr,
+                atr_period: *atr_period,
+            }),
+        };
+
+        // Set margin config with max_leverage
+        config.margin = MarginConfig {
+            max_leverage: self.max_leverage,
             ..Default::default()
         };
 
@@ -713,7 +919,7 @@ impl From<&PyBacktestConfig> for BacktestConfig {
     commission_per_share=0.0,
     slippage=None,
     slippage_factor=None,
-    size=0.10,
+    size=None,
     cash=100_000.0,
     stop_loss=None,
     take_profit=None,
@@ -731,7 +937,14 @@ impl From<&PyBacktestConfig> for BacktestConfig {
     model=None,
     features=None,
     model_input_size=None,
-    signal_threshold=None
+    signal_threshold=None,
+    max_leverage=2.0,
+    target_vol=None,
+    vol_lookback=None,
+    base_size=None,
+    risk_per_trade=None,
+    stop_atr=None,
+    atr_period=None
 ))]
 #[allow(clippy::too_many_arguments)]
 pub fn backtest(
@@ -745,7 +958,7 @@ pub fn backtest(
     commission_per_share: f64,
     slippage: Option<PyObject>,
     slippage_factor: Option<f64>,
-    size: f64,
+    size: Option<PyObject>,
     cash: f64,
     stop_loss: Option<PyObject>,
     take_profit: Option<PyObject>,
@@ -764,6 +977,13 @@ pub fn backtest(
     features: Option<PyObject>,
     model_input_size: Option<usize>,
     signal_threshold: Option<f64>,
+    max_leverage: f64,
+    target_vol: Option<f64>,
+    vol_lookback: Option<usize>,
+    base_size: Option<f64>,
+    risk_per_trade: Option<f64>,
+    stop_atr: Option<f64>,
+    atr_period: Option<usize>,
 ) -> PyResult<PyBacktestResult> {
     // Extract bars from data first (needed for ATR calculation)
     let bars = extract_bars(py, &data)?;
@@ -778,12 +998,24 @@ pub fn backtest(
     let bt_config = if let Some(cfg) = config {
         cfg.to_backtest_config(Some(&bars))
     } else {
+        // Handle default size - use 0.10 (10%) if no size provided
+        let position_size = if let Some(ref s) = size {
+            if let Ok(pct) = s.extract::<f64>(py) {
+                pct
+            } else {
+                0.10 // Default for string modes
+            }
+        } else {
+            0.10
+        };
+
         let py_config = PyBacktestConfig::new(
             py,
             cash,
             commission,
             commission_per_share,
             slippage,
+            position_size,
             size,
             allow_short,
             fractional,
@@ -798,6 +1030,13 @@ pub fn backtest(
             order_type,
             limit_offset,
             slippage_factor,
+            max_leverage,
+            target_vol,
+            vol_lookback,
+            base_size,
+            risk_per_trade,
+            stop_atr,
+            atr_period,
         )?;
         py_config.to_backtest_config(Some(&bars))
     };
@@ -1743,7 +1982,8 @@ fn run_builtin_strategy(
     commission=0.001,
     slippage=None,
     size=0.10,
-    cash=100_000.0
+    cash=100_000.0,
+    trials=1
 ))]
 #[allow(clippy::too_many_arguments)]
 pub fn validate(
@@ -1758,6 +1998,7 @@ pub fn validate(
     slippage: Option<PyObject>,
     size: f64,
     cash: f64,
+    trials: usize,
 ) -> PyResult<super::results::PyValidationResult> {
     // Extract bars and signal first
     let bars = extract_bars(py, &data)?;
@@ -1779,6 +2020,7 @@ pub fn validate(
             commission_per_share: 0.0,
             slippage_spec,
             position_size: size,
+            sizing_spec: SizingSpec::Percent(size), // Default to percent sizing
             allow_short: true,
             fractional_shares: false, // Default: whole shares (per spec)
             stop_loss: None,
@@ -1791,6 +2033,7 @@ pub fn validate(
             max_volume_participation: None,
             order_type: "market".to_string(),
             limit_offset: 0.0,
+            max_leverage: 2.0, // Default max leverage
         };
         py_config.to_backtest_config(Some(&bars))
     };
@@ -1905,8 +2148,9 @@ pub fn validate(
     // Build WalkForwardResult
     let wf_result = build_wf_result(wf_config, window_results);
 
-    Ok(super::results::PyValidationResult::from_wf_result(
+    Ok(super::results::PyValidationResult::from_wf_result_with_trials(
         &wf_result,
+        trials,
     ))
 }
 

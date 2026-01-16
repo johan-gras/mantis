@@ -41,6 +41,12 @@ class BacktestConfig:
     - "sqrt0.1": sqrt model with custom coefficient 0.1
     - "linear": linear market impact model"""
     position_size: float
+    size: Union[float, str]
+    """Position sizing specification. Can be:
+    - float: percentage of equity (e.g., 0.10 for 10%)
+    - "volatility": volatility-targeted sizing (scale inversely with asset volatility)
+    - "signal": signal-scaled sizing (use signal magnitude to scale position size)
+    - "risk": risk-based sizing using ATR for stop-loss distance"""
     allow_short: bool
     fractional_shares: bool
     stop_loss: Optional[Union[float, str]]
@@ -58,6 +64,8 @@ class BacktestConfig:
     """Order type for signal-generated orders. "market" (default) or "limit"."""
     limit_offset: float
     """Limit order offset as fraction of close price (e.g., 0.01 = 1%). Only used when order_type="limit"."""
+    max_leverage: float
+    """Maximum leverage allowed (gross exposure / equity). Default 2.0."""
     model: Optional[str]
     """Path to ONNX model file for inference-based backtesting (requires onnx feature)."""
 
@@ -68,6 +76,7 @@ class BacktestConfig:
         commission_per_share: float = 0.0,
         slippage: Optional[Union[float, str]] = 0.001,
         position_size: float = 0.10,
+        size: Optional[Union[float, str]] = None,
         allow_short: bool = True,
         fractional_shares: bool = False,
         stop_loss: Optional[Union[float, str]] = None,
@@ -81,6 +90,13 @@ class BacktestConfig:
         order_type: str = "market",
         limit_offset: float = 0.0,
         slippage_factor: Optional[float] = None,
+        max_leverage: float = 2.0,
+        target_vol: Optional[float] = None,
+        vol_lookback: Optional[int] = None,
+        base_size: Optional[float] = None,
+        risk_per_trade: Optional[float] = None,
+        stop_atr: Optional[float] = None,
+        atr_period: Optional[int] = None,
     ) -> None: ...
 
 class BacktestResult:
@@ -514,6 +530,7 @@ class BacktestResult:
         folds: int = 12,
         train_ratio: float = 0.75,
         anchored: bool = True,
+        trials: int = 1,
     ) -> "ValidationResult":
         """
         Run walk-forward validation on the backtest.
@@ -526,9 +543,13 @@ class BacktestResult:
             folds: Number of walk-forward folds (default: 12)
             train_ratio: Fraction of each window used for in-sample (default: 0.75)
             anchored: Whether to use anchored (expanding) windows (default: True)
+            trials: Number of parameter combinations tested during strategy development.
+                Used to calculate deflated Sharpe ratio adjusted for multiple testing bias.
+                Default 1 (no adjustment).
 
         Returns:
-            ValidationResult with IS/OOS metrics and verdict.
+            ValidationResult with IS/OOS metrics and verdict, including
+            deflated_sharpe adjusted for the number of trials.
 
         Raises:
             RuntimeError: If the backtest was not run with validation data
@@ -541,6 +562,9 @@ class BacktestResult:
             'borderline'
             >>> print(validation.oos_degradation)
             0.71
+            >>> # With trials parameter for deflated Sharpe
+            >>> validation = results.validate(trials=100)  # Tested 100 parameter combinations
+            >>> print(validation.deflated_sharpe)
         """
         ...
 
@@ -568,6 +592,11 @@ class ValidationResult:
     avg_oos_return: float
     efficiency_ratio: float
     parameter_stability: float
+    deflated_sharpe: float
+    """Deflated Sharpe ratio adjusted for multiple testing bias.
+    Uses the trials parameter to account for number of parameter combinations tested."""
+    trials: int
+    """Number of parameter combinations tested (from trials parameter)."""
 
     def fold_details(self) -> List[FoldDetail]: ...
     def is_robust(self) -> bool: ...
@@ -959,7 +988,7 @@ def backtest(
     commission_per_share: float = 0.0,
     slippage: Optional[Union[float, str]] = 0.001,
     slippage_factor: Optional[float] = None,
-    size: float = 0.10,
+    size: Optional[Union[float, str]] = None,
     cash: float = 100_000.0,
     stop_loss: Optional[Union[float, str]] = None,
     take_profit: Optional[Union[float, str]] = None,
@@ -978,6 +1007,13 @@ def backtest(
     features: Optional[Any] = None,
     model_input_size: Optional[int] = None,
     signal_threshold: Optional[float] = None,
+    max_leverage: float = 2.0,
+    target_vol: Optional[float] = None,
+    vol_lookback: Optional[int] = None,
+    base_size: Optional[float] = None,
+    risk_per_trade: Optional[float] = None,
+    stop_atr: Optional[float] = None,
+    atr_period: Optional[int] = None,
 ) -> BacktestResult:
     """
     Run a backtest on historical data with a signal array.
@@ -999,7 +1035,11 @@ def backtest(
             - "linear": linear market impact model
         slippage_factor: Coefficient for sqrt/linear models when using "sqrt" or "linear"
             without explicit coefficient (e.g., slippage="sqrt", slippage_factor=0.2)
-        size: Position size as fraction of equity (default 0.10 = 10%)
+        size: Position sizing specification. Can be:
+            - float: percentage of equity (e.g., 0.10 for 10%) (default)
+            - "volatility": volatility-targeted sizing (scale inversely with asset volatility)
+            - "signal": signal-scaled sizing (use signal magnitude to scale position size)
+            - "risk": risk-based sizing using ATR for stop-loss distance
         cash: Initial capital (default 100,000)
         stop_loss: Optional stop loss. Can be:
             - float: percentage (e.g., 0.05 for 5% stop loss)
@@ -1041,6 +1081,19 @@ def backtest(
         signal_threshold: Threshold for converting model predictions to signals.
             Predictions > threshold become 1, < -threshold become -1, else 0.
             If None, raw predictions are used as signals.
+        max_leverage: Maximum leverage allowed (gross exposure / equity). Default 2.0.
+        target_vol: Target annualized volatility for volatility-targeted sizing (default 0.15).
+            Only used when size="volatility".
+        vol_lookback: Lookback period for volatility calculation (default 20 bars).
+            Only used when size="volatility".
+        base_size: Base position size for signal-scaled sizing (default 0.10).
+            Only used when size="signal".
+        risk_per_trade: Risk per trade as fraction of equity for risk-based sizing (default 0.01).
+            Only used when size="risk".
+        stop_atr: Stop loss distance in ATR multiples for risk-based sizing (default 2.0).
+            Only used when size="risk".
+        atr_period: ATR period for risk-based sizing (default 14).
+            Only used when size="risk".
 
     Returns:
         BacktestResult object with metrics, equity curve, and trades.
@@ -1086,6 +1139,18 @@ def backtest(
         >>> results = mt.backtest(data, model="model.onnx", features=feature_df)
         >>> # With signal threshold
         >>> results = mt.backtest(data, model="model.onnx", features=features, signal_threshold=0.5)
+
+        >>> # Volatility-targeted sizing (scale inversely with volatility)
+        >>> results = mt.backtest(data, signal, size="volatility", target_vol=0.15)
+
+        >>> # Signal-scaled sizing (use signal magnitude for position sizing)
+        >>> results = mt.backtest(data, signal, size="signal", base_size=0.10)
+
+        >>> # Risk-based sizing (ATR-based stop with fixed risk per trade)
+        >>> results = mt.backtest(data, signal, size="risk", risk_per_trade=0.01, stop_atr=2.0)
+
+        >>> # With max leverage constraint
+        >>> results = mt.backtest(data, signal, max_leverage=1.5)
     """
     ...
 
@@ -1121,6 +1186,7 @@ def validate(
     slippage: Optional[Union[float, str]] = 0.001,
     size: float = 0.10,
     cash: float = 100_000.0,
+    trials: int = 1,
 ) -> ValidationResult:
     """
     Run walk-forward validation on a signal-based strategy.
@@ -1140,9 +1206,13 @@ def validate(
         slippage: Slippage specification - float (0.001 = 0.1%) or string ("sqrt", "linear")
         size: Position size as fraction of equity (default 0.10 = 10%)
         cash: Initial capital (default 100,000)
+        trials: Number of parameter combinations tested during strategy development.
+            Used to calculate deflated Sharpe ratio adjusted for multiple testing bias.
+            Default 1 (no adjustment).
 
     Returns:
-        ValidationResult object with fold details and verdict.
+        ValidationResult object with fold details, verdict, and deflated_sharpe
+        adjusted for the number of trials.
 
     Example:
         >>> data = mt.load("AAPL.csv")
@@ -1152,6 +1222,9 @@ def validate(
         'robust'
         >>> for fold in validation.fold_details():
         ...     print(f"Fold {fold.fold}: IS={fold.is_sharpe:.2f}, OOS={fold.oos_sharpe:.2f}")
+        >>> # With trials parameter for deflated Sharpe
+        >>> validation = mt.validate(data, signal, trials=100)
+        >>> print(validation.deflated_sharpe)
     """
     ...
 
@@ -1478,8 +1551,24 @@ class Backtest:
             >>> mt.Backtest(data, signal).slippage(0.001)   # 0.1% flat slippage
         """
         ...
-    def size(self, fraction: float) -> "Backtest":
-        """Set the position size as a fraction of equity (e.g., 0.10 = 10%)."""
+    def size(self, fraction: Union[float, str]) -> "Backtest":
+        """
+        Set the position sizing method.
+
+        Args:
+            fraction: Position size specification. Can be:
+                - float: percentage of equity (e.g., 0.10 = 10%)
+                - "volatility": volatility-targeted sizing
+                - "signal": signal-scaled sizing
+                - "risk": risk-based sizing with ATR
+
+        Example:
+            >>> mt.Backtest(data, signal).size(0.10)           # 10% of equity
+            >>> mt.Backtest(data, signal).size("volatility")   # Volatility-targeted
+        """
+        ...
+    def max_leverage(self, leverage: float) -> "Backtest":
+        """Set the maximum leverage allowed (default 2.0)."""
         ...
     def cash(self, amount: float) -> "Backtest":
         """Set the initial capital."""

@@ -2168,6 +2168,13 @@ class Backtest:
             "max_volume_participation": None,
             "order_type": "market",
             "limit_offset": 0.0,
+            "max_leverage": 2.0,
+            "target_vol": None,
+            "vol_lookback": None,
+            "base_size": None,
+            "risk_per_trade": None,
+            "stop_atr": None,
+            "atr_period": None,
         }
 
     def commission(self, rate: float) -> "Backtest":
@@ -2215,17 +2222,128 @@ class Backtest:
         self._config["slippage"] = rate
         return self
 
-    def size(self, fraction: float) -> "Backtest":
+    def size(self, fraction: Union[float, str]) -> "Backtest":
         """
-        Set the position size as a fraction of equity.
+        Set the position sizing method.
 
         Args:
-            fraction: Position size (e.g., 0.10 = 10% of equity)
+            fraction: Position size specification. Can be:
+                - float: percentage of equity (e.g., 0.10 = 10%)
+                - "volatility": volatility-targeted sizing
+                - "signal": signal-scaled sizing
+                - "risk": risk-based sizing with ATR
+
+        Returns:
+            Self for method chaining
+
+        Example:
+            >>> mt.Backtest(data, signal).size(0.10)           # 10% of equity
+            >>> mt.Backtest(data, signal).size("volatility")   # Volatility-targeted
+        """
+        self._config["size"] = fraction
+        return self
+
+    def max_leverage(self, leverage: float) -> "Backtest":
+        """
+        Set the maximum leverage allowed.
+
+        Args:
+            leverage: Maximum leverage (default 2.0)
 
         Returns:
             Self for method chaining
         """
-        self._config["size"] = fraction
+        self._config["max_leverage"] = leverage
+        return self
+
+    def target_vol(self, target: float) -> "Backtest":
+        """
+        Set target volatility for volatility-targeted sizing.
+
+        Only used when size="volatility".
+
+        Args:
+            target: Target annualized volatility (e.g., 0.15 for 15%)
+
+        Returns:
+            Self for method chaining
+        """
+        self._config["target_vol"] = target
+        return self
+
+    def vol_lookback(self, lookback: int) -> "Backtest":
+        """
+        Set lookback period for volatility calculation.
+
+        Only used when size="volatility".
+
+        Args:
+            lookback: Lookback period in bars (default 20)
+
+        Returns:
+            Self for method chaining
+        """
+        self._config["vol_lookback"] = lookback
+        return self
+
+    def base_size(self, size: float) -> "Backtest":
+        """
+        Set base position size for signal-scaled sizing.
+
+        Only used when size="signal".
+
+        Args:
+            size: Base position size as fraction of equity (default 0.10)
+
+        Returns:
+            Self for method chaining
+        """
+        self._config["base_size"] = size
+        return self
+
+    def risk_per_trade(self, risk: float) -> "Backtest":
+        """
+        Set risk per trade for risk-based sizing.
+
+        Only used when size="risk".
+
+        Args:
+            risk: Risk per trade as fraction of equity (e.g., 0.01 for 1%)
+
+        Returns:
+            Self for method chaining
+        """
+        self._config["risk_per_trade"] = risk
+        return self
+
+    def stop_atr(self, multiplier: float) -> "Backtest":
+        """
+        Set stop loss distance in ATR multiples for risk-based sizing.
+
+        Only used when size="risk".
+
+        Args:
+            multiplier: ATR multiplier for stop distance (e.g., 2.0 for 2x ATR)
+
+        Returns:
+            Self for method chaining
+        """
+        self._config["stop_atr"] = multiplier
+        return self
+
+    def atr_period(self, period: int) -> "Backtest":
+        """
+        Set ATR period for risk-based sizing.
+
+        Only used when size="risk".
+
+        Args:
+            period: ATR period in bars (default 14)
+
+        Returns:
+            Self for method chaining
+        """
+        self._config["atr_period"] = period
         return self
 
     def cash(self, amount: float) -> "Backtest":
