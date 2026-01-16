@@ -95,9 +95,7 @@
 //! - [`walkforward`]: Walk-forward optimization analysis
 //! - [`cost_sensitivity`]: Transaction cost sensitivity analysis for robustness testing
 //! - [`sensitivity`]: Parameter sensitivity analysis with heatmaps and stability detection
-//! - [`options`]: Options pricing (Black-Scholes), Greeks, and derivatives support
 //! - [`config`]: TOML configuration file support
-//! - [`features`]: Feature extraction for ML/DL workflows
 
 pub mod analytics;
 pub mod config;
@@ -105,24 +103,18 @@ pub mod cpcv;
 pub mod data;
 pub mod engine;
 pub mod error;
-pub mod experiments;
 pub mod export;
-pub mod features;
 pub mod metadata;
 pub mod monte_carlo;
-pub mod multi_asset;
 // ONNX module for ML model inference (optional, enable with --features onnx)
 pub mod cost_sensitivity;
 #[cfg(feature = "onnx")]
 pub mod onnx;
-pub mod options;
 pub mod portfolio;
-pub mod regime;
 pub mod risk;
 pub mod sensitivity;
 pub mod strategies;
 pub mod strategy;
-pub mod streaming;
 pub mod timeframe;
 pub mod types;
 pub mod validation;
@@ -142,10 +134,6 @@ pub use analytics::{
 };
 pub use engine::{BacktestConfig, BacktestResult, Engine};
 pub use error::{BacktestError, ErrorHelp, Result};
-pub use options::{
-    black_scholes, calculate_greeks, validate_put_call_parity, ExerciseStyle, Greeks,
-    OptionContract, OptionType, SettlementType,
-};
 pub use strategy::Strategy;
 pub use types::{
     AssetClass, AssetConfig, Bar, CorporateAction, CorporateActionType, DataFrequency,

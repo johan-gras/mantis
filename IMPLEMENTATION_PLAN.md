@@ -58,7 +58,7 @@ The Mantis backtesting framework implementation is **complete** for all spec-ali
 ## Test Status Summary
 
 **Last Run:** 2026-01-16
-- **Total Tests:** 590 passed (lib) + 28 (integration) + 14 (doc tests)
+- **Total Tests:** 403 passed (lib) + 20 (integration) + 12 (doc tests)
 - **Failed:** 0 tests
 - **Status:** ALL TESTS PASSING
 
@@ -496,9 +496,9 @@ The following Python API improvements were implemented:
 **New exports:**
 - `MonteCarloResult` class is now exported from `mantis` module
 
-### Modules Marked for Deprecation
+### Modules Removed (2026-01-16)
 
-The following modules have deprecation notices added and are marked for removal (outside focused spec scope):
+The following modules have been **removed** from the codebase as they were outside the focused spec scope:
 
 | Module | Contents | Reason |
 |--------|----------|--------|
@@ -508,9 +508,12 @@ The following modules have deprecation notices added and are marked for removal 
 | `streaming.rs` | Streaming indicators | Not needed for research backtesting |
 | `features.rs` | Feature extraction library | Users compute features in pandas/polars |
 | `experiments.rs` | SQLite experiment tracking | Use MLflow, W&B, or similar external tools |
-| `export.rs` | NPY/Markdown exports | CSV, JSON, Parquet formats sufficient |
 
-These modules remain functional but will be removed in a future version to maintain focus on the core backtesting functionality defined in the specs.
+**Also removed:**
+- NPY export (`export_features_npy`) - Use Parquet instead
+- Markdown reports (`export_report_md`) - Use HTML reports instead
+- CLI commands: `features`, `portfolio`, `experiments`
+- Examples: `feature_export.rs`, `ml_backtest.rs`
 
 ---
 
@@ -564,9 +567,9 @@ gh api -X POST "/repos/johan-gras/mantis/pages" -f build_type=workflow
 - Parameter sensitivity analysis
 - Statistical tests (ADF, autocorrelation, Ljung-Box)
 
-## Features Deprecated (To Be Removed)
+## Features Removed (2026-01-16)
 
-The following features exist in the codebase but are outside the focused scope defined in `specs/`:
+The following features have been **removed** from the codebase as they were outside the focused scope defined in `specs/`:
 
 - Multi-asset portfolio optimization (Black-Litterman, Mean-Variance, HRP, Risk Parity) - Use dedicated portfolio tools
 - Options pricing (Black-Scholes, Binomial, Greeks) - Outside core thesis
@@ -574,5 +577,5 @@ The following features exist in the codebase but are outside the focused scope d
 - Streaming indicators for real-time - Not needed for research backtesting
 - Feature extraction library (40+ features) - Users compute features in pandas/polars
 - Experiment tracking with SQLite - Use MLflow, W&B, or similar
-- Comprehensive CLI (11 commands) - Reduced to essential operations
+- CLI commands: `features`, `portfolio`, `experiments` - Reduced to essential operations
 - NPY/Markdown export formats - CSV, JSON, Parquet sufficient

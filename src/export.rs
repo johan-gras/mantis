@@ -5,10 +5,6 @@
 //! - Trade logs (CSV, JSON, Parquet)
 //! - Performance reports (HTML)
 //!
-//! **DEPRECATION NOTICE**: The following export formats are deprecated:
-//! - NPY export (`export_features_npy`) - Use Parquet instead, which is faster and more portable
-//! - Markdown reports (`export_report_md`) - Use HTML reports instead, which support interactivity
-//!
 //! # Supported Formats
 //!
 //! | Format | Use Case |
@@ -30,12 +26,11 @@
 //! // Export to supported formats
 //! exporter.export_equity_csv("equity.csv")?;
 //! exporter.export_trades_csv("trades.csv")?;
-//! exporter.export_report_html("report.html")?;  // Preferred over deprecated Markdown
+//! exporter.export_report_html("report.html")?;
 //! ```
 
 use crate::engine::BacktestResult;
 use crate::error::{BacktestError, Result};
-use crate::multi_asset::MultiAssetResult;
 use crate::types::EquityPoint;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -191,76 +186,6 @@ impl Exporter {
         Ok(())
     }
 
-    /// Generate markdown report.
-    pub fn export_report_md(&self, path: impl AsRef<Path>) -> Result<()> {
-        let file = File::create(path)?;
-        let mut writer = BufWriter::new(file);
-
-        let summary = PerformanceSummary::from_result(&self.result);
-
-        writeln!(writer, "# Backtest Report: {}", self.result.strategy_name)?;
-        writeln!(writer)?;
-        writeln!(
-            writer,
-            "**Period:** {} to {}",
-            self.result.start_time.format("%Y-%m-%d"),
-            self.result.end_time.format("%Y-%m-%d")
-        )?;
-        writeln!(writer, "**Symbols:** {}", self.result.symbols.join(", "))?;
-        writeln!(writer)?;
-
-        writeln!(writer, "## Performance Summary")?;
-        writeln!(writer)?;
-        writeln!(writer, "| Metric | Value |")?;
-        writeln!(writer, "|--------|-------|")?;
-        writeln!(
-            writer,
-            "| Initial Capital | ${:.2} |",
-            summary.initial_capital
-        )?;
-        writeln!(writer, "| Final Equity | ${:.2} |", summary.final_equity)?;
-        writeln!(
-            writer,
-            "| Total Return | {:.2}% |",
-            summary.total_return_pct
-        )?;
-        writeln!(
-            writer,
-            "| Annual Return | {:.2}% |",
-            summary.annual_return_pct
-        )?;
-        writeln!(
-            writer,
-            "| Max Drawdown | {:.2}% |",
-            summary.max_drawdown_pct
-        )?;
-        writeln!(writer, "| Sharpe Ratio | {:.2} |", summary.sharpe_ratio)?;
-        writeln!(writer, "| Sortino Ratio | {:.2} |", summary.sortino_ratio)?;
-        writeln!(writer, "| Calmar Ratio | {:.2} |", summary.calmar_ratio)?;
-        writeln!(writer)?;
-
-        writeln!(writer, "## Trade Statistics")?;
-        writeln!(writer)?;
-        writeln!(writer, "| Metric | Value |")?;
-        writeln!(writer, "|--------|-------|")?;
-        writeln!(writer, "| Total Trades | {} |", summary.total_trades)?;
-        writeln!(writer, "| Winning Trades | {} |", summary.winning_trades)?;
-        writeln!(writer, "| Losing Trades | {} |", summary.losing_trades)?;
-        writeln!(writer, "| Win Rate | {:.1}% |", summary.win_rate)?;
-        writeln!(writer, "| Average Win | ${:.2} |", summary.avg_win)?;
-        writeln!(writer, "| Average Loss | ${:.2} |", summary.avg_loss)?;
-        writeln!(writer, "| Profit Factor | {:.2} |", summary.profit_factor)?;
-        writeln!(writer)?;
-
-        writeln!(
-            writer,
-            "*Report generated on {}*",
-            Utc::now().format("%Y-%m-%d %H:%M:%S UTC")
-        )?;
-
-        Ok(())
-    }
-
     /// Get string representation of trades as CSV.
     pub fn trades_to_csv(&self) -> String {
         let mut output = String::new();
@@ -402,53 +327,6 @@ pub fn export_comparison_csv(
             result.win_rate,
             result.profit_factor
         )?;
-    }
-
-    Ok(())
-}
-
-/// Generate numpy-compatible binary export of feature matrix.
-pub fn export_features_npy(features: &[Vec<f64>], path: impl AsRef<Path>) -> Result<()> {
-    if features.is_empty() {
-        return Err(BacktestError::DataError(
-            "No features to export".to_string(),
-        ));
-    }
-
-    let file = File::create(path)?;
-    let mut writer = BufWriter::new(file);
-
-    // Simple NPY format header
-    let rows = features.len();
-    let cols = features[0].len();
-
-    // NPY magic number and version
-    writer.write_all(&[0x93, b'N', b'U', b'M', b'P', b'Y'])?;
-    writer.write_all(&[0x01, 0x00])?; // Version 1.0
-
-    // Header dict
-    let header = format!(
-        "{{'descr': '<f8', 'fortran_order': False, 'shape': ({}, {}), }}",
-        rows, cols
-    );
-
-    // Pad header to multiple of 64 bytes
-    let header_len = header.len() + 1; // +1 for newline
-    let padding = 64 - ((10 + header_len) % 64);
-    let total_header_len = (header_len + padding) as u16;
-
-    writer.write_all(&total_header_len.to_le_bytes())?;
-    writer.write_all(header.as_bytes())?;
-    for _ in 0..padding {
-        writer.write_all(b" ")?;
-    }
-    writer.write_all(b"\n")?;
-
-    // Write data
-    for row in features {
-        for &val in row {
-            writer.write_all(&val.to_le_bytes())?;
-        }
     }
 
     Ok(())
@@ -991,290 +869,6 @@ impl Exporter {
 
             writeln!(writer, "        </tbody>")?;
             writeln!(writer, "      </table>")?;
-            writeln!(writer, "    </div>")?;
-            writeln!(writer, "  </div>")?;
-        }
-
-        // Footer
-        write!(writer, "{}", html_footer())?;
-
-        Ok(())
-    }
-}
-
-/// Multi-asset result exporter.
-pub struct MultiAssetExporter {
-    result: MultiAssetResult,
-    config: ExportConfig,
-}
-
-impl MultiAssetExporter {
-    /// Create a new multi-asset exporter.
-    pub fn new(result: MultiAssetResult) -> Self {
-        Self {
-            result,
-            config: ExportConfig::default(),
-        }
-    }
-
-    /// Create exporter with custom config.
-    pub fn with_config(result: MultiAssetResult, config: ExportConfig) -> Self {
-        Self { result, config }
-    }
-
-    /// Export weight history to CSV.
-    pub fn export_weights_csv(&self, path: impl AsRef<Path>) -> Result<()> {
-        let file = File::create(path)?;
-        let mut writer = BufWriter::new(file);
-
-        // Write header
-        if self.config.include_headers {
-            write!(writer, "timestamp")?;
-            for symbol in &self.result.symbols {
-                write!(writer, "{}{}", self.config.delimiter, symbol)?;
-            }
-            writeln!(writer)?;
-        }
-
-        // Write data
-        for (timestamp, weights) in &self.result.weight_history {
-            write!(writer, "{}", timestamp.format(&self.config.date_format))?;
-            for symbol in &self.result.symbols {
-                let weight = weights.get(symbol).copied().unwrap_or(0.0);
-                write!(
-                    writer,
-                    "{}{:.prec$}",
-                    self.config.delimiter,
-                    weight,
-                    prec = self.config.precision
-                )?;
-            }
-            writeln!(writer)?;
-        }
-
-        Ok(())
-    }
-
-    /// Export equity curve to CSV.
-    pub fn export_equity_csv(&self, path: impl AsRef<Path>) -> Result<()> {
-        export_equity_curve_csv(&self.result.equity_curve, path)
-    }
-
-    /// Generate markdown report.
-    pub fn export_report_md(&self, path: impl AsRef<Path>) -> Result<()> {
-        let file = File::create(path)?;
-        let mut writer = BufWriter::new(file);
-
-        writeln!(
-            writer,
-            "# Multi-Asset Backtest Report: {}",
-            self.result.strategy_name
-        )?;
-        writeln!(writer)?;
-        writeln!(
-            writer,
-            "**Period:** {} to {}",
-            self.result.start_time.format("%Y-%m-%d"),
-            self.result.end_time.format("%Y-%m-%d")
-        )?;
-        writeln!(writer, "**Assets:** {}", self.result.symbols.join(", "))?;
-        writeln!(writer)?;
-
-        writeln!(writer, "## Performance Summary")?;
-        writeln!(writer)?;
-        writeln!(writer, "| Metric | Value |")?;
-        writeln!(writer, "|--------|-------|")?;
-        writeln!(
-            writer,
-            "| Initial Capital | ${:.2} |",
-            self.result.initial_capital
-        )?;
-        writeln!(
-            writer,
-            "| Final Equity | ${:.2} |",
-            self.result.final_equity
-        )?;
-        writeln!(
-            writer,
-            "| Total Return | {:.2}% |",
-            self.result.total_return_pct
-        )?;
-        writeln!(
-            writer,
-            "| Annual Return | {:.2}% |",
-            self.result.annual_return_pct
-        )?;
-        writeln!(
-            writer,
-            "| Max Drawdown | {:.2}% |",
-            self.result.max_drawdown_pct
-        )?;
-        writeln!(writer, "| Sharpe Ratio | {:.2} |", self.result.sharpe_ratio)?;
-        writeln!(
-            writer,
-            "| Sortino Ratio | {:.2} |",
-            self.result.sortino_ratio
-        )?;
-        writeln!(writer, "| Total Trades | {} |", self.result.total_trades)?;
-        writeln!(writer)?;
-
-        writeln!(writer, "## Trades by Symbol")?;
-        writeln!(writer)?;
-        writeln!(writer, "| Symbol | Trades |")?;
-        writeln!(writer, "|--------|--------|")?;
-        for symbol in &self.result.symbols {
-            let trades = self
-                .result
-                .trades_by_symbol
-                .get(symbol)
-                .copied()
-                .unwrap_or(0);
-            writeln!(writer, "| {} | {} |", symbol, trades)?;
-        }
-
-        Ok(())
-    }
-
-    /// Export a self-contained HTML report for multi-asset backtest.
-    pub fn export_report_html(&self, path: impl AsRef<Path>) -> Result<()> {
-        let file = File::create(path)?;
-        let mut writer = BufWriter::new(file);
-
-        // Write HTML header and styles
-        write!(writer, "{}", html_header(&self.result.strategy_name))?;
-
-        // Summary section
-        writeln!(writer, "  <div class=\"section\">")?;
-        writeln!(writer, "    <h2>Summary</h2>")?;
-        writeln!(writer, "    <div class=\"meta\">")?;
-        writeln!(
-            writer,
-            "      <p><strong>Period:</strong> {} to {}</p>",
-            self.result.start_time.format("%Y-%m-%d"),
-            self.result.end_time.format("%Y-%m-%d")
-        )?;
-        writeln!(
-            writer,
-            "      <p><strong>Assets:</strong> {}</p>",
-            self.result.symbols.join(", ")
-        )?;
-        writeln!(writer, "    </div>")?;
-        writeln!(writer, "  </div>")?;
-
-        // Performance metrics
-        writeln!(writer, "  <div class=\"section\">")?;
-        writeln!(writer, "    <h2>Performance Metrics</h2>")?;
-        writeln!(writer, "    <div class=\"metrics-grid\">")?;
-        write_metric_card(
-            &mut writer,
-            "Initial Capital",
-            &format!("${:.2}", self.result.initial_capital),
-            "neutral",
-        )?;
-        write_metric_card(
-            &mut writer,
-            "Final Equity",
-            &format!("${:.2}", self.result.final_equity),
-            if self.result.final_equity >= self.result.initial_capital {
-                "positive"
-            } else {
-                "negative"
-            },
-        )?;
-        write_metric_card(
-            &mut writer,
-            "Total Return",
-            &format!("{:.2}%", self.result.total_return_pct),
-            if self.result.total_return_pct >= 0.0 {
-                "positive"
-            } else {
-                "negative"
-            },
-        )?;
-        write_metric_card(
-            &mut writer,
-            "Annual Return",
-            &format!("{:.2}%", self.result.annual_return_pct),
-            if self.result.annual_return_pct >= 0.0 {
-                "positive"
-            } else {
-                "negative"
-            },
-        )?;
-        write_metric_card(
-            &mut writer,
-            "Sharpe Ratio",
-            &format!("{:.2}", self.result.sharpe_ratio),
-            sharpe_color(self.result.sharpe_ratio),
-        )?;
-        write_metric_card(
-            &mut writer,
-            "Sortino Ratio",
-            &format!("{:.2}", self.result.sortino_ratio),
-            if self.result.sortino_ratio >= 1.0 {
-                "positive"
-            } else {
-                "neutral"
-            },
-        )?;
-        write_metric_card(
-            &mut writer,
-            "Max Drawdown",
-            &format!("{:.2}%", self.result.max_drawdown_pct),
-            "negative",
-        )?;
-        write_metric_card(
-            &mut writer,
-            "Total Trades",
-            &format!("{}", self.result.total_trades),
-            "neutral",
-        )?;
-        writeln!(writer, "    </div>")?;
-        writeln!(writer, "  </div>")?;
-
-        // Trades by symbol
-        writeln!(writer, "  <div class=\"section\">")?;
-        writeln!(writer, "    <h2>Trades by Symbol</h2>")?;
-        writeln!(writer, "    <div class=\"table-container\">")?;
-        writeln!(writer, "      <table>")?;
-        writeln!(writer, "        <thead>")?;
-        writeln!(writer, "          <tr>")?;
-        writeln!(writer, "            <th>Symbol</th>")?;
-        writeln!(writer, "            <th>Trades</th>")?;
-        writeln!(writer, "          </tr>")?;
-        writeln!(writer, "        </thead>")?;
-        writeln!(writer, "        <tbody>")?;
-        for symbol in &self.result.symbols {
-            let trades = self
-                .result
-                .trades_by_symbol
-                .get(symbol)
-                .copied()
-                .unwrap_or(0);
-            writeln!(writer, "          <tr>")?;
-            writeln!(writer, "            <td>{}</td>", symbol)?;
-            writeln!(writer, "            <td>{}</td>", trades)?;
-            writeln!(writer, "          </tr>")?;
-        }
-        writeln!(writer, "        </tbody>")?;
-        writeln!(writer, "      </table>")?;
-        writeln!(writer, "    </div>")?;
-        writeln!(writer, "  </div>")?;
-
-        // Equity curve chart
-        if !self.result.equity_curve.is_empty() {
-            writeln!(writer, "  <div class=\"section\">")?;
-            writeln!(writer, "    <h2>Equity Curve</h2>")?;
-            writeln!(writer, "    <div class=\"chart-container\">")?;
-            write_equity_curve_svg(&mut writer, &self.result.equity_curve)?;
-            writeln!(writer, "    </div>")?;
-            writeln!(writer, "  </div>")?;
-
-            // Drawdown chart
-            writeln!(writer, "  <div class=\"section\">")?;
-            writeln!(writer, "    <h2>Drawdown</h2>")?;
-            writeln!(writer, "    <div class=\"chart-container\">")?;
-            write_drawdown_svg(&mut writer, &self.result.equity_curve)?;
             writeln!(writer, "    </div>")?;
             writeln!(writer, "  </div>")?;
         }
@@ -2238,71 +1832,6 @@ mod tests {
         }
     }
 
-    fn create_test_multi_asset_result() -> MultiAssetResult {
-        let start_time = Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap();
-        let end_time = Utc.with_ymd_and_hms(2024, 1, 2, 0, 0, 0).unwrap();
-
-        let mut trade_aapl = Trade::open("AAPL", Side::Buy, 50.0, 200.0, start_time, 1.0, 0.0);
-        trade_aapl.close(210.0, end_time, 1.0);
-
-        let mut trade_msft = Trade::open("MSFT", Side::Sell, 25.0, 300.0, start_time, 1.0, 0.0);
-        trade_msft.close(290.0, end_time, 1.0);
-
-        let trades = vec![trade_aapl, trade_msft];
-
-        let mut trades_by_symbol = HashMap::new();
-        trades_by_symbol.insert("AAPL".to_string(), 1);
-        trades_by_symbol.insert("MSFT".to_string(), 1);
-
-        let equity_curve = vec![
-            EquityPoint {
-                timestamp: start_time,
-                equity: 1_000_000.0,
-                cash: 1_000_000.0,
-                positions_value: 0.0,
-                drawdown: 0.0,
-                drawdown_pct: 0.0,
-            },
-            EquityPoint {
-                timestamp: start_time + Duration::days(1),
-                equity: 1_030_000.0,
-                cash: 600_000.0,
-                positions_value: 430_000.0,
-                drawdown: 0.0,
-                drawdown_pct: 0.0,
-            },
-        ];
-
-        let mut weights_day1 = HashMap::new();
-        weights_day1.insert("AAPL".to_string(), 0.6);
-        weights_day1.insert("MSFT".to_string(), 0.4);
-
-        let mut weights_day2 = HashMap::new();
-        weights_day2.insert("AAPL".to_string(), 0.5);
-        weights_day2.insert("MSFT".to_string(), 0.5);
-
-        let weight_history = vec![(start_time, weights_day1), (end_time, weights_day2)];
-
-        MultiAssetResult {
-            strategy_name: "MultiAsset Strategy".to_string(),
-            symbols: vec!["AAPL".to_string(), "MSFT".to_string()],
-            initial_capital: 1_000_000.0,
-            final_equity: 1_030_000.0,
-            total_return_pct: 3.0,
-            annual_return_pct: 4.5,
-            max_drawdown_pct: 1.2,
-            sharpe_ratio: 1.1,
-            sortino_ratio: 1.3,
-            total_trades: trades.len(),
-            trades_by_symbol,
-            trades,
-            equity_curve,
-            start_time,
-            end_time,
-            weight_history,
-        }
-    }
-
     #[test]
     fn test_export_config_default() {
         let config = ExportConfig::default();
@@ -2359,64 +1888,6 @@ mod tests {
     }
 
     #[test]
-    fn test_export_report_md() {
-        let result = create_test_result();
-        let exporter = Exporter::new(result);
-
-        let file = NamedTempFile::new().unwrap();
-        exporter.export_report_md(file.path()).unwrap();
-
-        let content = std::fs::read_to_string(file.path()).unwrap();
-        assert!(content.contains("# Backtest Report"));
-        assert!(content.contains("Performance Summary"));
-        assert!(content.contains("Trade Statistics"));
-    }
-
-    #[test]
-    fn test_multi_asset_export_weights_csv() {
-        let result = create_test_multi_asset_result();
-        let exporter = MultiAssetExporter::new(result);
-
-        let file = NamedTempFile::new().unwrap();
-        exporter.export_weights_csv(file.path()).unwrap();
-
-        let content = std::fs::read_to_string(file.path()).unwrap();
-        assert!(content.contains("timestamp,AAPL,MSFT"));
-        assert!(content.contains("0.6000,0.4000"));
-        assert!(content.contains("0.5000,0.5000"));
-    }
-
-    #[test]
-    fn test_multi_asset_export_equity_csv() {
-        let result = create_test_multi_asset_result();
-        let exporter = MultiAssetExporter::new(result);
-
-        let file = NamedTempFile::new().unwrap();
-        exporter.export_equity_csv(file.path()).unwrap();
-
-        let content = std::fs::read_to_string(file.path()).unwrap();
-        assert!(content.contains("timestamp,equity,drawdown_pct"));
-        assert!(content.contains("1000000.0000"));
-        assert!(content.contains("1030000.0000"));
-    }
-
-    #[test]
-    fn test_multi_asset_export_report_md() {
-        let result = create_test_multi_asset_result();
-        let exporter = MultiAssetExporter::new(result);
-
-        let file = NamedTempFile::new().unwrap();
-        exporter.export_report_md(file.path()).unwrap();
-
-        let content = std::fs::read_to_string(file.path()).unwrap();
-        assert!(content.contains("# Multi-Asset Backtest Report: MultiAsset Strategy"));
-        assert!(content.contains("**Assets:** AAPL, MSFT"));
-        assert!(content.contains("| Symbol | Trades |"));
-        assert!(content.contains("| AAPL | 1 |"));
-        assert!(content.contains("| MSFT | 1 |"));
-    }
-
-    #[test]
     fn test_performance_summary() {
         let result = create_test_result();
         let summary = PerformanceSummary::from_result(&result);
@@ -2461,22 +1932,6 @@ mod tests {
         let content = std::fs::read_to_string(file.path()).unwrap();
         assert!(content.contains("timestamp,equity,drawdown_pct"));
         assert!(content.contains("100000.0000"));
-    }
-
-    #[test]
-    fn test_export_features_npy() {
-        let features = vec![
-            vec![1.0, 2.0, 3.0],
-            vec![4.0, 5.0, 6.0],
-            vec![7.0, 8.0, 9.0],
-        ];
-
-        let file = NamedTempFile::new().unwrap();
-        export_features_npy(&features, file.path()).unwrap();
-
-        // Check file was created and has content
-        let metadata = std::fs::metadata(file.path()).unwrap();
-        assert!(metadata.len() > 0);
     }
 
     #[test]
@@ -2627,31 +2082,6 @@ mod tests {
 
         // Verify footer
         assert!(content.contains("Mantis Backtesting Engine"));
-    }
-
-    #[test]
-    fn test_export_report_html_multi_asset() {
-        let result = create_test_multi_asset_result();
-        let exporter = MultiAssetExporter::new(result);
-
-        let file = NamedTempFile::new().unwrap();
-        exporter.export_report_html(file.path()).unwrap();
-
-        let content = std::fs::read_to_string(file.path()).unwrap();
-
-        // Verify HTML structure
-        assert!(content.contains("<!DOCTYPE html>"));
-        assert!(content.contains("Backtest Report: MultiAsset Strategy"));
-
-        // Verify assets are listed
-        assert!(content.contains("AAPL"));
-        assert!(content.contains("MSFT"));
-
-        // Verify trades by symbol section
-        assert!(content.contains("Trades by Symbol"));
-
-        // Verify equity curve SVG
-        assert!(content.contains("<svg"));
     }
 
     #[test]
