@@ -33,6 +33,7 @@ from mantis._mantis import (
     load_multi,
     load_sample,
     list_samples,
+    load_results,
     backtest,
     signal_check,
     validate,
@@ -51,6 +52,7 @@ __all__ = [
     "load_multi",
     "load_sample",
     "list_samples",
+    "load_results",
     "backtest",
     "signal_check",
     "validate",
@@ -59,6 +61,7 @@ __all__ = [
     "FoldDetail",
     "Bar",
     "BacktestConfig",
+    "Backtest",
     "compare",
     "sweep",
 ]
@@ -172,3 +175,178 @@ def _format_comparison_table(comparison: Dict[str, Dict[str, Any]]) -> str:
         lines.append(line)
 
     return "\n".join(lines)
+
+
+class Backtest:
+    """
+    Fluent API for configuring and running backtests.
+
+    Provides a chainable interface for setting backtest parameters
+    before running. All parameters have sensible defaults.
+
+    Example:
+        >>> results = (
+        ...     mt.Backtest(data, signal)
+        ...     .commission(0.001)
+        ...     .slippage(0.0005)
+        ...     .size(0.15)
+        ...     .run()
+        ... )
+        >>> print(results.sharpe)
+        1.24
+
+    See Also:
+        backtest(): Functional API that accepts all parameters directly
+    """
+
+    def __init__(
+        self,
+        data: Any,
+        signal: Optional[np.ndarray] = None,
+        strategy: Optional[str] = None,
+        strategy_params: Optional[Dict[str, Any]] = None,
+    ):
+        """
+        Initialize a backtest configuration.
+
+        Args:
+            data: Data dictionary from load() or path to CSV/Parquet file
+            signal: numpy array of signals (1=long, -1=short, 0=flat)
+            strategy: Name of built-in strategy if signal is None
+            strategy_params: Dictionary of strategy parameters
+        """
+        self._data = data
+        self._signal = signal
+        self._strategy = strategy
+        self._strategy_params = strategy_params
+
+        # Default configuration values
+        self._config = {
+            "commission": 0.001,
+            "slippage": 0.001,
+            "size": 0.10,
+            "cash": 100_000.0,
+            "stop_loss": None,
+            "take_profit": None,
+            "allow_short": True,
+            "borrow_cost": 0.03,
+        }
+
+    def commission(self, rate: float) -> "Backtest":
+        """
+        Set the commission rate.
+
+        Args:
+            rate: Commission as a decimal (e.g., 0.001 = 0.1%)
+
+        Returns:
+            Self for method chaining
+        """
+        self._config["commission"] = rate
+        return self
+
+    def slippage(self, rate: float) -> "Backtest":
+        """
+        Set the slippage rate.
+
+        Args:
+            rate: Slippage as a decimal (e.g., 0.001 = 0.1%)
+
+        Returns:
+            Self for method chaining
+        """
+        self._config["slippage"] = rate
+        return self
+
+    def size(self, fraction: float) -> "Backtest":
+        """
+        Set the position size as a fraction of equity.
+
+        Args:
+            fraction: Position size (e.g., 0.10 = 10% of equity)
+
+        Returns:
+            Self for method chaining
+        """
+        self._config["size"] = fraction
+        return self
+
+    def cash(self, amount: float) -> "Backtest":
+        """
+        Set the initial capital.
+
+        Args:
+            amount: Starting capital in dollars
+
+        Returns:
+            Self for method chaining
+        """
+        self._config["cash"] = amount
+        return self
+
+    def stop_loss(self, pct: float) -> "Backtest":
+        """
+        Set a stop loss percentage.
+
+        Args:
+            pct: Stop loss as a decimal (e.g., 0.05 = 5%)
+
+        Returns:
+            Self for method chaining
+        """
+        self._config["stop_loss"] = pct
+        return self
+
+    def take_profit(self, pct: float) -> "Backtest":
+        """
+        Set a take profit percentage.
+
+        Args:
+            pct: Take profit as a decimal (e.g., 0.10 = 10%)
+
+        Returns:
+            Self for method chaining
+        """
+        self._config["take_profit"] = pct
+        return self
+
+    def allow_short(self, enabled: bool = True) -> "Backtest":
+        """
+        Enable or disable short selling.
+
+        Args:
+            enabled: Whether to allow short positions
+
+        Returns:
+            Self for method chaining
+        """
+        self._config["allow_short"] = enabled
+        return self
+
+    def borrow_cost(self, rate: float) -> "Backtest":
+        """
+        Set the annual borrow cost for short positions.
+
+        Args:
+            rate: Annual borrow rate (e.g., 0.03 = 3%)
+
+        Returns:
+            Self for method chaining
+        """
+        self._config["borrow_cost"] = rate
+        return self
+
+    def run(self) -> BacktestResult:
+        """
+        Execute the backtest with the configured parameters.
+
+        Returns:
+            BacktestResult with metrics, equity curve, and trades
+        """
+        return backtest(
+            self._data,
+            self._signal,
+            strategy=self._strategy,
+            strategy_params=self._strategy_params,
+            **self._config,
+        )

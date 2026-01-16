@@ -565,3 +565,57 @@ def load_results(path: str) -> BacktestResult:
         1.24
     """
     ...
+
+class Backtest:
+    """
+    Fluent API for configuring and running backtests.
+
+    Provides a chainable interface for setting backtest parameters
+    before running. All parameters have sensible defaults.
+
+    Example:
+        >>> results = (
+        ...     mt.Backtest(data, signal)
+        ...     .commission(0.001)
+        ...     .slippage(0.0005)
+        ...     .size(0.15)
+        ...     .run()
+        ... )
+        >>> print(results.sharpe)
+        1.24
+    """
+
+    def __init__(
+        self,
+        data: Union[Dict[str, Any], str, _DataFrame],
+        signal: Optional[NDArray[np.float64]] = None,
+        strategy: Optional[str] = None,
+        strategy_params: Optional[Dict[str, Any]] = None,
+    ) -> None: ...
+    def commission(self, rate: float) -> "Backtest":
+        """Set the commission rate (e.g., 0.001 = 0.1%)."""
+        ...
+    def slippage(self, rate: float) -> "Backtest":
+        """Set the slippage rate (e.g., 0.001 = 0.1%)."""
+        ...
+    def size(self, fraction: float) -> "Backtest":
+        """Set the position size as a fraction of equity (e.g., 0.10 = 10%)."""
+        ...
+    def cash(self, amount: float) -> "Backtest":
+        """Set the initial capital."""
+        ...
+    def stop_loss(self, pct: float) -> "Backtest":
+        """Set a stop loss percentage (e.g., 0.05 = 5%)."""
+        ...
+    def take_profit(self, pct: float) -> "Backtest":
+        """Set a take profit percentage (e.g., 0.10 = 10%)."""
+        ...
+    def allow_short(self, enabled: bool = True) -> "Backtest":
+        """Enable or disable short selling."""
+        ...
+    def borrow_cost(self, rate: float) -> "Backtest":
+        """Set the annual borrow cost for short positions (e.g., 0.03 = 3%)."""
+        ...
+    def run(self) -> BacktestResult:
+        """Execute the backtest with the configured parameters."""
+        ...

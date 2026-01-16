@@ -481,11 +481,14 @@ mantis portfolio -d ./data/stocks/ -p "*.csv" --strategy risk-parity --rebalance
 - **Priority:** P2
 - **Effort:** Small (completed)
 
-#### 18c. `mt.Backtest` Fluent API Class [MISSING]
-- Spec shows fluent API: `mt.Backtest(data, signal).commission(0.001).run()`
-- Current: Only functional API `mt.backtest(data, signal, commission=0.001)`
+#### 18c. `mt.Backtest` Fluent API Class [COMPLETE]
+- Added Backtest class to python/mantis/__init__.py
+- Fluent builder pattern with method chaining
+- Methods: commission(), slippage(), size(), cash(), stop_loss(), take_profit(), allow_short(), borrow_cost(), run()
+- Type stubs updated in python/mantis/__init__.pyi
+- Compatible with both signal arrays and built-in strategies
 - **Priority:** P3 (nice-to-have, functional API works)
-- **Effort:** Medium
+- **Effort:** Medium (completed)
 
 #### 18d. Interactive Plotly Charts [MISSING]
 - Spec requires: `results.plot()` shows interactive Plotly in Jupyter
@@ -521,7 +524,7 @@ mantis portfolio -d ./data/stocks/ -p "*.csv" --strategy risk-parity --rebalance
 | 17 | Documentation Site | MISSING | P3 | Medium | None |
 | 18a | results.validate() method | **COMPLETE** | P1 | Small | None |
 | 18b | mt.load_results() | **COMPLETE** | P2 | Small | None |
-| 18c | mt.Backtest fluent API | MISSING | P3 | Medium | None |
+| 18c | mt.Backtest fluent API | **COMPLETE** | P3 | Medium | None |
 | 18d | Interactive Plotly charts | MISSING | P2 | Medium | None |
 
 ---
