@@ -587,6 +587,109 @@ pub enum Signal {
     Hold,
 }
 
+/// Strategy validation verdict based on out-of-sample performance.
+///
+/// The verdict classifies strategies based on their OOS/IS degradation ratio:
+/// - `Robust`: Degradation > 0.80 (excellent - likely to work in production)
+/// - `Borderline`: Degradation 0.60-0.80 (acceptable - proceed with caution)
+/// - `LikelyOverfit`: Degradation < 0.60 (concerning - probably won't work live)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum Verdict {
+    /// Strategy shows excellent out-of-sample performance relative to in-sample.
+    /// OOS/IS ratio > 0.80, indicating robust performance likely to persist.
+    Robust,
+    /// Strategy shows acceptable but not exceptional out-of-sample performance.
+    /// OOS/IS ratio 0.60-0.80, indicating some overfitting risk.
+    #[default]
+    Borderline,
+    /// Strategy shows significant degradation out-of-sample.
+    /// OOS/IS ratio < 0.60, indicating high probability of overfitting.
+    LikelyOverfit,
+}
+
+impl Verdict {
+    /// Classify based on OOS/IS degradation ratio.
+    ///
+    /// # Arguments
+    /// * `degradation_ratio` - The ratio of OOS performance to IS performance (0.0-1.0+).
+    ///   Values above 1.0 indicate OOS outperformed IS (rare but possible).
+    ///
+    /// # Thresholds
+    /// - > 0.80: Robust
+    /// - 0.60-0.80: Borderline
+    /// - < 0.60: LikelyOverfit
+    pub fn from_degradation_ratio(degradation_ratio: f64) -> Self {
+        if degradation_ratio > 0.80 {
+            Verdict::Robust
+        } else if degradation_ratio >= 0.60 {
+            Verdict::Borderline
+        } else {
+            Verdict::LikelyOverfit
+        }
+    }
+
+    /// Classify based on multiple robustness criteria.
+    ///
+    /// This is a more nuanced classification that considers:
+    /// - OOS/IS degradation ratio
+    /// - Whether OOS returns are positive
+    /// - Walk-forward efficiency
+    ///
+    /// # Arguments
+    /// * `degradation_ratio` - OOS/IS ratio (typically Sharpe or return based)
+    /// * `oos_positive` - Whether out-of-sample returns are positive
+    /// * `efficiency` - Walk-forward efficiency (combined OOS / combined IS)
+    pub fn from_criteria(degradation_ratio: f64, oos_positive: bool, efficiency: f64) -> Self {
+        // Negative OOS returns are always a red flag
+        if !oos_positive {
+            return Verdict::LikelyOverfit;
+        }
+
+        // Very low efficiency indicates serious issues
+        if efficiency < 0.40 {
+            return Verdict::LikelyOverfit;
+        }
+
+        // Use degradation ratio as primary classifier
+        if degradation_ratio > 0.80 && efficiency >= 0.60 {
+            Verdict::Robust
+        } else if degradation_ratio >= 0.60 || efficiency >= 0.50 {
+            Verdict::Borderline
+        } else {
+            Verdict::LikelyOverfit
+        }
+    }
+
+    /// Returns true if the verdict indicates a potentially viable strategy.
+    pub fn is_acceptable(&self) -> bool {
+        matches!(self, Verdict::Robust | Verdict::Borderline)
+    }
+
+    /// Returns a human-readable description of the verdict.
+    pub fn description(&self) -> &'static str {
+        match self {
+            Verdict::Robust => "Strategy appears robust. Out-of-sample performance is strong relative to in-sample.",
+            Verdict::Borderline => "Strategy is borderline. Consider more data or simpler model before production use.",
+            Verdict::LikelyOverfit => "Strategy is likely overfit. Significant performance degradation out-of-sample.",
+        }
+    }
+
+    /// Returns a short label for display purposes.
+    pub fn label(&self) -> &'static str {
+        match self {
+            Verdict::Robust => "robust",
+            Verdict::Borderline => "borderline",
+            Verdict::LikelyOverfit => "likely_overfit",
+        }
+    }
+}
+
+impl fmt::Display for Verdict {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.label())
+    }
+}
+
 // =============================================================================
 // Corporate Actions
 // =============================================================================
@@ -1015,5 +1118,140 @@ mod tests {
     fn test_dividend_type_default() {
         let default_type = DividendType::default();
         assert_eq!(default_type, DividendType::Cash);
+    }
+
+    // =========================================================================
+    // Verdict Tests
+    // =========================================================================
+
+    #[test]
+    fn test_verdict_from_degradation_ratio_robust() {
+        // > 0.80 should be Robust
+        assert_eq!(
+            Verdict::from_degradation_ratio(0.85),
+            Verdict::Robust
+        );
+        assert_eq!(
+            Verdict::from_degradation_ratio(0.95),
+            Verdict::Robust
+        );
+        assert_eq!(
+            Verdict::from_degradation_ratio(1.2),
+            Verdict::Robust
+        );
+    }
+
+    #[test]
+    fn test_verdict_from_degradation_ratio_borderline() {
+        // 0.60-0.80 should be Borderline
+        assert_eq!(
+            Verdict::from_degradation_ratio(0.60),
+            Verdict::Borderline
+        );
+        assert_eq!(
+            Verdict::from_degradation_ratio(0.70),
+            Verdict::Borderline
+        );
+        assert_eq!(
+            Verdict::from_degradation_ratio(0.80),
+            Verdict::Borderline
+        );
+    }
+
+    #[test]
+    fn test_verdict_from_degradation_ratio_likely_overfit() {
+        // < 0.60 should be LikelyOverfit
+        assert_eq!(
+            Verdict::from_degradation_ratio(0.59),
+            Verdict::LikelyOverfit
+        );
+        assert_eq!(
+            Verdict::from_degradation_ratio(0.30),
+            Verdict::LikelyOverfit
+        );
+        assert_eq!(
+            Verdict::from_degradation_ratio(0.0),
+            Verdict::LikelyOverfit
+        );
+        assert_eq!(
+            Verdict::from_degradation_ratio(-0.5),
+            Verdict::LikelyOverfit
+        );
+    }
+
+    #[test]
+    fn test_verdict_from_criteria_negative_oos() {
+        // Negative OOS returns should always be LikelyOverfit
+        assert_eq!(
+            Verdict::from_criteria(0.90, false, 0.80),
+            Verdict::LikelyOverfit
+        );
+    }
+
+    #[test]
+    fn test_verdict_from_criteria_low_efficiency() {
+        // Very low efficiency (< 0.40) should be LikelyOverfit
+        assert_eq!(
+            Verdict::from_criteria(0.90, true, 0.35),
+            Verdict::LikelyOverfit
+        );
+    }
+
+    #[test]
+    fn test_verdict_from_criteria_robust() {
+        // High degradation ratio and good efficiency should be Robust
+        assert_eq!(
+            Verdict::from_criteria(0.85, true, 0.70),
+            Verdict::Robust
+        );
+    }
+
+    #[test]
+    fn test_verdict_from_criteria_borderline() {
+        // Moderate degradation or efficiency should be Borderline
+        assert_eq!(
+            Verdict::from_criteria(0.65, true, 0.55),
+            Verdict::Borderline
+        );
+    }
+
+    #[test]
+    fn test_verdict_is_acceptable() {
+        assert!(Verdict::Robust.is_acceptable());
+        assert!(Verdict::Borderline.is_acceptable());
+        assert!(!Verdict::LikelyOverfit.is_acceptable());
+    }
+
+    #[test]
+    fn test_verdict_label() {
+        assert_eq!(Verdict::Robust.label(), "robust");
+        assert_eq!(Verdict::Borderline.label(), "borderline");
+        assert_eq!(Verdict::LikelyOverfit.label(), "likely_overfit");
+    }
+
+    #[test]
+    fn test_verdict_display() {
+        assert_eq!(format!("{}", Verdict::Robust), "robust");
+        assert_eq!(format!("{}", Verdict::Borderline), "borderline");
+        assert_eq!(format!("{}", Verdict::LikelyOverfit), "likely_overfit");
+    }
+
+    #[test]
+    fn test_verdict_default() {
+        // Default should be Borderline (most conservative assumption)
+        assert_eq!(Verdict::default(), Verdict::Borderline);
+    }
+
+    #[test]
+    fn test_verdict_serialization() {
+        let verdict = Verdict::Robust;
+        let json = serde_json::to_string(&verdict).unwrap();
+        let deserialized: Verdict = serde_json::from_str(&json).unwrap();
+        assert_eq!(verdict, deserialized);
+
+        let verdict = Verdict::LikelyOverfit;
+        let json = serde_json::to_string(&verdict).unwrap();
+        let deserialized: Verdict = serde_json::from_str(&json).unwrap();
+        assert_eq!(verdict, deserialized);
     }
 }

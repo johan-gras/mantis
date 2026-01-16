@@ -22,7 +22,7 @@
 //! ```
 
 use crate::engine::BacktestResult;
-use crate::types::Trade;
+use crate::types::{Trade, Verdict};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -162,6 +162,26 @@ impl MonteCarloResult {
         (return_score + sharpe_score + drawdown_score) / 3.0
     }
 
+    /// Get the strategy verdict based on Monte Carlo simulation results.
+    ///
+    /// The verdict classifies the strategy as:
+    /// - `Robust`: High probability of positive returns and Sharpe, score > 70
+    /// - `Borderline`: Moderate probability of positive returns, score 50-70
+    /// - `LikelyOverfit`: Low probability of positive returns, score < 50
+    ///
+    /// This provides a simple, actionable classification of strategy robustness.
+    pub fn verdict(&self) -> Verdict {
+        let score = self.robustness_score();
+
+        if self.prob_positive_return > 0.7 && self.prob_positive_sharpe > 0.6 && score > 70.0 {
+            Verdict::Robust
+        } else if self.prob_positive_return > 0.5 && self.median_return > 0.0 && score >= 50.0 {
+            Verdict::Borderline
+        } else {
+            Verdict::LikelyOverfit
+        }
+    }
+
     /// Generate summary report.
     pub fn summary(&self) -> String {
         format!(
@@ -210,11 +230,7 @@ Verdict: {}"#,
             self.sharpe_ci.1,
             self.prob_positive_sharpe * 100.0,
             self.robustness_score(),
-            if self.is_robust() {
-                "ROBUST"
-            } else {
-                "NOT ROBUST"
-            }
+            self.verdict().label().to_uppercase()
         )
     }
 }

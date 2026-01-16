@@ -7,7 +7,7 @@
 use crate::engine::{BacktestConfig, BacktestResult, Engine};
 use crate::error::{BacktestError, Result};
 use crate::strategy::Strategy;
-use crate::types::Bar;
+use crate::types::{Bar, Verdict};
 use chrono::{DateTime, Utc};
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -179,6 +179,21 @@ impl WalkForwardResult {
         } else {
             0.0
         }
+    }
+
+    /// Get the strategy verdict based on walk-forward analysis.
+    ///
+    /// The verdict classifies the strategy as:
+    /// - `Robust`: OOS/IS degradation > 0.80 and positive OOS returns with good efficiency
+    /// - `Borderline`: OOS/IS degradation 0.60-0.80 or moderate efficiency
+    /// - `LikelyOverfit`: OOS/IS degradation < 0.60 or negative OOS returns
+    ///
+    /// This provides a simple, actionable classification of strategy robustness.
+    pub fn verdict(&self) -> Verdict {
+        let degradation_ratio = self.oos_sharpe_ratio();
+        let oos_positive = self.avg_oos_return > 0.0;
+
+        Verdict::from_criteria(degradation_ratio, oos_positive, self.walk_forward_efficiency)
     }
 }
 

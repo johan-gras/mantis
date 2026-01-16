@@ -20,7 +20,7 @@ use mantis::strategies::{
     BreakoutStrategy, MacdStrategy, MeanReversion, MomentumStrategy, RsiStrategy, SmaCrossover,
 };
 use mantis::strategy::Strategy;
-use mantis::types::{AssetClass, AssetConfig, ExecutionPrice, LotSelectionMethod};
+use mantis::types::{AssetClass, AssetConfig, ExecutionPrice, LotSelectionMethod, Verdict};
 use mantis::walkforward::{
     WalkForwardAnalyzer, WalkForwardConfig, WalkForwardMetric, WalkForwardResult,
 };
@@ -1622,13 +1622,15 @@ fn print_walk_forward_text(result: &WalkForwardResult) {
         if sharpe_robust { "PASSED" } else { "FAILED" }
     );
 
-    if basic_robust && sharpe_robust {
-        println!("\nOverall Result: PASSED - Strategy shows robust out-of-sample performance");
-    } else if basic_robust {
-        println!("\nOverall Result: WARNING - Efficiency passed but Sharpe degraded significantly");
-    } else {
-        println!("\nOverall Result: FAILED - Strategy shows signs of overfitting");
-    }
+    // Use the Verdict enum for three-way classification
+    let verdict = result.verdict();
+    let verdict_colored = match verdict {
+        Verdict::Robust => verdict.label().to_uppercase().green().bold(),
+        Verdict::Borderline => verdict.label().to_uppercase().yellow().bold(),
+        Verdict::LikelyOverfit => verdict.label().to_uppercase().red().bold(),
+    };
+    println!("\nOverall Verdict: {}", verdict_colored);
+    println!("  {}", verdict.description().dimmed());
 }
 
 fn print_walk_forward_csv(result: &WalkForwardResult) {
@@ -2817,44 +2819,62 @@ fn print_monte_carlo_text(result: &MonteCarloResult) {
     };
     println!("  Robustness score: {}", score_colored);
 
-    let verdict = if result.is_robust() {
-        "ROBUST".green().bold()
-    } else {
-        "NOT ROBUST".red().bold()
+    // Use the Verdict enum for three-way classification
+    let verdict = result.verdict();
+    let verdict_colored = match verdict {
+        Verdict::Robust => verdict.label().to_uppercase().green().bold(),
+        Verdict::Borderline => verdict.label().to_uppercase().yellow().bold(),
+        Verdict::LikelyOverfit => verdict.label().to_uppercase().red().bold(),
     };
-    println!("  Verdict:          {}", verdict);
+    println!("  Verdict:          {}", verdict_colored);
     println!();
 
-    // Explanation of verdict
-    if result.is_robust() {
-        println!(
-            "{}",
-            "Strategy shows robust performance across simulated scenarios."
-                .green()
-                .dimmed()
-        );
-    } else {
-        println!(
-            "{}",
-            "Strategy may not be robust. Consider:".yellow().dimmed()
-        );
-        if result.prob_positive_return <= 0.6 {
+    // Explanation based on verdict
+    match verdict {
+        Verdict::Robust => {
             println!(
                 "{}",
-                "  - Low probability of positive returns".yellow().dimmed()
-            );
-        }
-        if result.prob_positive_sharpe <= 0.5 {
-            println!(
-                "{}",
-                "  - Low probability of positive Sharpe ratio"
-                    .yellow()
+                "Strategy shows robust performance across simulated scenarios."
+                    .green()
                     .dimmed()
             );
         }
-        if result.median_return <= 0.0 {
-            println!("{}", "  - Negative median return".yellow().dimmed());
+        Verdict::Borderline => {
+            println!(
+                "{}",
+                "Strategy shows borderline performance. Proceed with caution."
+                    .yellow()
+                    .dimmed()
+            );
+            print_monte_carlo_warnings(result);
         }
+        Verdict::LikelyOverfit => {
+            println!(
+                "{}",
+                "Strategy may not be robust. Consider:".red().dimmed()
+            );
+            print_monte_carlo_warnings(result);
+        }
+    }
+}
+
+fn print_monte_carlo_warnings(result: &MonteCarloResult) {
+    if result.prob_positive_return <= 0.6 {
+        println!(
+            "{}",
+            "  - Low probability of positive returns".yellow().dimmed()
+        );
+    }
+    if result.prob_positive_sharpe <= 0.5 {
+        println!(
+            "{}",
+            "  - Low probability of positive Sharpe ratio"
+                .yellow()
+                .dimmed()
+        );
+    }
+    if result.median_return <= 0.0 {
+        println!("{}", "  - Negative median return".yellow().dimmed());
     }
 }
 

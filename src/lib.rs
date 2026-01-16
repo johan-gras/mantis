@@ -143,7 +143,7 @@ pub use strategy::Strategy;
 pub use types::{
     AssetClass, AssetConfig, Bar, CorporateAction, CorporateActionType, DividendAdjustMethod,
     DividendType, ExecutionPrice, LotSelectionMethod, Order, Side, Signal, TaxLot, Trade,
-    VolumeProfile,
+    Verdict, VolumeProfile,
 };
 
 // Data handling re-exports

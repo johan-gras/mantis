@@ -42,7 +42,7 @@ The Mantis backtesting framework has a solid core implementation with excellent 
 ## Test Status Summary
 
 **Last Run:** 2026-01-16
-- **Total Tests:** 551 passed
+- **Total Tests:** 567 passed
 - **Failed:** 0 tests
 - **Status:** ALL TESTS PASSING
 
@@ -314,20 +314,22 @@ All 3 previously failing tests now pass:
 
 ---
 
-### 14. Verdict System [PARTIAL - VERIFIED]
-**Status:** Boolean methods exist, no explicit enum
+### 14. Verdict System [COMPLETE]
+**Status:** COMPLETE
 
-**Current state:**
-- `is_robust()` and `is_robust_with_sharpe()` methods exist in walkforward.rs (return booleans)
-- NO explicit `Verdict` enum with "robust"/"borderline"/"likely_overfit" variants
-
-**Spec requirement:**
-```rust
-enum Verdict { Robust, Borderline, LikelyOverfit }
-```
-
-**Files affected:**
-- `src/walkforward.rs` - Add Verdict enum, enhance classification logic
+**Implementation details:**
+- `Verdict` enum with three variants: `Robust`, `Borderline`, `LikelyOverfit`
+- Classification based on OOS/IS degradation ratio thresholds:
+  - `Robust`: > 0.80 OOS/IS ratio with positive OOS returns and good efficiency
+  - `Borderline`: 0.60-0.80 OOS/IS ratio or moderate efficiency
+  - `LikelyOverfit`: < 0.60 OOS/IS ratio or negative OOS returns
+- `verdict()` method added to `WalkForwardResult` using `from_criteria()` with degradation ratio, OOS positivity, and efficiency
+- `verdict()` method added to `MonteCarloResult` using robustness score and probability thresholds
+- CLI updated to display verdict with color-coded output (green=robust, yellow=borderline, red=likely_overfit)
+- Helper methods: `is_acceptable()`, `description()`, `label()`, `Display` trait impl
+- `from_degradation_ratio()` for simple classification, `from_criteria()` for nuanced multi-factor classification
+- Exported from `lib.rs`
+- 12 unit tests added for Verdict classification
 
 **Dependencies:** None
 **Effort:** Small (1 day)
@@ -394,7 +396,7 @@ enum Verdict { Robust, Borderline, LikelyOverfit }
 | 11 | Parameter Sensitivity | PARTIAL | P2 | Medium | None |
 | 12 | Visualization Module | MISSING | P2 | Medium | Item 2 |
 | 13 | HTML Reports | MISSING | P2 | Small | Item 12 |
-| 14 | Verdict System | PARTIAL | P2 | Small | None |
+| 14 | Verdict System | **COMPLETE** | P2 | Small | None |
 | 15 | Polars Backend | PARTIAL | P3 | Small | Item 2 |
 | 16 | Sample Data Bundling | MISSING | P3 | Small | None |
 | 17 | Documentation Site | MISSING | P3 | Medium | None |
@@ -436,8 +438,9 @@ enum Verdict { Robust, Borderline, LikelyOverfit }
 | **Rolling Metrics** | **COMPLETE**: rolling_sharpe(), rolling_drawdown(), rolling_drawdown_windowed(), rolling_max_drawdown(), rolling_volatility() - all exported from lib.rs, 8 unit tests |
 | **Short Borrow Costs** | **COMPLETE**: borrow_cost_rate field in CostModel (3% default), accrue_borrow_costs() method, charges daily for short equity positions, CostSettings integration, CLI --borrow-cost flag, scale_cost_model() support, 4 unit tests |
 | **Position Sizing Integration** | **COMPLETE**: PositionSizingMethod enum (PercentOfEquity, FixedDollar, VolatilityTargeted, SignalScaled, RiskBased), new PositionSizer methods (size_fixed_dollar, size_by_signal, size_by_volatility_target, size_percent_of_equity), BacktestConfig integration, signal_to_order() updated with ATR/volatility calculations, CLI options (--sizing-method, --fixed-dollar, --target-vol, --vol-lookback, --risk-per-trade, --stop-atr, --atr-period), 7 unit tests |
+| **Verdict System** | **COMPLETE**: Verdict enum (Robust, Borderline, LikelyOverfit), verdict() methods in WalkForwardResult and MonteCarloResult, from_degradation_ratio() and from_criteria() classification, CLI color-coded verdict display, is_acceptable(), description(), label() helpers, exported from lib.rs, 12 unit tests |
 | Codebase Cleanliness | **VERIFIED**: No TODOs/FIXMEs in codebase |
-| ALL TESTS | **PASSING**: 551 tests (0 failures) |
+| ALL TESTS | **PASSING**: 567 tests (0 failures) |
 
 ---
 
