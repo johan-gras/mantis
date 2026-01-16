@@ -10,23 +10,30 @@
 
 ## Executive Summary
 
-The Mantis backtesting framework implementation is **complete**. All 39 items have been verified and implemented.
+The Mantis backtesting framework implementation is **complete** for all spec-aligned features.
 
-**Core Features:**
+**Core Features (Spec-Aligned):**
 - Core backtest engine with comprehensive cost modeling
-- 40+ technical indicators
+- Technical indicators for convenience (not exhaustive - users compute features externally)
 - Monte Carlo simulation with confidence intervals
 - Walk-forward analysis with OOS degradation metrics
-- CPCV (Combinatorial Purged Cross-Validation)
-- Multi-asset portfolio optimization (Black-Litterman, Mean-Variance, HRP, Risk Parity)
-- Options pricing (Black-Scholes, Binomial, Greeks)
-- Regime detection (trend, volatility, volume)
-- Streaming indicators for real-time applications
-- Feature extraction for ML (40+ features, sequence building)
-- Experiment tracking with SQLite
-- Comprehensive CLI with 11 commands
-- Export formats: CSV, JSON, Parquet, NPY, Markdown
-- Performance benchmarks (9 benchmark groups in benches/backtest_bench.rs)
+- CPCV (Combinatorial Purged Cross-Validation) for overfitting detection
+- Multi-symbol backtesting (portfolio aggregation, not optimization)
+- ONNX model inference integration
+- Parameter sweep with parallel execution
+- Deflated Sharpe Ratio and Probabilistic Sharpe Ratio
+- Cost sensitivity analysis
+- Export formats: CSV, JSON, Parquet
+- Basic CLI for common operations
+
+**Removed from Scope (Not Spec-Aligned):**
+- ~~Multi-asset portfolio optimization (Black-Litterman, Mean-Variance, HRP, Risk Parity)~~ - Mantis is a backtester, not a portfolio optimizer
+- ~~Options pricing (Black-Scholes, Binomial, Greeks)~~ - Outside core thesis
+- ~~Regime detection~~ - Users should compute externally
+- ~~Streaming indicators~~ - Not needed for research backtesting
+- ~~Feature extraction library (40+ features)~~ - Users compute features in pandas/polars
+- ~~Experiment tracking with SQLite~~ - Use external tools (MLflow, W&B)
+- ~~Comprehensive CLI with 11 commands~~ - Reduced to essential operations
 
 **Python Bindings (PyO3):**
 - Full PyO3 0.22 integration with ABI3 stable Python ABI (Python 3.8+)
@@ -434,23 +441,34 @@ gh api -X POST "/repos/johan-gras/mantis/pages" -f build_type=workflow
 
 ---
 
-## What's Already Excellent (No Action Needed)
+## Spec-Aligned Features (Core Scope)
 
 - Core backtest engine with comprehensive cost modeling
-- 40+ technical indicators in analytics.rs
+- Technical indicators for convenience
 - Monte Carlo simulation with confidence intervals
 - Walk-forward analysis with OOS degradation
 - CPCV (Combinatorial Purged Cross-Validation) with purging/embargo
-- Multi-asset portfolio optimization (Black-Litterman, Mean-Variance, HRP)
-- Options pricing (Black-Scholes, Binomial, Greeks)
-- Regime detection (trend, volatility, volume)
-- Streaming indicators for real-time applications
-- Feature extraction for ML (40+ features, sequence building)
-- Experiment tracking with SQLite
-- Comprehensive CLI with 11 commands
-- Export formats: CSV, JSON, Parquet, NPY, Markdown
-- Performance benchmarks (9 benchmark groups)
+- Multi-symbol backtesting with portfolio aggregation
+- ONNX model inference integration
+- Parameter sweep with parallel execution (rayon)
+- Export formats: CSV, JSON, Parquet
+- Basic CLI for common operations
 - Limit order fill logic
 - Position sizing utilities in risk.rs
 - Deflated Sharpe Ratio and Probabilistic Sharpe Ratio
+- Cost sensitivity analysis
+- Parameter sensitivity analysis
 - Statistical tests (ADF, autocorrelation, Ljung-Box)
+
+## Features Deprecated (To Be Removed)
+
+The following features exist in the codebase but are outside the focused scope defined in `specs/`:
+
+- Multi-asset portfolio optimization (Black-Litterman, Mean-Variance, HRP, Risk Parity) - Use dedicated portfolio tools
+- Options pricing (Black-Scholes, Binomial, Greeks) - Outside core thesis
+- Regime detection (trend, volatility, volume) - Users compute externally
+- Streaming indicators for real-time - Not needed for research backtesting
+- Feature extraction library (40+ features) - Users compute features in pandas/polars
+- Experiment tracking with SQLite - Use MLflow, W&B, or similar
+- Comprehensive CLI (11 commands) - Reduced to essential operations
+- NPY/Markdown export formats - CSV, JSON, Parquet sufficient
