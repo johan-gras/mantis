@@ -42,8 +42,7 @@ The Mantis backtesting framework has a solid core implementation with excellent 
 ## Test Status Summary
 
 **Last Run:** 2026-01-16
-- **Unit Tests:** 28 passed
-- **Doc Tests:** 12 passed
+- **Total Tests:** 520 passed (475 + 5 + 28 + 12)
 - **Failed:** 0 tests
 - **Status:** ALL TESTS PASSING
 
@@ -138,68 +137,7 @@ SignalShapeMismatch: Signal has 250 rows but data has 252 rows
 
 ## P1 - High Priority (Significant Feature Gaps)
 
-### 5. Walk-Forward Default Parameters [VERIFIED - TRIVIAL FIX]
-**Status:** Defaults need adjustment
-
-**Locations (src/walkforward.rs):**
-```rust
-// Line 34:
-num_windows: 5,  // Should be 12
-
-// Line 36:
-anchored: false,  // Should be true
-```
-
-**Fix:** Two 1-line changes needed
-
-**Dependencies:** None
-**Effort:** Trivial (2 line changes)
-
----
-
-### 6. Monthly Returns Synthetic [VERIFIED - BUG]
-**Status:** Uses synthetic uniform distribution
-
-**Current implementation (src/analytics.rs:924-933):**
-```rust
-fn monthly_returns(result: &BacktestResult) -> Vec<f64> {
-    let months = (result.end_time - result.start_time).num_days() / 30;
-    let monthly_return = result.total_return_pct / months as f64;
-    vec![monthly_return; months as usize]  // All values identical!
-}
-```
-
-**Problem:** Returns same value for all months instead of actual calendar-month aggregation.
-
-**Fix:** Group equity curve returns by actual calendar month.
-
-**Dependencies:** None
-**Effort:** Small (1 day)
-
----
-
-### 7. Auto-Warnings for Suspicious Metrics [MISSING - VERIFIED]
-**Status:** No warning system exists
-
-**Spec requirements:**
-| Metric | Threshold | Warning |
-|--------|-----------|---------|
-| Sharpe | > 3 | "Verify data and execution" |
-| Win rate | > 80% | "Check for lookahead bias" |
-| Max drawdown | < 5% | "Verify execution logic" |
-| Trades | < 30 | "Limited statistical significance" |
-| OOS/IS | < 0.60 | "Likely overfit" |
-
-**Files affected:**
-- `src/analytics.rs` - Add `check_suspicious_metrics()` function
-- `src/cli.rs` - Display warnings in CLI output
-
-**Dependencies:** None
-**Effort:** Small (1-2 days)
-
----
-
-### 8. Rolling Metrics [MISSING - VERIFIED]
+### 5. Rolling Metrics [MISSING - VERIFIED]
 **Status:** Not implemented
 
 **Spec requirements:**
@@ -216,7 +154,7 @@ fn monthly_returns(result: &BacktestResult) -> Vec<f64> {
 
 ---
 
-### 9. Short Borrow Costs [PARTIAL - VERIFIED]
+### 6. Short Borrow Costs [PARTIAL - VERIFIED]
 **Status:** Only margin interest exists (no dedicated borrow fees)
 
 **Current state (src/portfolio.rs:755-768):**
@@ -236,7 +174,7 @@ fn monthly_returns(result: &BacktestResult) -> Vec<f64> {
 
 ---
 
-### 10. load_multi / load_dir Functions [MISSING - VERIFIED]
+### 7. load_multi / load_dir Functions [MISSING - VERIFIED]
 **Status:** Not implemented
 
 **Spec requirements:**
@@ -262,7 +200,7 @@ let sample = mt.load_sample("AAPL")?;  // Works offline
 
 ---
 
-### 11. Cost Sensitivity CLI Command [PARTIAL - VERIFIED]
+### 8. Cost Sensitivity CLI Command [PARTIAL - VERIFIED]
 **Status:** Module complete (724 lines), CLI command missing
 
 **Current state:**
@@ -278,7 +216,7 @@ let sample = mt.load_sample("AAPL")?;  // Works offline
 
 ---
 
-### 12. Position Sizing Integration [PARTIAL - VERIFIED]
+### 9. Position Sizing Integration [PARTIAL - VERIFIED]
 **Status:** Utilities exist but not integrated into Engine
 
 **Current state:**
@@ -302,7 +240,7 @@ let sample = mt.load_sample("AAPL")?;  // Works offline
 
 ---
 
-### 13. Multi-Symbol Engine Documentation [VERIFIED - DOCUMENTATION GAP]
+### 10. Multi-Symbol Engine Documentation [VERIFIED - DOCUMENTATION GAP]
 **Status:** MultiAssetEngine exists (5583 lines) but needs documentation
 
 **Current state:**
@@ -326,7 +264,7 @@ let sample = mt.load_sample("AAPL")?;  // Works offline
 
 ## P2 - Medium Priority (Enhanced Functionality)
 
-### 14. Parameter Sensitivity Analysis [PARTIAL]
+### 11. Parameter Sensitivity Analysis [PARTIAL]
 **Status:** Walk-forward has parameter stability, no dedicated sweep module
 
 **Current state:**
@@ -343,7 +281,7 @@ let sample = mt.load_sample("AAPL")?;  // Works offline
 
 ---
 
-### 15. Visualization Module [MISSING - VERIFIED]
+### 12. Visualization Module [MISSING - VERIFIED]
 **Status:** Not implemented
 
 **Spec requirements:**
@@ -366,7 +304,7 @@ let sample = mt.load_sample("AAPL")?;  // Works offline
 
 ---
 
-### 16. HTML Report Generation [MISSING - VERIFIED]
+### 13. HTML Report Generation [MISSING - VERIFIED]
 **Status:** Not implemented
 
 **Current state (src/export.rs):**
@@ -384,7 +322,7 @@ let sample = mt.load_sample("AAPL")?;  // Works offline
 
 ## P3 - Lower Priority (Nice to Have)
 
-### 17. Polars Backend Support [PARTIAL]
+### 14. Polars Backend Support [PARTIAL]
 **Status:** Arrow compatibility provides foundation
 
 **Dependencies:** Python bindings (P0 item 2)
@@ -392,7 +330,7 @@ let sample = mt.load_sample("AAPL")?;  // Works offline
 
 ---
 
-### 18. Sample Data Bundling [MISSING]
+### 15. Sample Data Bundling [MISSING]
 **Status:** Not implemented
 
 **Spec requirement:** `mt.load_sample("AAPL")` works offline with bundled data
@@ -407,7 +345,7 @@ let sample = mt.load_sample("AAPL")?;  // Works offline
 
 ---
 
-### 19. Documentation Site [MISSING]
+### 16. Documentation Site [MISSING]
 **Status:** Not implemented
 
 **Spec requirements:**
@@ -433,21 +371,18 @@ let sample = mt.load_sample("AAPL")?;  // Works offline
 | 2 | Python Bindings (PyO3) | MISSING | P0 | Large | None |
 | 3 | ONNX Module | PARTIAL | P0 | Small | ort crate |
 | 4 | Helpful Error Messages | MISSING | P0 | Medium | None |
-| 5 | Walk-Forward Defaults | VERIFIED | P1 | Trivial | None |
-| 6 | Monthly Returns Fix | VERIFIED | P1 | Small | None |
-| 7 | Auto-Warnings | MISSING | P1 | Small | None |
-| 8 | Rolling Metrics | MISSING | P1 | Medium | None |
-| 9 | Short Borrow Costs | PARTIAL | P1 | Medium | None |
-| 10 | load_multi/load_dir | MISSING | P1 | Small | None |
-| 11 | Cost Sensitivity CLI | PARTIAL | P1 | Small | None |
-| 12 | Position Sizing Integration | PARTIAL | P1 | Medium | None |
-| 13 | Multi-Symbol Documentation | DOC GAP | P1 | Small | None |
-| 14 | Parameter Sensitivity | PARTIAL | P2 | Medium | None |
-| 15 | Visualization Module | MISSING | P2 | Medium | Item 2 |
-| 16 | HTML Reports | MISSING | P2 | Small | Item 15 |
-| 17 | Polars Backend | PARTIAL | P3 | Small | Item 2 |
-| 18 | Sample Data Bundling | MISSING | P3 | Small | None |
-| 19 | Documentation Site | MISSING | P3 | Medium | None |
+| 5 | Rolling Metrics | MISSING | P1 | Medium | None |
+| 6 | Short Borrow Costs | PARTIAL | P1 | Medium | None |
+| 7 | load_multi/load_dir | MISSING | P1 | Small | None |
+| 8 | Cost Sensitivity CLI | PARTIAL | P1 | Small | None |
+| 9 | Position Sizing Integration | PARTIAL | P1 | Medium | None |
+| 10 | Multi-Symbol Documentation | DOC GAP | P1 | Small | None |
+| 11 | Parameter Sensitivity | PARTIAL | P2 | Medium | None |
+| 12 | Visualization Module | MISSING | P2 | Medium | Item 2 |
+| 13 | HTML Reports | MISSING | P2 | Small | Item 12 |
+| 14 | Polars Backend | PARTIAL | P3 | Small | Item 2 |
+| 15 | Sample Data Bundling | MISSING | P3 | Small | None |
+| 16 | Documentation Site | MISSING | P3 | Medium | None |
 
 ---
 
@@ -455,7 +390,10 @@ let sample = mt.load_sample("AAPL")?;  // Works offline
 
 | Item | Verification |
 |------|-------------|
+| **Monthly Returns Synthetic** | FIXED: Now calculates actual calendar-month returns from equity curve instead of synthetic uniform distribution. Groups equity points by (year, month) and calculates actual returns. File: src/analytics.rs |
+| **Auto-Warnings for Suspicious Metrics** | FIXED: Added SuspiciousMetricWarning struct, check_suspicious_metrics() method to PerformanceMetrics, and check_oos_degradation() standalone function. Checks: Sharpe > 3, Win rate > 80%, Max DD < 5%, Trades < 30, Profit factor > 5, OOS/IS < 0.60. File: src/analytics.rs |
 | **Lookahead Bug Fix** | FIXED: Orders now buffered via `buffer_order_for_next_bar()` and fill at bar[i+1].open. Stop-loss/take-profit exits also buffered. Files: src/engine.rs (main loop, handle_pending_orders, buffer_order_for_next_bar), PendingOrder.signal field for entry tracking, pending_exits HashSet prevents double-buffering. |
+| **Walk-Forward Default Parameters** | FIXED in commit f8f9ef9: num_windows 5→12, in_sample_ratio 0.7→0.75, anchored false→true |
 | Config Defaults | CORRECT: slippage=0.1%, commission=0.1%, position_size=10% |
 | Performance Benchmarks | EXISTS in benches/backtest_bench.rs (9 benchmark groups) |
 | Limit Order Fill Logic | IMPLEMENTED correctly in portfolio.rs:1584-1639 |
@@ -476,33 +414,28 @@ let sample = mt.load_sample("AAPL")?;  // Works offline
 
 ## Recommended Execution Order
 
-**Phase 0 - Immediate Fixes (Day 1):**
-1. Walk-Forward Defaults fix (#5) - 5 minutes (2 line changes)
-2. Monthly Returns fix (#6) - 1 day
+**Phase 0 - Foundation (Week 1):**
+1. Python Bindings (#2) - 2-3 weeks (parallel track)
+2. Helpful Error Messages (#4) - 3-5 days
 
-**Phase 1 - Critical Fixes (Week 1-2):**
-3. Helpful Error Messages (#4) - 3-5 days
+**Phase 1 - Core Features (Weeks 2-3):**
+3. Rolling Metrics (#5) - 2-3 days
+4. Short Borrow Costs (#6) - 2-3 days
+5. load_multi/load_dir (#7) - 1-2 days
+6. Cost Sensitivity CLI (#8) - 1 day
 
-**Phase 2 - Foundation (Weeks 2-4):**
-4. Python Bindings (#2) - 2-3 weeks (parallel track)
-5. Auto-Warnings (#7) - 1-2 days
-6. Cost Sensitivity CLI (#11) - 1 day
+**Phase 2 - Integration (Week 4):**
+7. Position Sizing Integration (#9) - 2-3 days
+8. Multi-Symbol Documentation (#10) - 1 day
 
-**Phase 3 - Core Features (Weeks 5-6):**
-7. Rolling Metrics (#8) - 2-3 days
-8. load_multi/load_dir (#10) - 1-2 days
-9. Position Sizing Integration (#12) - 2-3 days
-10. Multi-Symbol Documentation (#13) - 1 day
+**Phase 3 - Analysis (Week 5):**
+9. Parameter Sensitivity (#11) - 3-4 days
 
-**Phase 4 - Realism (Week 7):**
-11. Short Borrow Costs (#9) - 2-3 days
-12. Parameter Sensitivity (#14) - 3-4 days
-
-**Phase 5 - Polish (Weeks 8+):**
-13. Visualization Module (#15) - 3-4 days
-14. HTML Reports (#16) - 1-2 days
-15. ONNX re-enablement (when ort stabilizes)
-16. Lower priority items as time permits
+**Phase 4 - Polish (Weeks 6+):**
+10. Visualization Module (#12) - 3-4 days
+11. HTML Reports (#13) - 1-2 days
+12. ONNX re-enablement (when ort stabilizes)
+13. Lower priority items as time permits
 
 ---
 

@@ -381,8 +381,25 @@ impl DrawdownAnalysis {
     }
 }
 
-/// Comprehensive performance metrics.
+/// Warning about a potentially suspicious metric value.
+/// These warnings help identify potential issues like lookahead bias, overfitting,
+/// or insufficient sample size.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SuspiciousMetricWarning {
+    /// The metric that triggered the warning
+    pub metric: String,
+    /// The actual value of the metric
+    pub value: f64,
+    /// The threshold that was exceeded
+    pub threshold: f64,
+    /// Human-readable warning message
+    pub message: String,
+    /// Severity level: "caution" or "warning"
+    pub severity: String,
+}
+
+/// Comprehensive performance metrics.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct PerformanceMetrics {
     // Returns
     pub total_return_pct: f64,
@@ -922,14 +939,138 @@ impl PerformanceMetrics {
     }
 
     fn monthly_returns(result: &BacktestResult) -> Vec<f64> {
-        // Simplified monthly returns estimation
-        let months = (result.end_time - result.start_time).num_days() / 30;
-        if months <= 0 {
+        if result.equity_curve.is_empty() {
             return vec![];
         }
 
-        let monthly_return = result.total_return_pct / months as f64;
-        vec![monthly_return; months as usize]
+        // Group equity points by (year, month) and get first/last equity for each month
+        let mut monthly_data: BTreeMap<(i32, u32), (f64, f64)> = BTreeMap::new();
+
+        for point in &result.equity_curve {
+            let key = (point.timestamp.year(), point.timestamp.month());
+            let entry = monthly_data.entry(key).or_insert((point.equity, point.equity));
+            // Update the end equity (last value in this month)
+            entry.1 = point.equity;
+        }
+
+        // Calculate returns for each month
+        monthly_data
+            .values()
+            .map(|(start_equity, end_equity)| {
+                if *start_equity > 0.0 {
+                    ((end_equity - start_equity) / start_equity) * 100.0 // Return as percentage
+                } else {
+                    0.0
+                }
+            })
+            .collect()
+    }
+
+    /// Check for suspicious metric values that may indicate issues.
+    ///
+    /// Returns a list of warnings based on these thresholds:
+    /// - Sharpe ratio > 3: May indicate data issues or lookahead bias
+    /// - Win rate > 80%: May indicate lookahead bias
+    /// - Max drawdown < 5%: May indicate execution logic issues
+    /// - Total trades < 30: Limited statistical significance
+    ///
+    /// For OOS/IS degradation checks, use `check_oos_degradation` separately
+    /// as it requires walk-forward results.
+    pub fn check_suspicious_metrics(&self) -> Vec<SuspiciousMetricWarning> {
+        let mut warnings = Vec::new();
+
+        // Sharpe ratio > 3 is suspicious
+        if self.sharpe_ratio > 3.0 {
+            warnings.push(SuspiciousMetricWarning {
+                metric: "sharpe_ratio".to_string(),
+                value: self.sharpe_ratio,
+                threshold: 3.0,
+                message: "Sharpe ratio > 3 is unusually high. Verify data quality and execution logic.".to_string(),
+                severity: "warning".to_string(),
+            });
+        }
+
+        // Win rate > 80% is suspicious
+        if self.win_rate > 0.80 {
+            warnings.push(SuspiciousMetricWarning {
+                metric: "win_rate".to_string(),
+                value: self.win_rate * 100.0, // Convert to percentage for display
+                threshold: 80.0,
+                message: "Win rate > 80% is unusually high. Check for lookahead bias in signal generation.".to_string(),
+                severity: "warning".to_string(),
+            });
+        }
+
+        // Max drawdown < 5% with significant trades is suspicious
+        if self.max_drawdown_pct.abs() < 5.0 && self.total_trades >= 10 {
+            warnings.push(SuspiciousMetricWarning {
+                metric: "max_drawdown_pct".to_string(),
+                value: self.max_drawdown_pct.abs(),
+                threshold: 5.0,
+                message: "Max drawdown < 5% with multiple trades is unusual. Verify execution logic and cost modeling.".to_string(),
+                severity: "caution".to_string(),
+            });
+        }
+
+        // Too few trades for statistical significance
+        if self.total_trades < 30 && self.total_trades > 0 {
+            warnings.push(SuspiciousMetricWarning {
+                metric: "total_trades".to_string(),
+                value: self.total_trades as f64,
+                threshold: 30.0,
+                message: "Fewer than 30 trades limits statistical significance. Results may not generalize.".to_string(),
+                severity: "caution".to_string(),
+            });
+        }
+
+        // Profit factor > 5 is suspicious
+        if self.profit_factor > 5.0 && self.profit_factor.is_finite() {
+            warnings.push(SuspiciousMetricWarning {
+                metric: "profit_factor".to_string(),
+                value: self.profit_factor,
+                threshold: 5.0,
+                message: "Profit factor > 5 is unusually high. Verify data and execution.".to_string(),
+                severity: "caution".to_string(),
+            });
+        }
+
+        warnings
+    }
+}
+
+/// Check OOS/IS degradation from walk-forward results.
+/// Returns a warning if OOS/IS ratio is below threshold (0.60 indicates likely overfit).
+pub fn check_oos_degradation(oos_sharpe: f64, is_sharpe: f64) -> Option<SuspiciousMetricWarning> {
+    if is_sharpe <= 0.0 {
+        return None; // Can't compute ratio with non-positive IS Sharpe
+    }
+
+    let ratio = oos_sharpe / is_sharpe;
+
+    if ratio < 0.60 {
+        Some(SuspiciousMetricWarning {
+            metric: "oos_is_ratio".to_string(),
+            value: ratio,
+            threshold: 0.60,
+            message: format!(
+                "OOS/IS ratio of {:.2} indicates likely overfitting. Strategy may not work in live trading.",
+                ratio
+            ),
+            severity: "warning".to_string(),
+        })
+    } else if ratio < 0.80 {
+        Some(SuspiciousMetricWarning {
+            metric: "oos_is_ratio".to_string(),
+            value: ratio,
+            threshold: 0.80,
+            message: format!(
+                "OOS/IS ratio of {:.2} is acceptable but warrants caution. Monitor live performance closely.",
+                ratio
+            ),
+            severity: "caution".to_string(),
+        })
+    } else {
+        None
     }
 }
 
@@ -5102,5 +5243,91 @@ mod tests {
         // Edge cases
         assert!(lower_incomplete_gamma(1.0, 0.0) < 0.001);
         assert!((lower_incomplete_gamma(1.0, 10.0) - 1.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_suspicious_metrics_high_sharpe() {
+        let metrics = PerformanceMetrics {
+            sharpe_ratio: 4.0, // Suspiciously high
+            win_rate: 0.60,
+            max_drawdown_pct: -15.0,
+            total_trades: 100,
+            profit_factor: 2.0,
+            ..Default::default()
+        };
+
+        let warnings = metrics.check_suspicious_metrics();
+        assert_eq!(warnings.len(), 1);
+        assert_eq!(warnings[0].metric, "sharpe_ratio");
+        assert_eq!(warnings[0].severity, "warning");
+    }
+
+    #[test]
+    fn test_suspicious_metrics_high_win_rate() {
+        let metrics = PerformanceMetrics {
+            sharpe_ratio: 1.5,
+            win_rate: 0.85, // Suspiciously high
+            max_drawdown_pct: -10.0,
+            total_trades: 100,
+            profit_factor: 2.0,
+            ..Default::default()
+        };
+
+        let warnings = metrics.check_suspicious_metrics();
+        assert_eq!(warnings.len(), 1);
+        assert_eq!(warnings[0].metric, "win_rate");
+    }
+
+    #[test]
+    fn test_suspicious_metrics_low_trades() {
+        let metrics = PerformanceMetrics {
+            sharpe_ratio: 1.5,
+            win_rate: 0.55,
+            max_drawdown_pct: -10.0,
+            total_trades: 15, // Too few for significance
+            profit_factor: 2.0,
+            ..Default::default()
+        };
+
+        let warnings = metrics.check_suspicious_metrics();
+        assert_eq!(warnings.len(), 1);
+        assert_eq!(warnings[0].metric, "total_trades");
+        assert_eq!(warnings[0].severity, "caution");
+    }
+
+    #[test]
+    fn test_suspicious_metrics_no_warnings() {
+        let metrics = PerformanceMetrics {
+            sharpe_ratio: 1.5,
+            win_rate: 0.55,
+            max_drawdown_pct: -15.0,
+            total_trades: 100,
+            profit_factor: 2.0,
+            ..Default::default()
+        };
+
+        let warnings = metrics.check_suspicious_metrics();
+        assert!(warnings.is_empty(), "Expected no warnings for normal metrics");
+    }
+
+    #[test]
+    fn test_oos_degradation_warning() {
+        // Severe overfitting
+        let warning = check_oos_degradation(0.5, 2.0);
+        assert!(warning.is_some());
+        let w = warning.unwrap();
+        assert_eq!(w.metric, "oos_is_ratio");
+        assert!(w.value < 0.30); // 0.5/2.0 = 0.25
+        assert_eq!(w.severity, "warning");
+
+        // Acceptable but cautionary
+        let warning = check_oos_degradation(1.4, 2.0);
+        assert!(warning.is_some());
+        let w = warning.unwrap();
+        assert_eq!(w.severity, "caution");
+
+        // Good ratio - no warning
+        let warning = check_oos_degradation(1.8, 2.0);
+        assert!(warning.is_none());
     }
 }
