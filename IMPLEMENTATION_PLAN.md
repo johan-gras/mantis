@@ -330,13 +330,32 @@ python3 scripts/test_doc_examples.py --file path  # Test single file
 
 ---
 
-### 4.4 CPCV Not Exposed to Python
+### 4.4 ~~CPCV Not Exposed to Python~~ RESOLVED
 
-| Issue | CPCV module exists in Rust but has no Python bindings |
-|-------|------------------------------------------------------|
-| **Location** | `src/cpcv.rs` (11 tests passing) |
-| **Impact** | Python users cannot access Combinatorial Purged Cross-Validation |
-| **Action** | Add PyO3 bindings in `src/python/` if needed for Python users |
+| Status | ✅ FIXED - CPCV now exposed to Python |
+|--------|--------------------------------------|
+| **Fix Date** | 2026-01-16 |
+
+**Implementation:**
+- [x] `src/python/cpcv.rs` - Full Python bindings for CPCV
+- [x] `mt.cpcv()` function exposed with built-in strategy and signal array support
+- [x] `mt.CPCVConfig` class for configuration
+- [x] `mt.CPCVResult` class with coefficient_of_variation(), is_robust(), fold_details(), etc.
+- [x] `mt.CPCVFold` and `mt.CPCVFoldResult` for fold-level details
+- [x] 23 Python tests added (all passing)
+
+**Usage:**
+```python
+# Using built-in strategy
+result = mt.cpcv(data, strategy="sma-crossover",
+                 strategy_params={"fast_period": 10, "slow_period": 30})
+print(result.summary())
+
+# Using custom signal
+result = mt.cpcv(data, signal=my_signal)
+if result.is_robust():
+    print("Strategy passes CPCV!")
+```
 
 ---
 
@@ -474,8 +493,8 @@ The following are **100% implemented** per specifications:
 | ONNX | 5 | PASS |
 | Integration | 20 | PASS |
 | Doc tests | 12 | PASS (24 ignored) |
-| **Total Rust** | **403+** | **ALL PASS** |
-| **Python** | **172** | **ALL PASS** |
+| **Total Rust** | **409+** | **ALL PASS** |
+| **Python** | **195** | **ALL PASS** |
 
 ---
 
@@ -517,7 +536,7 @@ The following are **100% implemented** per specifications:
 | `.pre-commit-config.yaml` | ✅ EXISTS | Pre-commit hooks configured |
 | `scripts/` | ✅ EXISTS | Helper scripts available |
 | `scripts/check_bench_regression.py` | ✅ EXISTS | Benchmark regression detection |
-| `scripts/test_doc_examples.py` | DOES NOT EXIST | No doc example testing |
+| `scripts/test_doc_examples.py` | ✅ EXISTS | Documentation example testing |
 | `benchmarks/results/` | ✅ EXISTS | Benchmark history storage |
 | `tests/python/` | ✅ EXISTS | 172 tests passing |
 | `CHANGELOG.md` | ✅ EXISTS | Release history documented |

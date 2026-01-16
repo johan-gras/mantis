@@ -64,6 +64,12 @@ from mantis._mantis import (
     SweepResultItem,
     # Monte Carlo
     MonteCarloResult as _MonteCarloResult,
+    # CPCV (Combinatorial Purged Cross-Validation)
+    cpcv as _cpcv_raw,
+    CPCVConfig,
+    CPCVFold,
+    CPCVFoldResult,
+    CPCVResult as _CPCVResult,
 )
 
 # Try to import ONNX classes (only available when built with --features onnx)
@@ -2286,6 +2292,254 @@ class SweepResult:
             Parallel: {summary['parallel']}<br>
             Sharpe range: {summary['sharpe_min']:.2f} - {summary['sharpe_max']:.2f}<br>
             {best_info}
+        </div>
+        """
+
+
+# =============================================================================
+# CPCV (Combinatorial Purged Cross-Validation)
+# =============================================================================
+
+def cpcv(
+    data: Any,
+    signal: Optional[Any] = None,
+    strategy: Optional[str] = None,
+    strategy_params: Optional[Dict[str, Any]] = None,
+    config: Optional[CPCVConfig] = None,
+    metric: str = "sharpe",
+    commission: float = 0.001,
+    slippage: float = 0.001,
+    cash: float = 100_000.0,
+) -> "CPCVResult":
+    """
+    Run Combinatorial Purged Cross-Validation on a strategy.
+
+    CPCV is a rigorous cross-validation method designed for time-series data that:
+    - Creates combinatorial folds to maximize data utilization
+    - Purges overlapping observations between training and test sets
+    - Enforces embargo periods to prevent information leakage from future to past
+
+    This is essential for validating ML-based or parameterized trading strategies
+    where traditional k-fold CV would introduce lookahead bias.
+
+    Args:
+        data: Data dictionary from load() or path to CSV/Parquet file
+        signal: Signal array (1=long, -1=short, 0=flat), or None for built-in strategy
+        strategy: Name of built-in strategy if signal is None
+            ("sma-crossover", "momentum", "mean-reversion", "rsi", "macd", "breakout")
+        strategy_params: Parameters for built-in strategy (e.g., {"fast_period": 10})
+        config: CPCVConfig object (or None for defaults: 5 splits, 5 days embargo)
+        metric: Metric to evaluate ("sharpe", "sortino", "return", "calmar", "profit_factor")
+        commission: Commission rate (default 0.001 = 0.1%)
+        slippage: Slippage rate (default 0.001 = 0.1%)
+        cash: Initial capital (default 100,000)
+
+    Returns:
+        CPCVResult with cross-validation statistics and fold details.
+
+    Example:
+        >>> # Using built-in strategy
+        >>> data = mt.load_sample("AAPL")
+        >>> result = mt.cpcv(
+        ...     data,
+        ...     strategy="sma-crossover",
+        ...     strategy_params={"fast_period": 10, "slow_period": 30}
+        ... )
+        >>> print(result.summary())
+
+        >>> # Using custom signal array
+        >>> signal = np.where(data['close'] > data['close'].mean(), 1, -1)
+        >>> result = mt.cpcv(data, signal=signal)
+        >>> if result.is_robust():
+        ...     print("Strategy passes CPCV!")
+
+        >>> # Custom configuration
+        >>> config = mt.CPCVConfig(n_splits=10, embargo_days=10)
+        >>> result = mt.cpcv(data, strategy="rsi", config=config)
+        >>> print(f"CV: {result.coefficient_of_variation():.2%}")
+
+    References:
+        Lopez de Prado, "Advances in Financial Machine Learning", Chapter 7
+    """
+    # Convert signal to numpy array if needed
+    signal_arr = None
+    if signal is not None:
+        if hasattr(signal, 'values'):
+            # pandas/polars Series
+            signal_arr = np.asarray(signal.values, dtype=np.float64)
+        elif hasattr(signal, 'to_numpy'):
+            # polars Series
+            signal_arr = signal.to_numpy().astype(np.float64)
+        elif isinstance(signal, np.ndarray):
+            signal_arr = signal.astype(np.float64)
+        else:
+            signal_arr = np.asarray(signal, dtype=np.float64)
+
+    # Call the Rust CPCV function
+    rust_result = _cpcv_raw(
+        data,
+        signal=signal_arr,
+        strategy=strategy,
+        strategy_params=strategy_params,
+        config=config,
+        metric=metric,
+        commission=commission,
+        slippage=slippage,
+        cash=cash,
+    )
+
+    # Wrap in Python CPCVResult for enhanced functionality
+    return CPCVResult(rust_result, metric)
+
+
+class CPCVResult:
+    """
+    Result of Combinatorial Purged Cross-Validation.
+
+    Provides summary statistics across all folds and methods to assess
+    strategy robustness. A lower coefficient of variation indicates
+    more stable performance across folds.
+
+    Attributes:
+        n_folds: Number of folds evaluated
+        n_combinations: Total number of train/test combinations
+        mean_test_score: Mean metric score across all folds
+        std_test_score: Standard deviation of scores (stability indicator)
+        min_test_score: Worst fold score
+        max_test_score: Best fold score
+        metric: Name of the metric used for evaluation
+
+    Example:
+        >>> result = mt.cpcv(data, strategy="sma-crossover")
+        >>> print(f"Mean Sharpe: {result.mean_test_score:.2f}")
+        >>> print(f"Stability (CV): {result.coefficient_of_variation():.2%}")
+        >>> if result.is_robust():
+        ...     print("Strategy is robust!")
+    """
+
+    def __init__(self, rust_result: _CPCVResult, metric: str):
+        """Initialize from a Rust CPCVResult."""
+        self._inner = rust_result
+        self._metric = metric
+
+    @property
+    def n_folds(self) -> int:
+        """Number of folds evaluated."""
+        return self._inner.n_folds
+
+    @property
+    def n_combinations(self) -> int:
+        """Total number of train/test combinations."""
+        return self._inner.n_combinations
+
+    @property
+    def mean_test_score(self) -> float:
+        """Mean metric score across all folds."""
+        return self._inner.mean_test_score
+
+    @property
+    def std_test_score(self) -> float:
+        """Standard deviation of scores (lower = more stable)."""
+        return self._inner.std_test_score
+
+    @property
+    def min_test_score(self) -> float:
+        """Minimum (worst) fold score."""
+        return self._inner.min_test_score
+
+    @property
+    def max_test_score(self) -> float:
+        """Maximum (best) fold score."""
+        return self._inner.max_test_score
+
+    @property
+    def metric(self) -> str:
+        """Name of the metric used for evaluation."""
+        return self._inner.metric
+
+    def coefficient_of_variation(self) -> float:
+        """
+        Calculate coefficient of variation (CV = std/mean).
+
+        A lower CV indicates more stable performance across folds.
+        Typical interpretation:
+        - CV < 0.15: Very stable
+        - CV 0.15-0.30: Moderately stable
+        - CV > 0.30: High variability (potentially overfit)
+
+        Returns:
+            Coefficient of variation, or infinity if mean is zero.
+        """
+        return self._inner.coefficient_of_variation()
+
+    def is_robust(self, max_cv: float = 0.3) -> bool:
+        """
+        Check if strategy is robust based on coefficient of variation.
+
+        A robust strategy has:
+        1. Positive mean score
+        2. CV <= max_cv (default 0.3)
+
+        Args:
+            max_cv: Maximum acceptable coefficient of variation (default 0.3)
+
+        Returns:
+            True if strategy passes robustness check.
+        """
+        return self._inner.is_robust(max_cv)
+
+    def fold_details(self) -> List[CPCVFoldResult]:
+        """
+        Get detailed results for each fold.
+
+        Returns:
+            List of CPCVFoldResult objects with full backtest details.
+        """
+        return self._inner.fold_details()
+
+    def scores(self) -> List[float]:
+        """
+        Get metric scores for each fold.
+
+        Returns:
+            List of metric scores, one per fold.
+        """
+        return self._inner.scores()
+
+    def summary(self) -> str:
+        """
+        Get formatted summary of CPCV analysis.
+
+        Returns:
+            Multi-line string summarizing CPCV results.
+        """
+        return self._inner.summary()
+
+    def __repr__(self) -> str:
+        return repr(self._inner)
+
+    def __str__(self) -> str:
+        return self.summary()
+
+    def _repr_html_(self) -> str:
+        """HTML representation for Jupyter notebooks."""
+        cv = self.coefficient_of_variation()
+        robust = self.is_robust()
+        status_color = "green" if robust else "red"
+        status_text = "ROBUST" if robust else "POTENTIALLY OVERFIT"
+
+        return f"""
+        <div style="font-family: monospace; padding: 10px; border: 1px solid #ddd; border-radius: 5px;">
+            <strong>CPCVResult</strong><br>
+            Folds: {self.n_folds} | Combinations: {self.n_combinations}<br>
+            Metric: {self.metric}<br>
+            <br>
+            Mean score: {self.mean_test_score:.4f}<br>
+            Std score: {self.std_test_score:.4f}<br>
+            Range: [{self.min_test_score:.4f}, {self.max_test_score:.4f}]<br>
+            <br>
+            CV: {cv:.2%}<br>
+            Status: <span style="color: {status_color}; font-weight: bold;">{status_text}</span>
         </div>
         """
 

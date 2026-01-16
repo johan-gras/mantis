@@ -9,6 +9,7 @@
 #![allow(clippy::useless_conversion)]
 
 mod backtest;
+mod cpcv;
 mod data;
 #[cfg(feature = "onnx")]
 mod onnx;
@@ -53,6 +54,9 @@ fn _mantis(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Register parallel sweep function
     m.add_function(wrap_pyfunction!(sweep::sweep, m)?)?;
 
+    // Register CPCV function
+    m.add_function(wrap_pyfunction!(cpcv::cpcv, m)?)?;
+
     // Register classes
     m.add_class::<results::PyBacktestResult>()?;
     m.add_class::<results::PyValidationResult>()?;
@@ -74,6 +78,12 @@ fn _mantis(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Register sweep classes
     m.add_class::<sweep::PySweepResult>()?;
     m.add_class::<sweep::PySweepResultItem>()?;
+
+    // Register CPCV classes
+    m.add_class::<cpcv::PyCPCVConfig>()?;
+    m.add_class::<cpcv::PyCPCVFold>()?;
+    m.add_class::<cpcv::PyCPCVFoldResult>()?;
+    m.add_class::<cpcv::PyCPCVResult>()?;
 
     // Register ONNX classes and functions (when onnx feature is enabled)
     #[cfg(feature = "onnx")]
