@@ -229,6 +229,41 @@ impl PyBacktestResult {
     }
 }
 
+/// Details for a single fold in walk-forward analysis.
+#[pyclass(name = "FoldDetail")]
+#[derive(Debug, Clone)]
+pub struct PyFoldDetail {
+    #[pyo3(get)]
+    pub fold: usize,
+    #[pyo3(get)]
+    pub is_sharpe: f64,
+    #[pyo3(get)]
+    pub oos_sharpe: f64,
+    #[pyo3(get)]
+    pub is_return: f64,
+    #[pyo3(get)]
+    pub oos_return: f64,
+    #[pyo3(get)]
+    pub efficiency: f64,
+    #[pyo3(get)]
+    pub is_bars: usize,
+    #[pyo3(get)]
+    pub oos_bars: usize,
+}
+
+#[pymethods]
+impl PyFoldDetail {
+    fn __repr__(&self) -> String {
+        format!(
+            "FoldDetail(fold={}, is_sharpe={:.2}, oos_sharpe={:.2}, efficiency={:.0}%)",
+            self.fold,
+            self.is_sharpe,
+            self.oos_sharpe,
+            self.efficiency * 100.0
+        )
+    }
+}
+
 /// Python-exposed validation result.
 #[pyclass(name = "ValidationResult")]
 #[derive(Debug, Clone)]
@@ -251,6 +286,9 @@ pub struct PyValidationResult {
     pub efficiency_ratio: f64,
     #[pyo3(get)]
     pub parameter_stability: f64,
+
+    // Internal data for fold_details method
+    fold_data: Vec<PyFoldDetail>,
 }
 
 #[pymethods]
@@ -269,6 +307,18 @@ impl PyValidationResult {
         ));
         s.push_str(&format!("\nVerdict: {}\n", self.verdict));
         s
+    }
+
+    /// Get detailed information for each fold.
+    ///
+    /// Returns a list of FoldDetail objects with per-fold metrics.
+    fn fold_details(&self) -> Vec<PyFoldDetail> {
+        self.fold_data.clone()
+    }
+
+    /// Check if the validation result indicates a robust strategy.
+    fn is_robust(&self) -> bool {
+        self.verdict == "robust" || self.verdict == "borderline"
     }
 
     fn __repr__(&self) -> String {
@@ -299,6 +349,23 @@ impl PyValidationResult {
 
         let verdict = result.verdict().to_string();
 
+        // Extract per-fold details
+        let fold_data: Vec<PyFoldDetail> = result
+            .windows
+            .iter()
+            .enumerate()
+            .map(|(i, w)| PyFoldDetail {
+                fold: i + 1,
+                is_sharpe: w.in_sample_result.sharpe_ratio,
+                oos_sharpe: w.out_of_sample_result.sharpe_ratio,
+                is_return: w.in_sample_result.total_return_pct,
+                oos_return: w.out_of_sample_result.total_return_pct,
+                efficiency: w.efficiency_ratio,
+                is_bars: w.window.is_bars,
+                oos_bars: w.window.oos_bars,
+            })
+            .collect();
+
         Self {
             folds: result.windows.len(),
             is_sharpe,
@@ -309,6 +376,7 @@ impl PyValidationResult {
             avg_oos_return: result.avg_oos_return,
             efficiency_ratio: result.avg_efficiency_ratio,
             parameter_stability: result.parameter_stability,
+            fold_data,
         }
     }
 }

@@ -85,6 +85,18 @@ class BacktestResult:
     def summary(self) -> str: ...
     def warnings(self) -> List[str]: ...
 
+class FoldDetail:
+    """Details for a single fold in walk-forward validation."""
+
+    fold: int
+    is_sharpe: float
+    oos_sharpe: float
+    is_return: float
+    oos_return: float
+    efficiency: float
+    is_bars: int
+    oos_bars: int
+
 class ValidationResult:
     """Results from walk-forward validation."""
 
@@ -93,8 +105,13 @@ class ValidationResult:
     oos_sharpe: float
     oos_degradation: float
     verdict: str
+    avg_is_return: float
+    avg_oos_return: float
+    efficiency_ratio: float
+    parameter_stability: float
 
-    def fold_details(self) -> List[Dict[str, Any]]: ...
+    def fold_details(self) -> List[FoldDetail]: ...
+    def is_robust(self) -> bool: ...
     def summary(self) -> str: ...
 
 def load(
@@ -272,6 +289,51 @@ def signal_check(
         >>> check = mt.signal_check(data, signal)
         >>> print(check['status'])
         'passed'
+    """
+    ...
+
+def validate(
+    data: Union[Dict[str, Any], str],
+    signal: NDArray[np.float64],
+    folds: int = 12,
+    in_sample_ratio: float = 0.75,
+    anchored: bool = True,
+    config: Optional[BacktestConfig] = None,
+    commission: float = 0.001,
+    slippage: float = 0.001,
+    size: float = 0.10,
+    cash: float = 100_000.0,
+) -> ValidationResult:
+    """
+    Run walk-forward validation on a signal-based strategy.
+
+    This performs walk-forward analysis by splitting the data into multiple
+    folds, running the backtest on each in-sample period, and then testing
+    on the out-of-sample period.
+
+    Args:
+        data: Data dictionary from load() or path to CSV/Parquet file
+        signal: numpy array of signals (1=long, -1=short, 0=flat)
+        folds: Number of walk-forward folds (default 12)
+        in_sample_ratio: Fraction of each fold for in-sample (default 0.75)
+        anchored: Use anchored (growing) windows instead of rolling (default True)
+        config: Optional BacktestConfig object
+        commission: Commission rate (default 0.001 = 0.1%)
+        slippage: Slippage rate (default 0.001 = 0.1%)
+        size: Position size as fraction of equity (default 0.10 = 10%)
+        cash: Initial capital (default 100,000)
+
+    Returns:
+        ValidationResult object with fold details and verdict.
+
+    Example:
+        >>> data = mt.load("AAPL.csv")
+        >>> signal = model.predict(features)
+        >>> validation = mt.validate(data, signal)
+        >>> print(validation.verdict)
+        'robust'
+        >>> for fold in validation.fold_details():
+        ...     print(f"Fold {fold.fold}: IS={fold.is_sharpe:.2f}, OOS={fold.oos_sharpe:.2f}")
     """
     ...
 

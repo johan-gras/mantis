@@ -90,6 +90,10 @@ All 3 previously failing tests now pass:
 - `compare()` - Compare multiple backtest results
 - `sweep()` - Parameter sweep with callable signal generator
 - BacktestResult with: total_return, sharpe, sortino, calmar, max_drawdown, win_rate, profit_factor, trades, equity_curve, warnings()
+- `validate(data, signal, folds, train_ratio)` - Walk-forward validation from Python
+- ValidationResult with: is_sharpe, oos_sharpe, efficiency, verdict, fold_count, is_robust()
+- `fold_details()` method on ValidationResult - Returns List[FoldDetail] with per-fold metrics
+- FoldDetail class with: is_sharpe, oos_sharpe, is_return, oos_return, efficiency, is_bars, oos_bars
 
 **Dependencies:** None
 **Effort:** Large (completed)
@@ -484,7 +488,7 @@ All 3 previously failing tests now pass:
 | **Verdict System** | **COMPLETE**: Verdict enum (Robust, Borderline, LikelyOverfit), verdict() methods in WalkForwardResult and MonteCarloResult, from_degradation_ratio() and from_criteria() classification, CLI color-coded verdict display, is_acceptable(), description(), label() helpers, exported from lib.rs, 12 unit tests |
 | **Parameter Sensitivity** | **COMPLETE**: src/sensitivity.rs (~1100 lines), ParameterRange enum (Linear, Logarithmic, Discrete, Centered), SensitivityConfig with constraints, SensitivityAnalysis with parallel rayon execution, HeatmapData for 2D visualization exports, cliff detection, plateau detection, parameter importance ranking, stability scores, CLI `mantis sensitivity` command with metric/steps/heatmap options, supports all 6 built-in strategies, 10 unit tests |
 | **HTML Reports** | **COMPLETE**: export_report_html() method in Exporter and MultiAssetExporter, self-contained HTML with embedded CSS, dark/light theme support, SVG charts for equity curve and drawdown, performance metrics grid, trade statistics, trade list table, 6 unit tests |
-| **Python Bindings (PyO3)** | **COMPLETE**: src/python/ module with mod.rs, types.rs, data.rs, backtest.rs, results.rs; pyproject.toml with maturin config; python/mantis/ wrapper with __init__.py, __init__.pyi type stubs, py.typed marker; load(), load_multi(), load_dir(), backtest(), signal_check() functions; 6 built-in strategies; compare(), sweep() helpers; BacktestResult with metrics and equity_curve |
+| **Python Bindings (PyO3)** | **COMPLETE**: src/python/ module with mod.rs, types.rs, data.rs, backtest.rs, results.rs; pyproject.toml with maturin config; python/mantis/ wrapper with __init__.py, __init__.pyi type stubs, py.typed marker; load(), load_multi(), load_dir(), backtest(), signal_check(), validate() functions; 6 built-in strategies; compare(), sweep() helpers; BacktestResult with metrics and equity_curve; ValidationResult with is_robust(), fold_details() returning List[FoldDetail]; FoldDetail class with is_sharpe, oos_sharpe, is_return, oos_return, efficiency, is_bars, oos_bars |
 | **Visualization Module** | **COMPLETE**: src/viz.rs (~845 lines), ASCII sparklines (sparkline(), sparkline_with_config(), equity_sparkline()), strategy comparison (compare_strategies(), StrategyComparison), walk-forward visualization (walkforward_fold_chart(), walkforward_summary()), SVG heatmaps (heatmap_to_svg(), export_heatmap_svg()), ASCII heatmaps (heatmap_to_ascii()), result summaries (result_summary(), result_with_verdict()), all exported from lib.rs, 13 unit tests |
 | **Sample Data Bundling** | **COMPLETE**: load_sample(), list_samples() functions; data/samples/AAPL.csv, SPY.csv, BTC.csv (~10 years daily OHLCV 2014-2024); embedded via include_str!(); Python bindings mt.load_sample(), mt.list_samples(); type stubs; 6 unit tests |
 | Codebase Cleanliness | **VERIFIED**: No TODOs/FIXMEs in codebase |

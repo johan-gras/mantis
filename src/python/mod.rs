@@ -30,10 +30,12 @@ fn _mantis(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Register main backtest function
     m.add_function(wrap_pyfunction!(backtest::backtest, m)?)?;
     m.add_function(wrap_pyfunction!(backtest::signal_check, m)?)?;
+    m.add_function(wrap_pyfunction!(backtest::validate, m)?)?;
 
     // Register classes
     m.add_class::<results::PyBacktestResult>()?;
     m.add_class::<results::PyValidationResult>()?;
+    m.add_class::<results::PyFoldDetail>()?;
     m.add_class::<types::PyBar>()?;
     m.add_class::<backtest::PyBacktestConfig>()?;
 

@@ -7,14 +7,15 @@ use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
 use crate::data::{load_csv, load_parquet, DataConfig};
-use crate::engine::{BacktestConfig, Engine};
+use crate::engine::{BacktestConfig, BacktestResult, Engine};
 use crate::portfolio::CostModel;
 use crate::risk::{StopLoss, TakeProfit};
 use crate::strategies::{
     BreakoutStrategy, MacdStrategy, MeanReversion, MomentumStrategy, RsiStrategy, SmaCrossover,
 };
 use crate::strategy::Strategy;
-use crate::types::{Bar, Signal};
+use crate::types::{Bar, Signal, Verdict};
+use crate::walkforward::{WalkForwardConfig, WalkForwardResult, WalkForwardWindow, WindowResult};
 
 use super::results::PyBacktestResult;
 
@@ -646,5 +647,337 @@ fn run_builtin_strategy(
             "Unknown strategy: '{}'. Available: sma-crossover, momentum, mean-reversion, rsi, macd, breakout",
             name
         ))),
+    }
+}
+
+/// Run walk-forward validation on a signal-based strategy.
+///
+/// This performs walk-forward analysis by splitting the data into multiple
+/// folds, running the backtest on each in-sample period, and then testing
+/// on the out-of-sample period.
+///
+/// Args:
+///     data: Data dictionary from load() or path to CSV/Parquet file
+///     signal: numpy array of signals (1=long, -1=short, 0=flat)
+///     folds: Number of walk-forward folds (default 12)
+///     in_sample_ratio: Fraction of each fold for in-sample (default 0.75)
+///     anchored: Use anchored (growing) windows instead of rolling (default True)
+///     config: Optional BacktestConfig object
+///     commission: Commission rate (default 0.001 = 0.1%)
+///     slippage: Slippage rate (default 0.001 = 0.1%)
+///     size: Position size as fraction of equity (default 0.10 = 10%)
+///     cash: Initial capital (default 100,000)
+///
+/// Returns:
+///     ValidationResult object with fold details and verdict.
+///
+/// Example:
+///     >>> data = load("AAPL.csv")
+///     >>> signal = model.predict(features)
+///     >>> validation = validate(data, signal)
+///     >>> print(validation.verdict)
+///     'robust'
+#[pyfunction]
+#[pyo3(signature = (
+    data,
+    signal,
+    folds=12,
+    in_sample_ratio=0.75,
+    anchored=true,
+    config=None,
+    commission=0.001,
+    slippage=0.001,
+    size=0.10,
+    cash=100_000.0
+))]
+pub fn validate(
+    py: Python<'_>,
+    data: PyObject,
+    signal: PyReadonlyArray1<f64>,
+    folds: usize,
+    in_sample_ratio: f64,
+    anchored: bool,
+    config: Option<&PyBacktestConfig>,
+    commission: f64,
+    slippage: f64,
+    size: f64,
+    cash: f64,
+) -> PyResult<super::results::PyValidationResult> {
+    // Build config
+    let bt_config = if let Some(cfg) = config {
+        BacktestConfig::from(cfg)
+    } else {
+        let py_config = PyBacktestConfig::new(
+            cash, commission, slippage, size, true, // allow_short
+            true, // fractional_shares
+            None, // stop_loss
+            None, // take_profit
+            0.03, // borrow_cost
+        );
+        BacktestConfig::from(&py_config)
+    };
+
+    // Extract bars and signal
+    let bars = extract_bars(py, &data)?;
+    let signal_vec: Vec<f64> = signal.as_slice()?.to_vec();
+
+    if bars.is_empty() {
+        return Err(pyo3::exceptions::PyValueError::new_err(
+            "Data is empty. Cannot run validation without bars.",
+        ));
+    }
+
+    if signal_vec.len() != bars.len() {
+        return Err(pyo3::exceptions::PyValueError::new_err(format!(
+            "SignalShapeMismatch: Signal has {} rows, data has {}.",
+            signal_vec.len(),
+            bars.len()
+        )));
+    }
+
+    // Validate walk-forward config
+    if folds < 2 {
+        return Err(pyo3::exceptions::PyValueError::new_err(
+            "Need at least 2 folds for walk-forward validation.",
+        ));
+    }
+
+    if in_sample_ratio <= 0.0 || in_sample_ratio >= 1.0 {
+        return Err(pyo3::exceptions::PyValueError::new_err(
+            "in_sample_ratio must be between 0 and 1 (exclusive).",
+        ));
+    }
+
+    // Calculate window boundaries
+    let wf_config = WalkForwardConfig {
+        num_windows: folds,
+        in_sample_ratio,
+        anchored,
+        min_bars_per_window: 50,
+    };
+
+    let min_required_bars = wf_config.min_bars_per_window * folds;
+    if bars.len() < min_required_bars {
+        return Err(pyo3::exceptions::PyValueError::new_err(format!(
+            "Insufficient data: need at least {} bars for {} folds, got {}.\n\
+             Quick fix: Reduce the number of folds or use more data.",
+            min_required_bars,
+            folds,
+            bars.len()
+        )));
+    }
+
+    // Calculate windows
+    let windows = calculate_signal_windows(&bars, &wf_config)?;
+
+    // Run backtest on each window
+    let mut window_results = Vec::with_capacity(windows.len());
+
+    for window in &windows {
+        // Extract IS data and signal
+        let is_bars: Vec<Bar> = bars[window.is_start_idx..=window.is_end_idx].to_vec();
+        let is_signal: Vec<f64> = signal_vec[window.is_start_idx..=window.is_end_idx].to_vec();
+
+        // Extract OOS data and signal
+        let oos_bars: Vec<Bar> = bars[window.oos_start_idx..=window.oos_end_idx].to_vec();
+        let oos_signal: Vec<f64> = signal_vec[window.oos_start_idx..=window.oos_end_idx].to_vec();
+
+        // Run IS backtest
+        let is_result = run_signal_backtest(&is_bars, &is_signal, &bt_config).map_err(|e| {
+            pyo3::exceptions::PyRuntimeError::new_err(format!(
+                "In-sample backtest failed for fold {}: {}",
+                window.index + 1,
+                e
+            ))
+        })?;
+
+        // Run OOS backtest
+        let oos_result = run_signal_backtest(&oos_bars, &oos_signal, &bt_config).map_err(|e| {
+            pyo3::exceptions::PyRuntimeError::new_err(format!(
+                "Out-of-sample backtest failed for fold {}: {}",
+                window.index + 1,
+                e
+            ))
+        })?;
+
+        // Calculate efficiency
+        let efficiency = if is_result.total_return_pct.abs() > 0.001 {
+            oos_result.total_return_pct / is_result.total_return_pct
+        } else {
+            0.0
+        };
+
+        // Create WalkForwardWindow for the result
+        let wf_window = WalkForwardWindow {
+            index: window.index,
+            is_start: bars[window.is_start_idx].timestamp,
+            is_end: bars[window.is_end_idx].timestamp,
+            oos_start: bars[window.oos_start_idx].timestamp,
+            oos_end: bars[window.oos_end_idx].timestamp,
+            is_bars: window.is_end_idx - window.is_start_idx + 1,
+            oos_bars: window.oos_end_idx - window.oos_start_idx + 1,
+        };
+
+        window_results.push(WindowResult {
+            window: wf_window,
+            in_sample_result: is_result,
+            out_of_sample_result: oos_result,
+            efficiency_ratio: efficiency,
+            parameter_hash: 0, // Signal-based strategies don't have parameters
+        });
+    }
+
+    // Build WalkForwardResult
+    let wf_result = build_wf_result(wf_config, window_results);
+
+    Ok(super::results::PyValidationResult::from_wf_result(
+        &wf_result,
+    ))
+}
+
+/// Internal window structure with indices.
+struct SignalWindow {
+    index: usize,
+    is_start_idx: usize,
+    is_end_idx: usize,
+    oos_start_idx: usize,
+    oos_end_idx: usize,
+}
+
+/// Calculate window boundaries for signal-based walk-forward.
+fn calculate_signal_windows(
+    bars: &[Bar],
+    config: &WalkForwardConfig,
+) -> PyResult<Vec<SignalWindow>> {
+    let total_bars = bars.len();
+    let window_size = total_bars / config.num_windows;
+    let is_size = (window_size as f64 * config.in_sample_ratio) as usize;
+    let oos_size = window_size - is_size;
+
+    if oos_size < 10 {
+        return Err(pyo3::exceptions::PyValueError::new_err(
+            "Out-of-sample period too small. Reduce folds or increase data.",
+        ));
+    }
+
+    let mut windows = Vec::with_capacity(config.num_windows);
+
+    for i in 0..config.num_windows {
+        let window_start = if config.anchored { 0 } else { i * window_size };
+
+        let window_end = ((i + 1) * window_size).min(total_bars - 1);
+        let is_end_idx = if config.anchored {
+            (window_end - oos_size).max(window_start)
+        } else {
+            (window_start + is_size).min(window_end)
+        };
+
+        let oos_start_idx = (is_end_idx + 1).min(window_end);
+        let oos_end_idx = window_end;
+
+        // Skip if invalid
+        if is_end_idx <= window_start || oos_end_idx <= oos_start_idx {
+            continue;
+        }
+
+        windows.push(SignalWindow {
+            index: i,
+            is_start_idx: window_start,
+            is_end_idx,
+            oos_start_idx,
+            oos_end_idx,
+        });
+    }
+
+    if windows.is_empty() {
+        return Err(pyo3::exceptions::PyValueError::new_err(
+            "Could not create valid walk-forward windows. Try using more data or fewer folds.",
+        ));
+    }
+
+    Ok(windows)
+}
+
+/// Run a backtest with signal array.
+fn run_signal_backtest(
+    bars: &[Bar],
+    signal: &[f64],
+    config: &BacktestConfig,
+) -> Result<BacktestResult, String> {
+    let mut engine = Engine::new(config.clone());
+    engine.add_data("SYMBOL", bars.to_vec());
+
+    let mut strategy = SignalStrategy::new(signal.to_vec());
+    engine
+        .run(&mut strategy, "SYMBOL")
+        .map_err(|e| e.to_string())
+}
+
+/// Build WalkForwardResult from window results.
+fn build_wf_result(config: WalkForwardConfig, windows: Vec<WindowResult>) -> WalkForwardResult {
+    let n = windows.len() as f64;
+
+    let avg_is_return = windows
+        .iter()
+        .map(|w| w.in_sample_result.total_return_pct)
+        .sum::<f64>()
+        / n;
+    let avg_oos_return = windows
+        .iter()
+        .map(|w| w.out_of_sample_result.total_return_pct)
+        .sum::<f64>()
+        / n;
+    let avg_efficiency_ratio = windows
+        .iter()
+        .map(|w| w.efficiency_ratio)
+        .filter(|e| e.is_finite())
+        .sum::<f64>()
+        / n;
+    let avg_is_sharpe = windows
+        .iter()
+        .map(|w| w.in_sample_result.sharpe_ratio)
+        .sum::<f64>()
+        / n;
+    let avg_oos_sharpe = windows
+        .iter()
+        .map(|w| w.out_of_sample_result.sharpe_ratio)
+        .sum::<f64>()
+        / n;
+
+    let oos_sharpe_threshold_met = if avg_is_sharpe.abs() > 0.001 {
+        avg_oos_sharpe >= avg_is_sharpe * 0.6
+    } else {
+        false
+    };
+
+    // Signal strategies always have stability 1.0 (no parameters)
+    let parameter_stability = 1.0;
+
+    let combined_oos_return = windows.iter().fold(1.0, |acc, w| {
+        acc * (1.0 + w.out_of_sample_result.total_return_pct / 100.0)
+    }) - 1.0;
+
+    let total_is_return = windows.iter().fold(1.0, |acc, w| {
+        acc * (1.0 + w.in_sample_result.total_return_pct / 100.0)
+    }) - 1.0;
+
+    let walk_forward_efficiency = if total_is_return.abs() > 0.001 {
+        combined_oos_return / total_is_return
+    } else {
+        0.0
+    };
+
+    WalkForwardResult {
+        config,
+        windows,
+        combined_oos_return: combined_oos_return * 100.0,
+        avg_is_return,
+        avg_oos_return,
+        avg_efficiency_ratio,
+        walk_forward_efficiency,
+        avg_is_sharpe,
+        avg_oos_sharpe,
+        oos_sharpe_threshold_met,
+        parameter_stability,
     }
 }
