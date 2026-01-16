@@ -1079,6 +1079,195 @@ pub fn check_oos_degradation(oos_sharpe: f64, is_sharpe: f64) -> Option<Suspicio
     }
 }
 
+/// Calculate rolling Sharpe ratio over a sliding window.
+///
+/// Returns a vector of Sharpe ratios, one for each window position.
+/// The first `window - 1` elements will be NaN (insufficient data).
+///
+/// # Arguments
+/// * `returns` - Daily returns (as decimals, e.g., 0.01 for 1%)
+/// * `window` - Rolling window size in periods (e.g., 252 for annual)
+/// * `annualization_factor` - Annualization factor (e.g., 252.0 for daily returns)
+///
+/// # Example
+/// ```ignore
+/// use mantis::analytics::rolling_sharpe;
+///
+/// let returns = vec![0.01, -0.005, 0.008, 0.003, -0.002];
+/// let rolling = rolling_sharpe(&returns, 3, 252.0);
+/// ```
+pub fn rolling_sharpe(returns: &[f64], window: usize, annualization_factor: f64) -> Vec<f64> {
+    if window == 0 || returns.is_empty() {
+        return vec![f64::NAN; returns.len()];
+    }
+
+    let mut result = vec![f64::NAN; returns.len()];
+
+    for i in (window - 1)..returns.len() {
+        let window_returns = &returns[(i + 1 - window)..=i];
+        let sharpe = calculate_window_sharpe(window_returns, annualization_factor);
+        result[i] = sharpe;
+    }
+
+    result
+}
+
+/// Calculate Sharpe ratio for a single window of returns.
+fn calculate_window_sharpe(returns: &[f64], annualization_factor: f64) -> f64 {
+    if returns.is_empty() {
+        return f64::NAN;
+    }
+
+    let n = returns.len() as f64;
+    let mean: f64 = returns.iter().sum::<f64>() / n;
+    let variance: f64 = returns.iter().map(|r| (r - mean).powi(2)).sum::<f64>() / n;
+    let std_dev = variance.sqrt();
+
+    if std_dev == 0.0 || std_dev.is_nan() {
+        return if mean > 0.0 {
+            f64::INFINITY
+        } else if mean < 0.0 {
+            f64::NEG_INFINITY
+        } else {
+            f64::NAN
+        };
+    }
+
+    (mean / std_dev) * annualization_factor.sqrt()
+}
+
+/// Calculate rolling drawdown from an equity curve.
+///
+/// Returns a vector of drawdown percentages at each point in time.
+/// Drawdown is calculated as (current_equity - peak_equity) / peak_equity.
+/// Values are negative (or zero at peaks).
+///
+/// # Arguments
+/// * `equity` - Equity values over time (must be positive)
+///
+/// # Example
+/// ```ignore
+/// use mantis::analytics::rolling_drawdown;
+///
+/// let equity = vec![100.0, 105.0, 102.0, 108.0, 103.0];
+/// let drawdowns = rolling_drawdown(&equity);
+/// // Returns: [0.0, 0.0, -0.0286, 0.0, -0.0463]
+/// ```
+pub fn rolling_drawdown(equity: &[f64]) -> Vec<f64> {
+    if equity.is_empty() {
+        return vec![];
+    }
+
+    let mut result = Vec::with_capacity(equity.len());
+    let mut peak = equity[0];
+
+    for &value in equity {
+        if value > peak {
+            peak = value;
+        }
+        let drawdown = if peak > 0.0 {
+            (value - peak) / peak
+        } else {
+            0.0
+        };
+        result.push(drawdown);
+    }
+
+    result
+}
+
+/// Calculate rolling drawdown with a maximum lookback window.
+///
+/// Unlike `rolling_drawdown()`, this function only looks back `window` periods
+/// to find the peak, which can be useful for analyzing recent behavior.
+///
+/// # Arguments
+/// * `equity` - Equity values over time
+/// * `window` - Maximum lookback window to find peak (0 = use all history)
+pub fn rolling_drawdown_windowed(equity: &[f64], window: usize) -> Vec<f64> {
+    if equity.is_empty() {
+        return vec![];
+    }
+
+    if window == 0 {
+        return rolling_drawdown(equity);
+    }
+
+    let mut result = Vec::with_capacity(equity.len());
+
+    for i in 0..equity.len() {
+        let start = if i >= window { i + 1 - window } else { 0 };
+        let window_slice = &equity[start..=i];
+        let peak = window_slice
+            .iter()
+            .fold(f64::NEG_INFINITY, |a, &b| a.max(b));
+        let drawdown = if peak > 0.0 {
+            (equity[i] - peak) / peak
+        } else {
+            0.0
+        };
+        result.push(drawdown);
+    }
+
+    result
+}
+
+/// Calculate rolling maximum drawdown over a sliding window.
+///
+/// Returns the worst (minimum) drawdown observed within each rolling window.
+/// Useful for tracking strategy risk over time.
+///
+/// # Arguments
+/// * `equity` - Equity values over time
+/// * `window` - Rolling window size
+pub fn rolling_max_drawdown(equity: &[f64], window: usize) -> Vec<f64> {
+    if window == 0 || equity.is_empty() {
+        return vec![f64::NAN; equity.len()];
+    }
+
+    let mut result = vec![f64::NAN; equity.len()];
+    let drawdowns = rolling_drawdown(equity);
+
+    for i in (window - 1)..equity.len() {
+        let window_drawdowns = &drawdowns[(i + 1 - window)..=i];
+        let max_dd = window_drawdowns.iter().fold(0.0_f64, |a, &b| a.min(b));
+        result[i] = max_dd;
+    }
+
+    result
+}
+
+/// Calculate rolling volatility from returns.
+///
+/// Returns annualized volatility for each rolling window.
+///
+/// # Arguments
+/// * `returns` - Daily returns (as decimals)
+/// * `window` - Rolling window size in periods
+/// * `annualization_factor` - Annualization factor (e.g., 252.0 for daily)
+pub fn rolling_volatility(returns: &[f64], window: usize, annualization_factor: f64) -> Vec<f64> {
+    if window == 0 || returns.is_empty() {
+        return vec![f64::NAN; returns.len()];
+    }
+
+    let mut result = vec![f64::NAN; returns.len()];
+
+    for i in (window - 1)..returns.len() {
+        let window_returns = &returns[(i + 1 - window)..=i];
+        let n = window_returns.len() as f64;
+        let mean: f64 = window_returns.iter().sum::<f64>() / n;
+        let variance: f64 = window_returns
+            .iter()
+            .map(|r| (r - mean).powi(2))
+            .sum::<f64>()
+            / n;
+        let volatility = variance.sqrt() * annualization_factor.sqrt();
+        result[i] = volatility;
+    }
+
+    result
+}
+
 /// Error function (erf) approximation for normal CDF calculation.
 /// Uses Abramowitz and Stegun approximation (max error: 1.5e-7).
 fn erf(x: f64) -> f64 {
@@ -5337,5 +5526,127 @@ mod tests {
         // Good ratio - no warning
         let warning = check_oos_degradation(1.8, 2.0);
         assert!(warning.is_none());
+    }
+
+    #[test]
+    fn test_rolling_sharpe() {
+        // Simple test case with known values
+        let returns = vec![
+            0.01, 0.02, -0.01, 0.015, 0.005, -0.005, 0.01, 0.008, 0.003, -0.002,
+        ];
+
+        // Rolling window of 5
+        let rolling = rolling_sharpe(&returns, 5, 252.0);
+
+        // First 4 values should be NaN
+        assert!(rolling[0].is_nan());
+        assert!(rolling[1].is_nan());
+        assert!(rolling[2].is_nan());
+        assert!(rolling[3].is_nan());
+
+        // From index 4 onwards, we should have valid values
+        assert!(rolling[4].is_finite());
+        assert!(rolling[9].is_finite());
+
+        // The Sharpe should be positive for the last window (mostly positive returns)
+        assert!(rolling[9] > 0.0);
+    }
+
+    #[test]
+    fn test_rolling_sharpe_empty() {
+        let returns: Vec<f64> = vec![];
+        let rolling = rolling_sharpe(&returns, 5, 252.0);
+        assert!(rolling.is_empty());
+    }
+
+    #[test]
+    fn test_rolling_sharpe_window_zero() {
+        let returns = vec![0.01, 0.02, 0.03];
+        let rolling = rolling_sharpe(&returns, 0, 252.0);
+        assert!(rolling.iter().all(|v| v.is_nan()));
+    }
+
+    #[test]
+    fn test_rolling_drawdown() {
+        let equity = vec![100.0, 105.0, 102.0, 108.0, 103.0, 110.0];
+        let drawdowns = rolling_drawdown(&equity);
+
+        assert_eq!(drawdowns.len(), 6);
+
+        // First value - no drawdown from initial
+        assert!((drawdowns[0] - 0.0).abs() < 0.0001);
+
+        // Second value - new peak, no drawdown
+        assert!((drawdowns[1] - 0.0).abs() < 0.0001);
+
+        // Third value - below peak of 105
+        assert!((drawdowns[2] - (-0.0286)).abs() < 0.001);
+
+        // Fourth value - new peak
+        assert!((drawdowns[3] - 0.0).abs() < 0.0001);
+
+        // Fifth value - below peak of 108
+        assert!((drawdowns[4] - (-0.0463)).abs() < 0.001);
+
+        // Last value - new peak
+        assert!((drawdowns[5] - 0.0).abs() < 0.0001);
+    }
+
+    #[test]
+    fn test_rolling_drawdown_empty() {
+        let equity: Vec<f64> = vec![];
+        let drawdowns = rolling_drawdown(&equity);
+        assert!(drawdowns.is_empty());
+    }
+
+    #[test]
+    fn test_rolling_drawdown_windowed() {
+        let equity = vec![100.0, 105.0, 102.0, 108.0, 103.0, 110.0];
+
+        // Window of 3 - only look back 3 periods for peak
+        let drawdowns = rolling_drawdown_windowed(&equity, 3);
+
+        assert_eq!(drawdowns.len(), 6);
+
+        // With window=3, at index 4 (value=103), the window is [102, 108, 103]
+        // Peak in window is 108, so drawdown is (103-108)/108 = -0.0463
+        assert!((drawdowns[4] - (-0.0463)).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_rolling_max_drawdown() {
+        let equity = vec![100.0, 105.0, 102.0, 100.0, 108.0, 103.0, 110.0];
+        let max_dds = rolling_max_drawdown(&equity, 3);
+
+        assert_eq!(max_dds.len(), 7);
+
+        // First 2 values should be NaN
+        assert!(max_dds[0].is_nan());
+        assert!(max_dds[1].is_nan());
+
+        // From index 2 onwards, should have values
+        assert!(max_dds[2].is_finite());
+
+        // All max drawdown values should be <= 0
+        for i in 2..max_dds.len() {
+            assert!(max_dds[i] <= 0.0);
+        }
+    }
+
+    #[test]
+    fn test_rolling_volatility() {
+        let returns = vec![
+            0.01, 0.02, -0.01, 0.015, 0.005, -0.005, 0.01, 0.008, 0.003, -0.002,
+        ];
+
+        let volatility = rolling_volatility(&returns, 5, 252.0);
+
+        // First 4 should be NaN
+        assert!(volatility[0].is_nan());
+        assert!(volatility[3].is_nan());
+
+        // From index 4 onwards, should have positive volatility
+        assert!(volatility[4] > 0.0);
+        assert!(volatility[9] > 0.0);
     }
 }

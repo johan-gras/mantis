@@ -135,17 +135,17 @@ All 3 previously failing tests now pass:
 
 ## P1 - High Priority (Significant Feature Gaps)
 
-### 5. Rolling Metrics [MISSING - VERIFIED]
-**Status:** Not implemented
+### 5. Rolling Metrics [COMPLETE]
+**Status:** COMPLETE
 
-**Spec requirements:**
-- `rolling_sharpe(window=252)` - Rolling Sharpe ratio
-- `rolling_drawdown()` - Rolling drawdown series
-
-**Current state:** Only aggregate full-period metrics calculated.
-
-**Files affected:**
-- `src/analytics.rs` - Add rolling metric functions
+**Implementation details:**
+- `rolling_sharpe(returns, window, annualization_factor)` - Rolling Sharpe ratio over sliding window
+- `rolling_drawdown(equity)` - Running drawdown from peak equity
+- `rolling_drawdown_windowed(equity, window)` - Drawdown with windowed peak lookback
+- `rolling_max_drawdown(equity, window)` - Worst drawdown in each rolling window
+- `rolling_volatility(returns, window, annualization_factor)` - Rolling annualized volatility
+- All functions exported from lib.rs
+- 8 unit tests added
 
 **Dependencies:** None
 **Effort:** Medium (2-3 days)
@@ -379,7 +379,7 @@ enum Verdict { Robust, Borderline, LikelyOverfit }
 | 2 | Python Bindings (PyO3) | MISSING | P0 | Large | None |
 | 3 | ONNX Module | PARTIAL | P0 | Small | ort crate |
 | 4 | Helpful Error Messages | **COMPLETE** | P0 | Medium | None |
-| 5 | Rolling Metrics | MISSING | P1 | Medium | None |
+| 5 | Rolling Metrics | **COMPLETE** | P1 | Medium | None |
 | 6 | Short Borrow Costs | PARTIAL | P1 | Medium | None |
 | 7 | load_multi/load_dir | **COMPLETE** | P1 | Small | None |
 | 8 | Cost Sensitivity CLI | **COMPLETE** | P1 | Small | None |
@@ -427,6 +427,7 @@ enum Verdict { Robust, Borderline, LikelyOverfit }
 | Statistical Tests | **FIXED** in commit 0b67bff: ADF, autocorrelation, Ljung-Box all passing |
 | **Helpful Error Messages** | **COMPLETE**: New error types (SignalShapeMismatch, InvalidSignal, LookaheadBias, SuspiciousSignal), ErrorHelp struct, validation.rs module with validate_signal(), validate_signal_quick(), validate_signals(), SignalValidationConfig, SignalStats - 11 tests |
 | **load_multi/load_dir** | **COMPLETE**: load_multi() and load_dir() functions, DataManager methods, glob pattern support, 5 unit tests |
+| **Rolling Metrics** | **COMPLETE**: rolling_sharpe(), rolling_drawdown(), rolling_drawdown_windowed(), rolling_max_drawdown(), rolling_volatility() - all exported from lib.rs, 8 unit tests |
 | Codebase Cleanliness | **VERIFIED**: No TODOs/FIXMEs in codebase |
 | ALL TESTS | **PASSING**: 532 tests (0 failures) |
 

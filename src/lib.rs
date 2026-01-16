@@ -128,9 +128,10 @@ pub mod walkforward;
 
 // Re-exports for convenience
 pub use analytics::{
-    BenchmarkMetrics, DrawdownAnalysis, DrawdownPeriod, FactorAttribution, FactorLoadings,
-    FactorModelType, FactorReturns, PerformanceMetrics, ResultFormatter, StatisticalTestResult,
-    StatisticalTests,
+    rolling_drawdown, rolling_drawdown_windowed, rolling_max_drawdown, rolling_sharpe,
+    rolling_volatility, BenchmarkMetrics, DrawdownAnalysis, DrawdownPeriod, FactorAttribution,
+    FactorLoadings, FactorModelType, FactorReturns, PerformanceMetrics, ResultFormatter,
+    StatisticalTestResult, StatisticalTests,
 };
 pub use engine::{BacktestConfig, BacktestResult, Engine};
 pub use error::{BacktestError, ErrorHelp, Result};

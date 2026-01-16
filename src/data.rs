@@ -3477,12 +3477,9 @@ mod tests {
             .unwrap();
 
         // Test load_multi
-        let paths: HashMap<&str, std::path::PathBuf> = [
-            ("AAPL", aapl_path),
-            ("MSFT", msft_path),
-        ]
-        .into_iter()
-        .collect();
+        let paths: HashMap<&str, std::path::PathBuf> = [("AAPL", aapl_path), ("MSFT", msft_path)]
+            .into_iter()
+            .collect();
 
         let result = load_multi(&paths, &DataConfig::default()).unwrap();
         assert_eq!(result.len(), 2);
