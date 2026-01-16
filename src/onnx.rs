@@ -32,7 +32,7 @@ use serde::{Deserialize, Serialize};
 use std::path::Path;
 use std::sync::Once;
 use std::time::Instant;
-use tracing::{debug, warn};
+use tracing::{debug, info, warn};
 
 // Global initialization for ort runtime (done once per process)
 static ORT_INIT: Once = Once::new();
@@ -158,6 +158,29 @@ impl ModelConfig {
     }
 }
 
+/// Information about the model's input/output schema extracted at load time.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ModelSchema {
+    /// Detected input shape from the ONNX model (excluding batch dimension).
+    /// For a model expecting shape [batch, features], this would be `Some(features)`.
+    pub input_size: Option<usize>,
+
+    /// Detected output shape from the ONNX model (excluding batch dimension).
+    pub output_size: Option<usize>,
+
+    /// Name of the input tensor in the ONNX model.
+    pub input_name: Option<String>,
+
+    /// Name of the output tensor in the ONNX model.
+    pub output_name: Option<String>,
+
+    /// Whether the model schema was successfully validated against the config.
+    pub validated: bool,
+
+    /// Validation message (success or error description).
+    pub validation_message: String,
+}
+
 /// Statistics tracked during model inference.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct InferenceStats {
@@ -231,6 +254,9 @@ pub struct OnnxModel {
 
     /// Inference statistics.
     stats: InferenceStats,
+
+    /// Extracted model schema from load-time introspection.
+    schema: ModelSchema,
 }
 
 impl OnnxModel {
@@ -284,11 +310,154 @@ impl OnnxModel {
 
         debug!("ONNX model loaded successfully");
 
+        // Perform load-time schema introspection and validation
+        let schema = Self::extract_and_validate_schema(&session, &config);
+
+        if !schema.validated {
+            warn!(
+                "Model schema validation warning: {}",
+                schema.validation_message
+            );
+        } else {
+            info!(
+                "Model schema validated: input_size={:?}, output_size={:?}",
+                schema.input_size, schema.output_size
+            );
+        }
+
         Ok(Self {
             session,
             config,
             stats: InferenceStats::default(),
+            schema,
         })
+    }
+
+    /// Extract model schema from ONNX session and validate against config.
+    ///
+    /// This performs load-time introspection to detect misconfigurations early
+    /// rather than failing at first inference.
+    fn extract_and_validate_schema(session: &Session, config: &ModelConfig) -> ModelSchema {
+        let mut schema = ModelSchema::default();
+
+        // Extract input information using ort 2.0 API
+        // session.inputs() returns &[Outlet], Outlet has name() and dtype() methods
+        let inputs = session.inputs();
+        if let Some(input) = inputs.first() {
+            schema.input_name = Some(input.name().to_string());
+
+            // Try to extract input dimensions via dtype().tensor_shape()
+            // ONNX models typically have shape like [batch, features] or [batch, seq, features]
+            if let Some(shape) = input.dtype().tensor_shape() {
+                // Shape derefs to &[i64]
+                let dims: &[i64] = shape;
+                // Skip batch dimension (first dim) and get feature dimension
+                if dims.len() >= 2 {
+                    // For shape [batch, features], features is at index 1
+                    if let Some(&feature_dim) = dims.get(1) {
+                        // Only use if it's a known dimension (> 0, not dynamic -1)
+                        if feature_dim > 0 {
+                            schema.input_size = Some(feature_dim as usize);
+                        }
+                    }
+                } else if dims.len() == 1 {
+                    // For shape [features] without explicit batch
+                    if let Some(&feature_dim) = dims.first() {
+                        if feature_dim > 0 {
+                            schema.input_size = Some(feature_dim as usize);
+                        }
+                    }
+                }
+            }
+        }
+
+        // Extract output information using ort 2.0 API
+        // session.outputs() returns &[Outlet]
+        let outputs = session.outputs();
+        if let Some(output) = outputs.first() {
+            schema.output_name = Some(output.name().to_string());
+
+            // Extract output dimensions via dtype().tensor_shape()
+            if let Some(shape) = output.dtype().tensor_shape() {
+                let dims: &[i64] = shape;
+                if dims.len() >= 2 {
+                    // For shape [batch, outputs], outputs is at index 1
+                    if let Some(&output_dim) = dims.get(1) {
+                        if output_dim > 0 {
+                            schema.output_size = Some(output_dim as usize);
+                        }
+                    }
+                } else if dims.len() == 1 {
+                    // For shape [outputs] or [batch]
+                    if let Some(&output_dim) = dims.first() {
+                        if output_dim > 0 {
+                            schema.output_size = Some(output_dim as usize);
+                        }
+                    }
+                }
+            }
+        }
+
+        // Validate config against detected schema
+        let mut warnings = Vec::new();
+
+        // Validate input size if both are known
+        if let Some(detected_input) = schema.input_size {
+            if config.input_size > 0 && config.input_size != detected_input {
+                warnings.push(format!(
+                    "Config input_size ({}) does not match model input size ({})",
+                    config.input_size, detected_input
+                ));
+            }
+        } else if config.input_size == 0 {
+            warnings.push("Unable to detect model input size and config.input_size is 0".to_string());
+        }
+
+        // Validate output size if both are known
+        if let Some(detected_output) = schema.output_size {
+            if config.output_size != detected_output {
+                warnings.push(format!(
+                    "Config output_size ({}) does not match model output size ({})",
+                    config.output_size, detected_output
+                ));
+            }
+        }
+
+        // Validate normalization parameters match input size
+        if config.normalize_inputs {
+            if let Some(ref means) = config.feature_means {
+                if let Some(detected_input) = schema.input_size {
+                    if means.len() != detected_input {
+                        warnings.push(format!(
+                            "feature_means length ({}) does not match model input size ({})",
+                            means.len(),
+                            detected_input
+                        ));
+                    }
+                }
+            }
+            if let Some(ref stds) = config.feature_stds {
+                if let Some(detected_input) = schema.input_size {
+                    if stds.len() != detected_input {
+                        warnings.push(format!(
+                            "feature_stds length ({}) does not match model input size ({})",
+                            stds.len(),
+                            detected_input
+                        ));
+                    }
+                }
+            }
+        }
+
+        if warnings.is_empty() {
+            schema.validated = true;
+            schema.validation_message = "Schema validation passed".to_string();
+        } else {
+            schema.validated = false;
+            schema.validation_message = warnings.join("; ");
+        }
+
+        schema
     }
 
     /// Perform inference on a single feature vector.
@@ -574,6 +743,136 @@ impl OnnxModel {
             self.stats.min_inference_time_us, self.stats.max_inference_time_us
         );
     }
+
+    /// Get the model schema information extracted at load time.
+    ///
+    /// This includes detected input/output sizes and validation status.
+    pub fn schema(&self) -> &ModelSchema {
+        &self.schema
+    }
+
+    /// Check if the model schema was successfully validated at load time.
+    ///
+    /// Returns `true` if the config parameters match the detected model schema.
+    pub fn is_validated(&self) -> bool {
+        self.schema.validated
+    }
+
+    /// Get the detected input size from the ONNX model.
+    ///
+    /// This is extracted from the model at load time, not from the config.
+    /// Returns `None` if the input size could not be determined from the model.
+    pub fn detected_input_size(&self) -> Option<usize> {
+        self.schema.input_size
+    }
+
+    /// Get the detected output size from the ONNX model.
+    ///
+    /// This is extracted from the model at load time, not from the config.
+    /// Returns `None` if the output size could not be determined from the model.
+    pub fn detected_output_size(&self) -> Option<usize> {
+        self.schema.output_size
+    }
+
+    /// Perform a dry-run inference to verify the model is functional.
+    ///
+    /// This runs inference on a zero-filled input vector to ensure the model
+    /// can actually execute. Call this after loading to catch runtime errors
+    /// early rather than during actual backtesting.
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(())` if the dry-run succeeds
+    /// * `Err(...)` if inference fails
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use mantis::onnx::{OnnxModel, ModelConfig};
+    /// let config = ModelConfig::new("my_model", 10);
+    /// let mut model = OnnxModel::from_file("model.onnx", config).unwrap();
+    ///
+    /// // Verify model can execute
+    /// model.validate_with_dry_run().expect("Model dry-run failed");
+    /// ```
+    pub fn validate_with_dry_run(&mut self) -> Result<()> {
+        // Determine input size: use detected size if available, otherwise use config
+        let input_size = self
+            .schema
+            .input_size
+            .unwrap_or(self.config.input_size);
+
+        if input_size == 0 {
+            return Err(anyhow::anyhow!(
+                "Cannot perform dry-run: input size is 0 (set config.input_size or load a model with fixed input shape)"
+            ));
+        }
+
+        // Create a zero-filled input vector
+        let dummy_input: Vec<f64> = vec![0.0; input_size];
+
+        // Run inference (temporarily override input_size in config if needed)
+        let original_input_size = self.config.input_size;
+        if self.config.input_size == 0 {
+            self.config.input_size = input_size;
+        }
+
+        let result = self.predict(&dummy_input);
+
+        // Restore original config
+        self.config.input_size = original_input_size;
+
+        // Reset stats since this was just a validation run
+        self.reset_stats();
+
+        match result {
+            Ok(_) => {
+                debug!("Dry-run validation successful");
+                Ok(())
+            }
+            Err(e) => Err(anyhow::anyhow!("Dry-run validation failed: {}", e)),
+        }
+    }
+
+    /// Load an ONNX model with automatic schema validation and dry-run.
+    ///
+    /// This is a convenience method that loads the model, validates the schema,
+    /// and performs a dry-run inference to ensure the model is functional.
+    ///
+    /// # Arguments
+    ///
+    /// * `path` - Path to the .onnx model file
+    /// * `config` - Model configuration
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(OnnxModel)` if loading and validation succeed
+    /// * `Err(...)` if loading fails, schema is invalid, or dry-run fails
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use mantis::onnx::{OnnxModel, ModelConfig};
+    /// let config = ModelConfig::new("my_model", 10);
+    /// let model = OnnxModel::from_file_validated("model.onnx", config)
+    ///     .expect("Failed to load and validate model");
+    /// ```
+    pub fn from_file_validated(path: impl AsRef<Path>, config: ModelConfig) -> Result<Self> {
+        let mut model = Self::from_file(path, config)?;
+
+        // Check schema validation
+        if !model.schema.validated {
+            return Err(anyhow::anyhow!(
+                "Model schema validation failed: {}",
+                model.schema.validation_message
+            ));
+        }
+
+        // Perform dry-run
+        model.validate_with_dry_run()?;
+
+        Ok(model)
+    }
 }
 
 #[cfg(test)]
@@ -644,4 +943,32 @@ mod tests {
 
     // Note: Full model loading tests require an actual ONNX model file
     // These are better suited for integration tests with sample models
+
+    #[test]
+    fn test_model_schema_defaults() {
+        let schema = ModelSchema::default();
+        assert!(schema.input_size.is_none());
+        assert!(schema.output_size.is_none());
+        assert!(schema.input_name.is_none());
+        assert!(schema.output_name.is_none());
+        assert!(!schema.validated);
+        assert!(schema.validation_message.is_empty());
+    }
+
+    #[test]
+    fn test_model_schema_with_values() {
+        let schema = ModelSchema {
+            input_size: Some(10),
+            output_size: Some(1),
+            input_name: Some("input".to_string()),
+            output_name: Some("output".to_string()),
+            validated: true,
+            validation_message: "Schema validation passed".to_string(),
+        };
+
+        assert_eq!(schema.input_size, Some(10));
+        assert_eq!(schema.output_size, Some(1));
+        assert_eq!(schema.input_name, Some("input".to_string()));
+        assert!(schema.validated);
+    }
 }

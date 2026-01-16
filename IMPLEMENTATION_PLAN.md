@@ -139,21 +139,25 @@ Mantis is a high-performance Rust CLI backtest engine for quantitative trading w
 
 ---
 
-### 2.4 ONNX Integration Gaps - PARTIALLY RESOLVED
+### 2.4 ONNX Integration Gaps - MOSTLY RESOLVED
 
-**Location:** `src/onnx.rs` (620+ lines), `src/python/onnx.rs` (560 lines)
-**Core functionality:** Working - model loading, single inference, **true batch inference**, Python bindings, stats tracking
-**Tests:** 5 unit tests ALL PASSING
+**Location:** `src/onnx.rs` (800+ lines), `src/python/onnx.rs` (560 lines)
+**Core functionality:** Working - model loading, single inference, **true batch inference**, Python bindings, stats tracking, **load-time validation**
+**Tests:** 7 unit tests ALL PASSING
 
 **Resolved (2026-01-16):**
 - [x] Batch inference now uses true batching (single tensor `[batch_size, input_size]`)
 - [x] `predict_batch()` creates a combined tensor and runs single forward pass
 - [x] Fallback to sequential inference if batch fails
 - [x] Proper latency logging for batched inference (per-sample stats)
+- [x] Load-time model schema introspection (extracts input/output shapes from ONNX model)
+- [x] Load-time validation (validates config against detected model schema)
+- [x] `validate_with_dry_run()` method to verify model is functional before backtesting
+- [x] `from_file_validated()` convenience method for loading + validation + dry-run in one step
+- [x] `ModelSchema` struct exposed with `schema()`, `is_validated()`, `detected_input_size()`, `detected_output_size()` accessors
 
 **Remaining gaps:**
-- [ ] No load-time model validation - Only validates at first inference
-- [ ] CUDA support logs warning but isn't functional
+- [ ] CUDA support logs warning but isn't functional (low priority - CPU inference is sufficient)
 - [ ] No ONNX benchmarks to verify < 1ms/bar target (requires sample ONNX model)
 - [ ] No ONNX integration tests (requires sample ONNX model)
 
