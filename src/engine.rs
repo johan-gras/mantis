@@ -67,7 +67,7 @@ impl Default for BacktestConfig {
             initial_capital: 100_000.0,
             cost_model: CostModel::default(),
             margin: MarginConfig::default(),
-            position_size: 1.0,
+            position_size: 0.1,
             allow_short: true,
             fractional_shares: true,
             show_progress: true,

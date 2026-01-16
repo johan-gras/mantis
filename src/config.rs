@@ -80,7 +80,7 @@ fn default_capital() -> f64 {
     100_000.0
 }
 fn default_position_size() -> f64 {
-    1.0
+    0.1
 }
 fn default_true() -> bool {
     true
@@ -90,7 +90,7 @@ impl Default for BacktestSettings {
     fn default() -> Self {
         Self {
             initial_capital: 100_000.0,
-            position_size: 1.0,
+            position_size: 0.1,
             allow_short: true,
             fractional_shares: true,
             execution_price: ExecutionPrice::Open,
@@ -291,7 +291,7 @@ fn default_commission_pct() -> f64 {
     0.1
 }
 fn default_slippage_pct() -> f64 {
-    0.05
+    0.1
 }
 
 impl Default for CostSettings {
@@ -299,7 +299,7 @@ impl Default for CostSettings {
         Self {
             commission_flat: 0.0,
             commission_pct: 0.1,
-            slippage_pct: 0.05,
+            slippage_pct: 0.1,
             min_commission: 0.0,
             max_volume_participation: None,
         }
@@ -456,7 +456,7 @@ impl BacktestFileConfig {
 
 [backtest]
 initial_capital = 100000.0
-position_size = 1.0
+position_size = 0.1
 allow_short = true
 fractional_shares = true
 execution_price = "open"
@@ -497,7 +497,7 @@ slow_period = 30
 [costs]
 commission_flat = 0.0
 commission_pct = 0.1    # 0.1%
-slippage_pct = 0.05     # 0.05%
+slippage_pct = 0.1     # 0.1%
 min_commission = 0.0
 
 [risk]

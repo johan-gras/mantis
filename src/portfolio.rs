@@ -185,7 +185,7 @@ impl Default for CostModel {
         Self {
             commission_flat: 0.0,
             commission_pct: 0.001, // 0.1% (10 bps)
-            slippage_pct: 0.0005,  // 0.05% (5 bps)
+            slippage_pct: 0.001,   // 0.1% (10 bps)
             min_commission: 0.0,
             futures: FuturesCost::default(),
             crypto: CryptoCost::default(),

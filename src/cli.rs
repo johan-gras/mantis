@@ -71,15 +71,15 @@ pub enum Commands {
         capital: f64,
 
         /// Position size as fraction of equity (0.0-1.0)
-        #[arg(short, long, default_value = "1.0")]
+        #[arg(short, long, default_value = "0.1")]
         position_size: f64,
 
         /// Commission percentage (e.g., 0.1 for 0.1%)
         #[arg(long, default_value = "0.1")]
         commission: f64,
 
-        /// Slippage percentage (e.g., 0.05 for 0.05%)
-        #[arg(long, default_value = "0.05")]
+        /// Slippage percentage (e.g., 0.1 for 0.1%)
+        #[arg(long, default_value = "0.1")]
         slippage: f64,
 
         /// Maximum volume participation rate (0.0-1.0, e.g., 0.10 = 10% of bar volume)
@@ -222,15 +222,15 @@ pub enum Commands {
         capital: f64,
 
         /// Position size as fraction of equity (0.0-1.0)
-        #[arg(short, long, default_value = "1.0")]
+        #[arg(short, long, default_value = "0.1")]
         position_size: f64,
 
         /// Commission percentage (e.g., 0.1 for 0.1%)
         #[arg(long, default_value = "0.1")]
         commission: f64,
 
-        /// Slippage percentage (e.g., 0.05 for 0.05%)
-        #[arg(long, default_value = "0.05")]
+        /// Slippage percentage (e.g., 0.1 for 0.1%)
+        #[arg(long, default_value = "0.1")]
         slippage: f64,
 
         /// Maximum volume participation rate (0.0-1.0, e.g., 0.10 = 10% of bar volume)
@@ -445,15 +445,15 @@ pub enum Commands {
         capital: f64,
 
         /// Position size as fraction of equity (0.0-1.0)
-        #[arg(short, long, default_value = "1.0")]
+        #[arg(short, long, default_value = "0.1")]
         position_size: f64,
 
         /// Commission percentage (e.g., 0.1 for 0.1%)
         #[arg(long, default_value = "0.1")]
         commission: f64,
 
-        /// Slippage percentage (e.g., 0.05 for 0.05%)
-        #[arg(long, default_value = "0.05")]
+        /// Slippage percentage (e.g., 0.1 for 0.1%)
+        #[arg(long, default_value = "0.1")]
         slippage: f64,
 
         /// Number of Monte Carlo simulations

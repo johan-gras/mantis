@@ -470,7 +470,7 @@ mod tests {
     fn create_test_config() -> BacktestConfig {
         let mut config = BacktestConfig::default();
         config.cost_model.commission_pct = 0.001; // 0.1%
-        config.cost_model.slippage_pct = 0.0005; // 0.05%
+        config.cost_model.slippage_pct = 0.001; // 0.1%
         config.initial_capital = 100_000.0;
         config.show_progress = false; // Disable progress bar in tests
         config.margin.enabled = false;
@@ -482,7 +482,7 @@ mod tests {
         let base = CostModel {
             commission_flat: 5.0,
             commission_pct: 0.001,
-            slippage_pct: 0.0005,
+            slippage_pct: 0.001,
             min_commission: 1.0,
             futures: FuturesCost {
                 clearing_fee_per_contract: 0.50,
@@ -507,7 +507,7 @@ mod tests {
 
         assert_eq!(scaled.commission_flat, 25.0);
         assert_eq!(scaled.commission_pct, 0.005);
-        assert_eq!(scaled.slippage_pct, 0.0025);
+        assert_eq!(scaled.slippage_pct, 0.005);
         assert_eq!(scaled.min_commission, 5.0);
 
         assert_eq!(scaled.futures.clearing_fee_per_contract, 2.5);

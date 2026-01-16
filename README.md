@@ -301,7 +301,7 @@ Run benchmarks: `cargo bench`
 # backtest.toml
 [backtest]
 initial_capital = 100000.0
-position_size = 1.0
+position_size = 0.1
 allow_short = true
 
 [data]
@@ -317,7 +317,7 @@ slow_period = 30
 
 [costs]
 commission_pct = 0.1
-slippage_pct = 0.05
+slippage_pct = 0.1
 
 [risk]
 stop_loss_type = "percentage"

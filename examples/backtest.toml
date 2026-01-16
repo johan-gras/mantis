@@ -3,7 +3,7 @@
 
 [backtest]
 initial_capital = 100000.0
-position_size = 1.0           # Fraction of equity to use (0.0-1.0)
+position_size = 0.1           # Fraction of equity to use (0.0-1.0)
 allow_short = true
 fractional_shares = true
 # start_date = "2023-01-01"   # Optional date filters
@@ -24,7 +24,7 @@ slow_period = 30
 [costs]
 commission_flat = 0.0         # Flat fee per trade
 commission_pct = 0.1          # Percentage commission (0.1 = 0.1%)
-slippage_pct = 0.05           # Slippage percentage
+slippage_pct = 0.1            # Slippage percentage (0.1 = 0.1%)
 min_commission = 0.0          # Minimum commission per trade
 
 # Risk management
