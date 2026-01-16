@@ -151,10 +151,14 @@ impl From<&Trade> for PyTrade {
             let notional = trade.quantity * trade.entry_price;
             let pnl = match trade.side {
                 crate::types::Side::Buy => {
-                    (exit_price - trade.entry_price) * trade.quantity - trade.commission - trade.slippage
+                    (exit_price - trade.entry_price) * trade.quantity
+                        - trade.commission
+                        - trade.slippage
                 }
                 crate::types::Side::Sell => {
-                    (trade.entry_price - exit_price) * trade.quantity - trade.commission - trade.slippage
+                    (trade.entry_price - exit_price) * trade.quantity
+                        - trade.commission
+                        - trade.slippage
                 }
             };
             let pnl_pct = if notional > 0.0 { pnl / notional } else { 0.0 };

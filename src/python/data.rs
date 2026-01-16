@@ -145,11 +145,7 @@ pub fn load_multi(
 ///     ['AAPL', 'GOOGL', 'MSFT']
 #[pyfunction]
 #[pyo3(signature = (pattern, date_format=None))]
-pub fn load_dir(
-    py: Python<'_>,
-    pattern: &str,
-    date_format: Option<&str>,
-) -> PyResult<PyObject> {
+pub fn load_dir(py: Python<'_>, pattern: &str, date_format: Option<&str>) -> PyResult<PyObject> {
     let result = PyDict::new_bound(py);
 
     // Use glob to find matching files

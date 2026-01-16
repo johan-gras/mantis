@@ -126,6 +126,7 @@ pub mod streaming;
 pub mod timeframe;
 pub mod types;
 pub mod validation;
+pub mod viz;
 pub mod walkforward;
 
 // Python bindings (only compiled with --features python)
@@ -179,4 +180,11 @@ pub use risk::{
 pub use sensitivity::{
     Cliff, HeatmapData, ParameterRange, ParameterResult, Plateau, SensitivityAnalysis,
     SensitivityConfig, SensitivityMetric, SensitivitySummary,
+};
+
+// Visualization utilities
+pub use viz::{
+    compare_strategies, equity_sparkline, export_heatmap_svg, heatmap_to_ascii, heatmap_to_svg,
+    result_summary, result_with_verdict, sparkline, sparkline_with_config, walkforward_fold_chart,
+    walkforward_summary, HeatmapSvgConfig, SparklineConfig, StrategyComparison,
 };

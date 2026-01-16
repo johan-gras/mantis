@@ -117,7 +117,10 @@ impl PyBacktestResult {
             self.total_return * 100.0
         ));
         s.push_str(&format!("Sharpe Ratio    {:.2}\n", self.sharpe));
-        s.push_str(&format!("Max Drawdown    {:.1}%\n", self.max_drawdown * 100.0));
+        s.push_str(&format!(
+            "Max Drawdown    {:.1}%\n",
+            self.max_drawdown * 100.0
+        ));
         s.push_str(&format!(
             "Win Rate        {:.1}%    ({} wins / {} losses)\n",
             self.win_rate * 100.0,

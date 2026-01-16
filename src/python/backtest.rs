@@ -439,9 +439,7 @@ fn extract_bars(py: Python<'_>, data: &PyObject) -> PyResult<Vec<Bar>> {
         } else {
             load_csv(&path, &config)
         }
-        .map_err(|e| {
-            pyo3::exceptions::PyIOError::new_err(format!("Failed to load data: {}", e))
-        })?;
+        .map_err(|e| pyo3::exceptions::PyIOError::new_err(format!("Failed to load data: {}", e)))?;
 
         return Ok(bars);
     }
