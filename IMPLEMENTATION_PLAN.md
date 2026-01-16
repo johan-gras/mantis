@@ -269,7 +269,7 @@ The following spec items have been identified as not fully implemented:
 
 **Performance Metrics (`specs/performance-metrics.md`):**
 - ~~Zero trades returns 0.0 instead of NaN for trade-based metrics~~ **FIXED 2026-01-16** (now returns NaN)
-- Zero volatility Sharpe returns 0.0 instead of inf
+- ~~Zero volatility Sharpe returns 0.0 instead of inf~~ **FIXED 2026-01-16** (now returns inf/−inf/NaN per spec)
 - Risk-free rate not subtracted in Sharpe/Sortino calculation (assumes 0)
 
 **Position Sizing (`specs/position-sizing.md`):**
@@ -389,6 +389,25 @@ The following fixes were implemented to bring behavior in line with specificatio
 - Warning is logged with details about the skipped trade
 - Allows backtests to continue even when position sizing exceeds available capital
 - **File modified:** `src/engine.rs` lines 720-733
+
+---
+
+### Zero Volatility Sharpe/Sortino Fix (2026-01-16)
+
+Per spec (`specs/performance-metrics.md`), fixed edge case handling in `calculate_sharpe()` and `calculate_sortino()`:
+- Empty returns → NaN (not 0.0)
+- Zero volatility with positive mean → inf (not 0.0)
+- Zero volatility with negative mean → −inf
+- Zero volatility with zero mean → NaN
+- No downside returns with positive mean → inf (Sortino)
+
+Also fixed NaN handling in walk-forward analysis parameter optimization to prevent panics when comparing NaN metrics.
+
+**Files modified:**
+- `src/engine.rs`: Updated `calculate_sharpe()` and `calculate_sortino()` with edge case handling
+- `src/walkforward.rs`: Handle NaN in metric comparison
+
+**Tests added:** 7 unit tests for Sharpe/Sortino edge cases in `src/engine.rs`
 
 ---
 
