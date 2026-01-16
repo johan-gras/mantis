@@ -1016,9 +1016,15 @@ impl Engine {
 }
 
 /// Calculate Sharpe ratio from returns.
+///
+/// Per spec (performance-metrics.md line 215):
+/// - Empty returns → NaN
+/// - Zero volatility with positive mean → inf
+/// - Zero volatility with negative mean → -inf
+/// - Zero volatility with zero mean → NaN
 fn calculate_sharpe(returns: &[f64], annualization_factor: f64) -> f64 {
     if returns.is_empty() {
-        return 0.0;
+        return f64::NAN;
     }
 
     let mean: f64 = returns.iter().sum::<f64>() / returns.len() as f64;
@@ -1026,17 +1032,30 @@ fn calculate_sharpe(returns: &[f64], annualization_factor: f64) -> f64 {
         returns.iter().map(|r| (r - mean).powi(2)).sum::<f64>() / returns.len() as f64;
     let std_dev = variance.sqrt();
 
-    if std_dev == 0.0 {
-        return 0.0;
+    if std_dev == 0.0 || std_dev.is_nan() {
+        return if mean > 0.0 {
+            f64::INFINITY
+        } else if mean < 0.0 {
+            f64::NEG_INFINITY
+        } else {
+            f64::NAN
+        };
     }
 
     (mean / std_dev) * annualization_factor.sqrt()
 }
 
 /// Calculate Sortino ratio from returns.
+///
+/// Per spec (performance-metrics.md):
+/// - Empty returns → NaN
+/// - No downside returns with positive mean → inf
+/// - No downside returns with non-positive mean → NaN
+/// - Zero downside deviation with positive mean → inf
+/// - Zero downside deviation with non-positive mean → NaN
 fn calculate_sortino(returns: &[f64], annualization_factor: f64) -> f64 {
     if returns.is_empty() {
-        return 0.0;
+        return f64::NAN;
     }
 
     let mean: f64 = returns.iter().sum::<f64>() / returns.len() as f64;
@@ -1045,15 +1064,16 @@ fn calculate_sortino(returns: &[f64], annualization_factor: f64) -> f64 {
     let downside_returns: Vec<f64> = returns.iter().filter(|&&r| r < 0.0).copied().collect();
 
     if downside_returns.is_empty() {
-        return if mean > 0.0 { f64::INFINITY } else { 0.0 };
+        // No downside returns: if mean is positive, infinite Sortino; otherwise undefined
+        return if mean > 0.0 { f64::INFINITY } else { f64::NAN };
     }
 
     let downside_variance: f64 =
         downside_returns.iter().map(|r| r.powi(2)).sum::<f64>() / downside_returns.len() as f64;
     let downside_dev = downside_variance.sqrt();
 
-    if downside_dev == 0.0 {
-        return 0.0;
+    if downside_dev == 0.0 || downside_dev.is_nan() {
+        return if mean > 0.0 { f64::INFINITY } else { f64::NAN };
     }
 
     (mean / downside_dev) * annualization_factor.sqrt()
@@ -1170,9 +1190,63 @@ mod tests {
     }
 
     #[test]
+    fn test_sharpe_empty_returns() {
+        let returns: Vec<f64> = vec![];
+        let sharpe = calculate_sharpe(&returns, 252.0);
+        assert!(sharpe.is_nan());
+    }
+
+    #[test]
+    fn test_sharpe_zero_volatility_positive_mean() {
+        // All identical positive returns = zero volatility with positive mean → inf
+        let returns = vec![0.01, 0.01, 0.01, 0.01];
+        let sharpe = calculate_sharpe(&returns, 252.0);
+        assert!(sharpe.is_infinite() && sharpe > 0.0);
+    }
+
+    #[test]
+    fn test_sharpe_zero_volatility_negative_mean() {
+        // All identical negative returns = zero volatility with negative mean → -inf
+        let returns = vec![-0.01, -0.01, -0.01, -0.01];
+        let sharpe = calculate_sharpe(&returns, 252.0);
+        assert!(sharpe.is_infinite() && sharpe < 0.0);
+    }
+
+    #[test]
+    fn test_sharpe_zero_volatility_zero_mean() {
+        // All zero returns = zero volatility with zero mean → NaN
+        let returns = vec![0.0, 0.0, 0.0, 0.0];
+        let sharpe = calculate_sharpe(&returns, 252.0);
+        assert!(sharpe.is_nan());
+    }
+
+    #[test]
     fn test_sortino_calculation() {
         let returns = vec![0.01, -0.02, 0.015, 0.005, -0.01, 0.02];
         let sortino = calculate_sortino(&returns, 252.0);
         assert!(sortino.is_finite());
+    }
+
+    #[test]
+    fn test_sortino_empty_returns() {
+        let returns: Vec<f64> = vec![];
+        let sortino = calculate_sortino(&returns, 252.0);
+        assert!(sortino.is_nan());
+    }
+
+    #[test]
+    fn test_sortino_no_downside_positive_mean() {
+        // All positive returns = no downside returns with positive mean → inf
+        let returns = vec![0.01, 0.02, 0.015, 0.005];
+        let sortino = calculate_sortino(&returns, 252.0);
+        assert!(sortino.is_infinite() && sortino > 0.0);
+    }
+
+    #[test]
+    fn test_sortino_no_downside_zero_mean() {
+        // All zero returns = no downside returns with zero mean → NaN
+        let returns = vec![0.0, 0.0, 0.0, 0.0];
+        let sortino = calculate_sortino(&returns, 252.0);
+        assert!(sortino.is_nan());
     }
 }

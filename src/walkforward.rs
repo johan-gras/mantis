@@ -344,13 +344,16 @@ impl WalkForwardAnalyzer {
                 continue;
             }
 
-            // Find best in-sample parameters
+            // Find best in-sample parameters (handle NaN values from edge cases)
             let (best_param, best_is_result) = is_results
                 .into_iter()
                 .max_by(|(_, a), (_, b)| {
                     let metric_a = metric.extract(a);
                     let metric_b = metric.extract(b);
-                    metric_a.partial_cmp(&metric_b).unwrap()
+                    // Handle NaN: treat NaN as less than any finite value
+                    metric_a
+                        .partial_cmp(&metric_b)
+                        .unwrap_or(std::cmp::Ordering::Less)
                 })
                 .unwrap();
 
