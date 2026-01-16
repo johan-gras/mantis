@@ -178,6 +178,14 @@ pub struct CostModel {
     /// None means no limit. Prevents unrealistic large order fills in illiquid markets.
     #[serde(default)]
     pub max_volume_participation: Option<f64>,
+    /// Annualized borrow cost rate for short equity positions (e.g., 0.03 = 3%).
+    /// Charged daily as: position_value × (borrow_cost_rate / 252).
+    #[serde(default = "default_borrow_cost_rate")]
+    pub borrow_cost_rate: f64,
+}
+
+fn default_borrow_cost_rate() -> f64 {
+    0.03 // 3% annual borrow rate
 }
 
 impl Default for CostModel {
@@ -192,6 +200,7 @@ impl Default for CostModel {
             forex: ForexCost::default(),
             market_impact: MarketImpactModel::default(),
             max_volume_participation: None, // No limit by default
+            borrow_cost_rate: default_borrow_cost_rate(), // 3% annual
         }
     }
 }
@@ -209,6 +218,7 @@ impl CostModel {
             forex: ForexCost::default(),
             market_impact: MarketImpactModel::None,
             max_volume_participation: None,
+            borrow_cost_rate: 0.0, // No borrow costs in zero model
         }
     }
 
@@ -769,6 +779,62 @@ impl Portfolio {
             }
         }
         self.last_equity_timestamp = Some(timestamp);
+    }
+
+    /// Accrue borrow costs for short equity positions.
+    /// Formula: position_value × (borrow_cost_rate / 252) for each trading day.
+    fn accrue_borrow_costs(&mut self, timestamp: DateTime<Utc>) {
+        // Skip if no borrow cost rate configured
+        if self.cost_model.borrow_cost_rate <= 0.0 {
+            return;
+        }
+
+        // Need a previous timestamp to calculate time elapsed
+        let Some(prev) = self.last_equity_timestamp else {
+            return;
+        };
+
+        let seconds = (timestamp - prev).num_seconds().max(0) as f64;
+        if seconds <= 0.0 {
+            return;
+        }
+
+        // Convert seconds to trading days (252 trading days per year)
+        let trading_days = seconds / 86_400.0;
+        let daily_rate = self.cost_model.borrow_cost_rate / 252.0;
+
+        // Calculate total borrow cost for all short positions
+        let mut total_borrow_cost = 0.0;
+
+        for (symbol, pos) in &self.positions {
+            // Only charge borrow costs for short (sell side) positions
+            if pos.side != Side::Sell {
+                continue;
+            }
+
+            // Only charge for equity positions, not futures (which have their own carrying costs)
+            let asset = self.asset_config_for(symbol);
+            if matches!(asset.asset_class, AssetClass::Future { .. }) {
+                continue;
+            }
+
+            // Calculate position value using last known price or entry price
+            let price = self.cached_price_or_entry(symbol, pos.avg_entry_price);
+            let notional = price * pos.quantity * asset.notional_multiplier();
+
+            // Borrow cost = position_value × daily_rate × days
+            let borrow_cost = notional.abs() * daily_rate * trading_days;
+            total_borrow_cost += borrow_cost;
+        }
+
+        // Deduct total borrow costs from cash
+        if total_borrow_cost > 0.0 {
+            self.cash -= total_borrow_cost;
+            debug!(
+                "Accrued borrow costs: ${:.4} for {:.2} days",
+                total_borrow_cost, trading_days
+            );
+        }
     }
 
     fn compute_margin_state(&self, override_price: Option<(&str, f64)>) -> MarginState {
@@ -1646,6 +1712,9 @@ impl Portfolio {
         timestamp: DateTime<Utc>,
         prices: &HashMap<String, f64>,
     ) -> Result<()> {
+        // Accrue borrow costs before margin interest (uses last_equity_timestamp)
+        self.accrue_borrow_costs(timestamp);
+        // Accrue margin interest and update last_equity_timestamp
         self.accrue_margin_interest(timestamp);
         self.update_price_cache(prices);
         let positions_value: f64 = self
@@ -2408,5 +2477,190 @@ mod tests {
 
         assert!(trade.is_some());
         assert_eq!(portfolio.position("AAPL").unwrap().quantity, 50.0);
+    }
+
+    #[test]
+    fn test_borrow_cost_for_short_position() {
+        // Test that borrow costs are accrued for short positions
+        let mut cost_model = CostModel::zero();
+        cost_model.borrow_cost_rate = 0.03; // 3% annual
+        let mut portfolio = Portfolio::with_cost_model(100000.0, cost_model);
+        portfolio.set_margin_config(MarginConfig {
+            enabled: false, // Disable margin to simplify
+            ..MarginConfig::default()
+        });
+        portfolio.allow_short = true;
+
+        let bar = Bar::new(
+            Utc.with_ymd_and_hms(2024, 1, 1, 9, 30, 0).unwrap(),
+            100.0,
+            105.0,
+            98.0,
+            102.0,
+            10000.0,
+        );
+
+        // Short 100 shares at $100 = $10,000 position value
+        let order = Order::market("AAPL", Side::Sell, 100.0, bar.timestamp);
+        portfolio.execute_order(&order, &bar).unwrap();
+
+        let initial_cash = portfolio.cash;
+
+        // Record equity one day later
+        let next_day = bar.timestamp + chrono::Duration::days(1);
+        let mut prices = HashMap::new();
+        prices.insert("AAPL".to_string(), 100.0);
+
+        // First record_equity to initialize last_equity_timestamp
+        portfolio.record_equity(bar.timestamp, &prices).unwrap();
+
+        // Second record_equity (one day later) should accrue borrow cost
+        portfolio.record_equity(next_day, &prices).unwrap();
+
+        // Expected borrow cost for 1 day: $10,000 × 0.03 / 252 = ~$1.19
+        let expected_borrow_cost = 10000.0 * 0.03 / 252.0;
+        let actual_cash_reduction = initial_cash - portfolio.cash;
+
+        // Use a small tolerance for floating point comparison
+        assert!(
+            (actual_cash_reduction - expected_borrow_cost).abs() < 0.01,
+            "Expected borrow cost ~${:.4}, got ${:.4}",
+            expected_borrow_cost,
+            actual_cash_reduction
+        );
+    }
+
+    #[test]
+    fn test_borrow_cost_not_charged_for_long_position() {
+        // Test that borrow costs are NOT accrued for long positions
+        let mut cost_model = CostModel::zero();
+        cost_model.borrow_cost_rate = 0.03; // 3% annual
+        let mut portfolio = Portfolio::with_cost_model(100000.0, cost_model);
+        portfolio.set_margin_config(MarginConfig {
+            enabled: false,
+            ..MarginConfig::default()
+        });
+
+        let bar = Bar::new(
+            Utc.with_ymd_and_hms(2024, 1, 1, 9, 30, 0).unwrap(),
+            100.0,
+            105.0,
+            98.0,
+            102.0,
+            10000.0,
+        );
+
+        // Buy 100 shares at $100 = $10,000 position value
+        let order = Order::market("AAPL", Side::Buy, 100.0, bar.timestamp);
+        portfolio.execute_order(&order, &bar).unwrap();
+
+        let cash_after_buy = portfolio.cash;
+
+        // Record equity one day later
+        let next_day = bar.timestamp + chrono::Duration::days(1);
+        let mut prices = HashMap::new();
+        prices.insert("AAPL".to_string(), 100.0);
+
+        // Initialize timestamp
+        portfolio.record_equity(bar.timestamp, &prices).unwrap();
+
+        // Record equity next day
+        portfolio.record_equity(next_day, &prices).unwrap();
+
+        // Cash should remain unchanged (no borrow cost for long positions)
+        assert!(
+            (portfolio.cash - cash_after_buy).abs() < 0.001,
+            "Long position should not incur borrow costs"
+        );
+    }
+
+    #[test]
+    fn test_borrow_cost_zero_rate_no_charge() {
+        // Test that zero borrow rate results in no charges
+        let mut cost_model = CostModel::zero();
+        cost_model.borrow_cost_rate = 0.0; // No borrow cost
+        let mut portfolio = Portfolio::with_cost_model(100000.0, cost_model);
+        portfolio.set_margin_config(MarginConfig {
+            enabled: false,
+            ..MarginConfig::default()
+        });
+        portfolio.allow_short = true;
+
+        let bar = Bar::new(
+            Utc.with_ymd_and_hms(2024, 1, 1, 9, 30, 0).unwrap(),
+            100.0,
+            105.0,
+            98.0,
+            102.0,
+            10000.0,
+        );
+
+        // Short 100 shares
+        let order = Order::market("AAPL", Side::Sell, 100.0, bar.timestamp);
+        portfolio.execute_order(&order, &bar).unwrap();
+
+        let initial_cash = portfolio.cash;
+
+        let next_day = bar.timestamp + chrono::Duration::days(1);
+        let mut prices = HashMap::new();
+        prices.insert("AAPL".to_string(), 100.0);
+
+        portfolio.record_equity(bar.timestamp, &prices).unwrap();
+        portfolio.record_equity(next_day, &prices).unwrap();
+
+        // Cash should remain unchanged with 0% borrow rate
+        assert!(
+            (portfolio.cash - initial_cash).abs() < 0.001,
+            "Zero borrow rate should not charge any cost"
+        );
+    }
+
+    #[test]
+    fn test_borrow_cost_multiple_days() {
+        // Test that borrow costs accumulate correctly over multiple days
+        let mut cost_model = CostModel::zero();
+        cost_model.borrow_cost_rate = 0.03; // 3% annual
+        let mut portfolio = Portfolio::with_cost_model(100000.0, cost_model);
+        portfolio.set_margin_config(MarginConfig {
+            enabled: false,
+            ..MarginConfig::default()
+        });
+        portfolio.allow_short = true;
+
+        let bar = Bar::new(
+            Utc.with_ymd_and_hms(2024, 1, 1, 9, 30, 0).unwrap(),
+            100.0,
+            105.0,
+            98.0,
+            102.0,
+            10000.0,
+        );
+
+        // Short 100 shares at $100
+        let order = Order::market("AAPL", Side::Sell, 100.0, bar.timestamp);
+        portfolio.execute_order(&order, &bar).unwrap();
+
+        let initial_cash = portfolio.cash;
+
+        let mut prices = HashMap::new();
+        prices.insert("AAPL".to_string(), 100.0);
+
+        // Initialize
+        portfolio.record_equity(bar.timestamp, &prices).unwrap();
+
+        // Advance 10 days
+        let day_10 = bar.timestamp + chrono::Duration::days(10);
+        portfolio.record_equity(day_10, &prices).unwrap();
+
+        // Expected cost for 10 days: $10,000 × 0.03 / 252 × 10 = ~$11.90
+        let expected_borrow_cost = 10000.0 * 0.03 / 252.0 * 10.0;
+        let actual_cash_reduction = initial_cash - portfolio.cash;
+
+        assert!(
+            (actual_cash_reduction - expected_borrow_cost).abs() < 0.1,
+            "Expected borrow cost ~${:.2}, got ${:.2}",
+            expected_borrow_cost,
+            actual_cash_reduction
+        );
     }
 }

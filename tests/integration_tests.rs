@@ -172,6 +172,7 @@ fn test_backtest_with_costs() {
         forex: ForexCost::default(),
         market_impact: MarketImpactModel::None,
         max_volume_participation: None,
+        borrow_cost_rate: 0.03, // 3% annual
     };
 
     let config = BacktestConfig {

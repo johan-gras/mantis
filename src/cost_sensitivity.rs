@@ -434,6 +434,9 @@ fn scale_cost_model(base: &CostModel, multiplier: f64) -> CostModel {
     scaled.forex.swap_long *= multiplier;
     scaled.forex.swap_short *= multiplier;
 
+    // Scale borrow cost for shorts
+    scaled.borrow_cost_rate *= multiplier;
+
     scaled
 }
 
@@ -501,6 +504,7 @@ mod tests {
             },
             market_impact: MarketImpactModel::Linear { coefficient: 0.01 },
             max_volume_participation: None,
+            borrow_cost_rate: 0.03, // 3% annual
         };
 
         let scaled = scale_cost_model(&base, 5.0);

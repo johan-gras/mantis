@@ -285,6 +285,13 @@ pub struct CostSettings {
     /// Maximum volume participation rate (0.0-1.0, e.g., 0.10 = 10% of bar volume).
     #[serde(default)]
     pub max_volume_participation: Option<f64>,
+    /// Annual borrow cost for short positions (e.g., 3.0 for 3%).
+    #[serde(default = "default_borrow_cost")]
+    pub borrow_cost: f64,
+}
+
+fn default_borrow_cost() -> f64 {
+    3.0 // 3% annual borrow rate
 }
 
 fn default_commission_pct() -> f64 {
@@ -302,6 +309,7 @@ impl Default for CostSettings {
             slippage_pct: 0.1,
             min_commission: 0.0,
             max_volume_participation: None,
+            borrow_cost: default_borrow_cost(), // 3% annual
         }
     }
 }
@@ -379,6 +387,7 @@ impl BacktestFileConfig {
             forex: ForexCost::default(),
             market_impact: MarketImpactModel::None,
             max_volume_participation: self.costs.max_volume_participation,
+            borrow_cost_rate: self.costs.borrow_cost / 100.0, // Convert percentage to decimal
         };
 
         let stop_loss = match self.risk.stop_loss_type.to_lowercase().as_str() {
@@ -500,6 +509,7 @@ commission_flat = 0.0
 commission_pct = 0.1    # 0.1%
 slippage_pct = 0.1     # 0.1%
 min_commission = 0.0
+borrow_cost = 3.0      # 3% annual borrow cost for short positions
 
 [risk]
 stop_loss_type = "percentage"

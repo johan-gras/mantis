@@ -113,6 +113,10 @@ pub enum Commands {
         #[arg(long, default_value = "0.1")]
         slippage: f64,
 
+        /// Annual borrow cost for short positions (e.g., 3.0 for 3%)
+        #[arg(long, default_value = "3.0")]
+        borrow_cost: f64,
+
         /// Maximum volume participation rate (0.0-1.0, e.g., 0.10 = 10% of bar volume)
         #[arg(long)]
         max_volume_participation: Option<f64>,
@@ -263,6 +267,10 @@ pub enum Commands {
         /// Slippage percentage (e.g., 0.1 for 0.1%)
         #[arg(long, default_value = "0.1")]
         slippage: f64,
+
+        /// Annual borrow cost for short positions (e.g., 3.0 for 3%)
+        #[arg(long, default_value = "3.0")]
+        borrow_cost: f64,
 
         /// Maximum volume participation rate (0.0-1.0, e.g., 0.10 = 10% of bar volume)
         #[arg(long)]
@@ -952,6 +960,7 @@ pub fn run() -> Result<()> {
             atr_period,
             commission,
             slippage,
+            borrow_cost,
             execution_price,
             fill_probability,
             limit_order_ttl,
@@ -997,6 +1006,7 @@ pub fn run() -> Result<()> {
             *atr_period,
             *commission,
             *slippage,
+            *borrow_cost,
             *max_volume_participation,
             *execution_price,
             *fill_probability,
@@ -1038,6 +1048,7 @@ pub fn run() -> Result<()> {
             position_size,
             commission,
             slippage,
+            borrow_cost,
             max_volume_participation,
             execution_price,
             fill_probability,
@@ -1067,6 +1078,7 @@ pub fn run() -> Result<()> {
             *position_size,
             *commission,
             *slippage,
+            *borrow_cost,
             *max_volume_participation,
             *execution_price,
             *fill_probability,
@@ -1252,6 +1264,7 @@ fn run_backtest(
     atr_period: usize,
     commission: f64,
     slippage: f64,
+    borrow_cost: f64,
     max_volume_participation: Option<f64>,
     execution_price: ExecutionPriceArg,
     fill_probability: f64,
@@ -1326,6 +1339,7 @@ fn run_backtest(
     let cost_model = CostModel {
         commission_pct: commission / 100.0,
         slippage_pct: slippage / 100.0,
+        borrow_cost_rate: borrow_cost / 100.0,
         max_volume_participation,
         ..Default::default()
     };
@@ -1418,6 +1432,7 @@ fn run_walk_forward(
     position_size: f64,
     commission: f64,
     slippage: f64,
+    borrow_cost: f64,
     max_volume_participation: Option<f64>,
     execution_price: ExecutionPriceArg,
     fill_probability: f64,
@@ -1466,6 +1481,7 @@ fn run_walk_forward(
     let cost_model = CostModel {
         commission_pct: commission / 100.0,
         slippage_pct: slippage / 100.0,
+        borrow_cost_rate: borrow_cost / 100.0,
         max_volume_participation,
         ..Default::default()
     };

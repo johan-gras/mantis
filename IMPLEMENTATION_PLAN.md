@@ -152,20 +152,18 @@ All 3 previously failing tests now pass:
 
 ---
 
-### 6. Short Borrow Costs [PARTIAL - VERIFIED]
-**Status:** Only margin interest exists (no dedicated borrow fees)
+### 6. Short Borrow Costs [COMPLETE]
+**Status:** COMPLETE
 
-**Current state:**
-- Margin interest charged on negative cash balance (config.rs:127, 3% default)
-- NO dedicated stock borrow fees
-- NO locate fee fields
-- NO hard-to-borrow list support
-
-**Spec requirement:** Short positions should incur borrow costs (typically 5-50+ bps annually).
-
-**Files affected:**
-- `src/portfolio.rs` - Add `BorrowCost` struct to CostModel
-- `src/config.rs` - Add borrow cost configuration
+**Implementation details:**
+- `borrow_cost_rate` field added to `CostModel` in portfolio.rs (default 3% annual)
+- `accrue_borrow_costs()` method charges daily: position_value × (borrow_rate / 252)
+- Only charges for short equity positions (futures have their own cost model)
+- Called from `record_equity()` before margin interest accrual
+- `borrow_cost` field added to `CostSettings` in config.rs
+- CLI flags `--borrow-cost` added to Run and WalkForward commands
+- `scale_cost_model()` updated to scale borrow costs in cost sensitivity analysis
+- 4 unit tests added (test_borrow_cost_for_short_position, test_borrow_cost_not_charged_for_long_position, test_borrow_cost_zero_rate_no_charge, test_borrow_cost_multiple_days)
 
 **Dependencies:** None
 **Effort:** Medium (2-3 days)
@@ -388,7 +386,7 @@ enum Verdict { Robust, Borderline, LikelyOverfit }
 | 3 | ONNX Module | PARTIAL | P0 | Small | ort crate |
 | 4 | Helpful Error Messages | **COMPLETE** | P0 | Medium | None |
 | 5 | Rolling Metrics | **COMPLETE** | P1 | Medium | None |
-| 6 | Short Borrow Costs | PARTIAL | P1 | Medium | None |
+| 6 | Short Borrow Costs | **COMPLETE** | P1 | Medium | None |
 | 7 | load_multi/load_dir | **COMPLETE** | P1 | Small | None |
 | 8 | Cost Sensitivity CLI | **COMPLETE** | P1 | Small | None |
 | 9 | Position Sizing Integration | **COMPLETE** | P1 | Medium | None |
@@ -436,6 +434,7 @@ enum Verdict { Robust, Borderline, LikelyOverfit }
 | **Helpful Error Messages** | **COMPLETE**: New error types (SignalShapeMismatch, InvalidSignal, LookaheadBias, SuspiciousSignal), ErrorHelp struct, validation.rs module with validate_signal(), validate_signal_quick(), validate_signals(), SignalValidationConfig, SignalStats - 11 tests |
 | **load_multi/load_dir** | **COMPLETE**: load_multi() and load_dir() functions, DataManager methods, glob pattern support, 5 unit tests |
 | **Rolling Metrics** | **COMPLETE**: rolling_sharpe(), rolling_drawdown(), rolling_drawdown_windowed(), rolling_max_drawdown(), rolling_volatility() - all exported from lib.rs, 8 unit tests |
+| **Short Borrow Costs** | **COMPLETE**: borrow_cost_rate field in CostModel (3% default), accrue_borrow_costs() method, charges daily for short equity positions, CostSettings integration, CLI --borrow-cost flag, scale_cost_model() support, 4 unit tests |
 | **Position Sizing Integration** | **COMPLETE**: PositionSizingMethod enum (PercentOfEquity, FixedDollar, VolatilityTargeted, SignalScaled, RiskBased), new PositionSizer methods (size_fixed_dollar, size_by_signal, size_by_volatility_target, size_percent_of_equity), BacktestConfig integration, signal_to_order() updated with ATR/volatility calculations, CLI options (--sizing-method, --fixed-dollar, --target-vol, --vol-lookback, --risk-per-trade, --stop-atr, --atr-period), 7 unit tests |
 | Codebase Cleanliness | **VERIFIED**: No TODOs/FIXMEs in codebase |
 | ALL TESTS | **PASSING**: 551 tests (0 failures) |
@@ -449,8 +448,8 @@ enum Verdict { Robust, Borderline, LikelyOverfit }
 2. ~~Helpful Error Messages (#4)~~ - **COMPLETE**
 
 **Phase 1 - Core Features (Weeks 2-3):**
-3. Rolling Metrics (#5) - 2-3 days
-4. Short Borrow Costs (#6) - 2-3 days
+3. ~~Rolling Metrics (#5)~~ - **COMPLETE**
+4. ~~Short Borrow Costs (#6)~~ - **COMPLETE**
 5. ~~load_multi/load_dir (#7)~~ - **COMPLETE**
 6. ~~Cost Sensitivity CLI (#8)~~ - **COMPLETE**
 
