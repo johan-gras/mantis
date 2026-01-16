@@ -1,6 +1,13 @@
 //! Market regime detection for ML/DL workflows.
 //!
-//! This module provides regime detection methods to identify market states:
+//! **DEPRECATION NOTICE**: This module is deprecated and will be removed in a future version.
+//! Regime detection should be computed externally in your ML pipeline using pandas, polars,
+//! or specialized libraries. Consider:
+//! - hmmlearn for Hidden Markov Models
+//! - sklearn for clustering-based regime detection
+//! - ta-lib for technical analysis indicators
+//!
+//! This module provides regime detection methods (deprecated) to identify market states:
 //!
 //! - **Trend regimes**: Trending vs ranging markets
 //! - **Volatility regimes**: High vs low volatility periods
@@ -9,7 +16,7 @@
 //!
 //! Regime labels can be used as features for ML models or to filter strategy signals.
 //!
-//! # Example
+//! # Example (deprecated)
 //!
 //! ```ignore
 //! use mantis::regime::{RegimeDetector, RegimeConfig};

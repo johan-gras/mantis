@@ -1,10 +1,18 @@
 //! Streaming/incremental indicator calculations.
 //!
-//! This module provides streaming versions of technical indicators that
+//! **DEPRECATION NOTICE**: This module is deprecated and will be removed in a future version.
+//! Streaming indicators are not needed for research backtesting. Mantis focuses on
+//! signal-based backtesting where you compute features externally and pass them to
+//! the backtest. For streaming indicators, use:
+//! - pandas-ta for technical analysis
+//! - ta-lib for comprehensive indicator library
+//! - polars for efficient streaming computation
+//!
+//! This module provides streaming versions of technical indicators (deprecated) that
 //! maintain state and update incrementally with each new data point,
 //! avoiding recalculation of the entire history.
 //!
-//! # Example
+//! # Example (deprecated)
 //!
 //! ```ignore
 //! use mantis::streaming::{StreamingSMA, StreamingRSI, StreamingIndicator};

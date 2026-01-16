@@ -1,10 +1,22 @@
 //! Export utilities for backtest results.
 //!
 //! This module provides various export formats for:
-//! - Equity curves (CSV, JSON)
-//! - Trade logs (CSV, JSON)
-//! - Performance reports (HTML, Markdown)
-//! - Feature data for ML pipelines
+//! - Equity curves (CSV, JSON, Parquet)
+//! - Trade logs (CSV, JSON, Parquet)
+//! - Performance reports (HTML)
+//!
+//! **DEPRECATION NOTICE**: The following export formats are deprecated:
+//! - NPY export (`export_features_npy`) - Use Parquet instead, which is faster and more portable
+//! - Markdown reports (`export_report_md`) - Use HTML reports instead, which support interactivity
+//!
+//! # Supported Formats
+//!
+//! | Format | Use Case |
+//! |--------|----------|
+//! | CSV | Universal compatibility, human-readable |
+//! | JSON | API integration, structured data |
+//! | Parquet | ML pipelines, columnar efficiency |
+//! | HTML | Interactive reports with charts |
 //!
 //! # Example
 //!
@@ -15,10 +27,10 @@
 //! let result: BacktestResult = /* from backtest */;
 //! let exporter = Exporter::new(result);
 //!
-//! // Export to multiple formats
+//! // Export to supported formats
 //! exporter.export_equity_csv("equity.csv")?;
 //! exporter.export_trades_csv("trades.csv")?;
-//! exporter.export_report_md("report.md")?;
+//! exporter.export_report_html("report.html")?;  // Preferred over deprecated Markdown
 //! ```
 
 use crate::engine::BacktestResult;

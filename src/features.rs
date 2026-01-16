@@ -1,10 +1,21 @@
 //! Feature extraction for machine learning workflows.
 //!
-//! This module provides utilities for extracting features from price data
+//! **DEPRECATION NOTICE**: This module is deprecated and will be removed in a future version.
+//! Users should compute features externally in pandas or polars. Mantis is a backtester that
+//! takes signals as input - feature engineering belongs in your data pipeline. Use:
+//! - pandas-ta for comprehensive feature extraction
+//! - ta-lib for technical indicators
+//! - polars for efficient feature computation
+//! - tsfresh for automated time series feature extraction
+//!
+//! Note: Basic indicators (SMA, EMA, RSI, MACD, ATR) remain available in `mantis::data`
+//! for convenience, but the comprehensive feature extraction library is deprecated.
+//!
+//! This module provides utilities (deprecated) for extracting features from price data
 //! that can be used for training machine learning models, particularly
 //! deep learning models for time series forecasting.
 //!
-//! # Feature Categories
+//! # Feature Categories (deprecated)
 //!
 //! - **Price features**: Returns, log returns, price ratios
 //! - **Technical features**: RSI, MACD, Bollinger Bands, etc.
@@ -12,9 +23,9 @@
 //! - **Volatility features**: ATR, realized volatility
 //! - **Time features**: Day of week, month, etc.
 //!
-//! # Example
+//! # Example (deprecated)
 //!
-//! ```
+//! ```ignore
 //! use mantis::features::{FeatureExtractor, FeatureConfig};
 //! use mantis::data::load_csv;
 //!

@@ -1,9 +1,22 @@
 //! Multi-asset portfolio backtesting support.
 //!
-//! This module enables backtesting strategies across multiple assets simultaneously,
-//! supporting portfolio-level risk management and rebalancing.
+//! **DEPRECATION NOTICE**: This module is deprecated and will be removed in a future version.
+//! Mantis is a backtester, not a portfolio optimizer. For portfolio optimization, use dedicated
+//! tools like:
+//! - PyPortfolioOpt for Python-based optimization
+//! - Riskfolio-Lib for advanced portfolio analytics
+//! - cvxpy for convex optimization problems
 //!
-//! # Example
+//! The following features are deprecated:
+//! - Black-Litterman model
+//! - Mean-Variance optimization
+//! - Hierarchical Risk Parity (HRP)
+//! - Risk Parity strategies
+//!
+//! For multi-symbol backtesting without optimization, use the `mt.backtest(data, signals)`
+//! API where `data` and `signals` are dictionaries keyed by symbol.
+//!
+//! # Example (deprecated)
 //!
 //! ```ignore
 //! use mantis::multi_asset::{MultiAssetEngine, PortfolioStrategy, AllocationSignal};

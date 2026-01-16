@@ -1,6 +1,16 @@
 //! Experiment tracking and storage for reproducible research.
 //!
-//! This module provides persistent storage and querying of backtest experiments using SQLite.
+//! **DEPRECATION NOTICE**: This module is deprecated and will be removed in a future version.
+//! Use external experiment tracking tools that integrate with your ML workflow:
+//! - MLflow for experiment tracking and model registry
+//! - Weights & Biases (W&B) for experiment management
+//! - DVC for data and experiment versioning
+//! - Sacred for experiment configuration and logging
+//!
+//! These tools provide better integration with training pipelines, visualization dashboards,
+//! and collaboration features that are outside the scope of a backtester.
+//!
+//! This module provides (deprecated) persistent storage and querying of backtest experiments using SQLite.
 //! Each experiment is automatically logged with metadata, performance metrics, and configuration.
 
 use crate::engine::BacktestResult;

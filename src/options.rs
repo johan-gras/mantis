@@ -1,6 +1,13 @@
 //! Options pricing models and Greeks calculations.
 //!
-//! This module provides:
+//! **DEPRECATION NOTICE**: This module is deprecated and will be removed in a future version.
+//! Options pricing is outside the core thesis of Mantis as a backtester. For options pricing
+//! and Greeks calculation, use dedicated libraries like:
+//! - QuantLib (Python: QuantLib-Python)
+//! - py_vollib for Black-Scholes and Greeks
+//! - mibian for basic options pricing
+//!
+//! This module provides (deprecated):
 //! - Black-Scholes pricing for European options
 //! - Binomial tree pricing for American options (Cox-Ross-Rubinstein model)
 //! - Greeks calculation (Delta, Gamma, Theta, Vega, Rho)

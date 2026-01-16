@@ -62,6 +62,8 @@ from mantis._mantis import (
     sweep as _sweep_raw,
     SweepResult as _SweepResult,
     SweepResultItem,
+    # Monte Carlo
+    MonteCarloResult as _MonteCarloResult,
 )
 
 # Try to import ONNX classes (only available when built with --features onnx)
@@ -313,9 +315,62 @@ class BacktestResult:
         folds: int = 12,
         train_ratio: float = 0.75,
         anchored: bool = True,
+        trials: int = 1,
     ) -> "ValidationResult":
-        rust_validation = self._rust.validate(folds, train_ratio, anchored)
+        """
+        Run walk-forward validation on the backtest.
+
+        Args:
+            folds: Number of walk-forward folds (default: 12)
+            train_ratio: Fraction of each window used for in-sample (default: 0.75)
+            anchored: Whether to use anchored (expanding) windows (default: True)
+            trials: Number of parameter combinations tested during strategy development.
+                Used to calculate deflated Sharpe ratio adjusted for multiple testing bias.
+                Default 1 (no adjustment).
+
+        Returns:
+            ValidationResult with IS/OOS metrics, verdict, and deflated_sharpe
+            adjusted for the number of trials.
+        """
+        rust_validation = self._rust.validate(folds, train_ratio, anchored, trials)
         return ValidationResult(rust_validation)
+
+    def monte_carlo(
+        self,
+        n_simulations: int = 1000,
+        seed: Optional[int] = None,
+    ) -> "MonteCarloResult":
+        """
+        Run Monte Carlo simulation to assess strategy robustness.
+
+        Monte Carlo resamples trades with replacement to estimate confidence
+        intervals and probability of positive returns. This helps answer:
+        "If market conditions had been slightly different, how might results vary?"
+
+        Args:
+            n_simulations: Number of simulation iterations (default: 1000).
+                More simulations give tighter confidence intervals.
+            seed: Random seed for reproducibility (optional).
+
+        Returns:
+            MonteCarloResult with confidence intervals, distributions, and
+            robustness metrics including:
+            - 95% CI for returns, Sharpe, and max drawdown
+            - Probability of positive return and Sharpe
+            - Value at Risk (VaR) and Conditional VaR (CVaR)
+            - Robustness score and verdict
+
+        Raises:
+            ValueError: If the backtest has no trades (Monte Carlo requires
+                trade history to resample).
+
+        Example:
+            >>> results = mt.backtest(data, signal)
+            >>> mc = results.monte_carlo(n_simulations=1000)
+            >>> print(f"95% CI for return: [{mc.return_ci[0]:.2%}, {mc.return_ci[1]:.2%}]")
+            >>> print(f"Probability of positive return: {mc.prob_positive_return:.1%}")
+        """
+        return self._rust.monte_carlo(n_simulations, seed)
 
     def plot(
         self,
@@ -1176,6 +1231,20 @@ class ValidationResult:
     def parameter_stability(self) -> float:
         return self._rust.parameter_stability
 
+    @property
+    def deflated_sharpe(self) -> float:
+        """Deflated Sharpe ratio adjusted for multiple testing bias.
+
+        Uses the trials parameter from validate() to account for the number
+        of parameter combinations tested during strategy development.
+        """
+        return self._rust.deflated_sharpe
+
+    @property
+    def trials(self) -> int:
+        """Number of parameter combinations tested (from trials parameter)."""
+        return self._rust.trials
+
     def fold_details(self) -> List[FoldDetail]:
         return self._rust.fold_details()
 
@@ -1187,6 +1256,78 @@ class ValidationResult:
 
     def report(self, path: str) -> None:
         return self._rust.report(path)
+
+    def warnings(self) -> List[str]:
+        """Get warning messages for suspicious validation metrics.
+
+        Returns:
+            List of warning strings for metrics that may indicate overfitting
+            or other issues.
+        """
+        return self._rust.warnings()
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Export validation results as a dictionary.
+
+        Returns:
+            Dictionary containing all validation metrics and fold details.
+        """
+        return {
+            "folds": self.folds,
+            "is_sharpe": self.is_sharpe,
+            "oos_sharpe": self.oos_sharpe,
+            "oos_degradation": self.oos_degradation,
+            "verdict": self.verdict,
+            "avg_is_return": self.avg_is_return,
+            "avg_oos_return": self.avg_oos_return,
+            "efficiency_ratio": self.efficiency_ratio,
+            "parameter_stability": self.parameter_stability,
+            "deflated_sharpe": self.deflated_sharpe,
+            "trials": self.trials,
+            "fold_details": [
+                {
+                    "fold": f.fold,
+                    "is_sharpe": f.is_sharpe,
+                    "oos_sharpe": f.oos_sharpe,
+                    "is_return": f.is_return,
+                    "oos_return": f.oos_return,
+                    "efficiency": f.efficiency,
+                    "is_bars": f.is_bars,
+                    "oos_bars": f.oos_bars,
+                }
+                for f in self.fold_details()
+            ],
+            "warnings": self.warnings(),
+        }
+
+    def to_dataframe(self) -> Any:
+        """Export fold details as a pandas DataFrame.
+
+        Returns:
+            pandas DataFrame with one row per fold containing IS/OOS metrics.
+
+        Raises:
+            ImportError: If pandas is not installed.
+        """
+        try:
+            import pandas as pd
+        except ImportError:
+            raise ImportError("pandas is required for to_dataframe(). Install with: pip install pandas")
+
+        folds = self.fold_details()
+        return pd.DataFrame([
+            {
+                "fold": f.fold,
+                "is_sharpe": f.is_sharpe,
+                "oos_sharpe": f.oos_sharpe,
+                "is_return": f.is_return,
+                "oos_return": f.oos_return,
+                "efficiency": f.efficiency,
+                "is_bars": f.is_bars,
+                "oos_bars": f.oos_bars,
+            }
+            for f in folds
+        ])
 
     def plot(self, width: int = 20) -> Any:
         """
@@ -1432,17 +1573,38 @@ def validate(
     slippage: float = 0.001,
     size: float = 0.10,
     cash: float = 100_000.0,
+    trials: int = 1,
 ) -> ValidationResult:
     """
     Run walk-forward validation on a signal-based strategy.
 
-    See module documentation for full details.
+    Args:
+        data: OHLCV data (dict with numpy arrays, pandas DataFrame, or polars DataFrame)
+        signal: Trading signal array (1=long, -1=short, 0=flat)
+        folds: Number of walk-forward folds (default: 12)
+        in_sample_ratio: Fraction of each window used for in-sample (default: 0.75)
+        anchored: Whether to use anchored (expanding) windows (default: True)
+        config: Optional BacktestConfig for detailed settings
+        commission: Commission per trade as decimal (default: 0.001 = 0.1%)
+        slippage: Slippage per trade as decimal (default: 0.001 = 0.1%)
+        size: Position size as fraction of equity (default: 0.10 = 10%)
+        cash: Starting capital (default: 100,000)
+        trials: Number of parameter combinations tested during strategy development.
+            Used to calculate deflated Sharpe ratio adjusted for multiple testing bias.
+            Default 1 (no adjustment).
+
+    Returns:
+        ValidationResult with IS/OOS metrics, verdict, and deflated_sharpe
+        adjusted for the number of trials.
     """
     rust_result = _validate_raw(
         data, signal, folds, in_sample_ratio, anchored,
-        config, commission, slippage, size, cash
+        config, commission, slippage, size, cash, trials
     )
     return ValidationResult(rust_result)
+
+# Alias MonteCarloResult for public export
+MonteCarloResult = _MonteCarloResult
 
 # Re-export all public API
 __all__ = [
@@ -1458,6 +1620,7 @@ __all__ = [
     "validate",
     "BacktestResult",
     "ValidationResult",
+    "MonteCarloResult",
     "FoldDetail",
     "Bar",
     "BacktestConfig",
