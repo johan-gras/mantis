@@ -218,17 +218,30 @@ Mantis is a high-performance Rust CLI backtest engine for quantitative trading w
 
 ---
 
-### 3.3 Documentation Code Testing
+### 3.3 ~~Documentation Code Testing~~ RESOLVED
 
-| Issue | No automated validation that code examples in docs actually run |
-|-------|----------------------------------------------------------------|
-| **Location** | `docs/` markdown files |
+| Status | ✅ FIXED - Documentation testing script implemented |
+|--------|---------------------------------------------------|
+| **Fix Date** | 2026-01-16 |
 
-**Required per specs/documentation.md:**
-- [ ] Script `scripts/test_doc_examples.py` to extract and run Python code blocks
-- [ ] CI step to validate all examples
+**Implemented per specs/documentation.md:**
+- [x] Script `scripts/test_doc_examples.py` to extract and run Python code blocks
+- [x] Smart detection of pseudo-code, API signatures, and context-dependent examples
+- [x] Support for `# skip-test` marker to skip specific blocks
+- [ ] CI step to validate all examples (add to ci.yml workflow)
 
-**Risk:** Examples could drift from actual API
+**Usage:**
+```bash
+python3 scripts/test_doc_examples.py              # Test all docs
+python3 scripts/test_doc_examples.py --verbose    # Detailed output
+python3 scripts/test_doc_examples.py --file path  # Test single file
+```
+
+**Note:** Many examples are context-dependent (use variables defined in text) and are skipped. The script handles:
+- Function/class signatures (API docs)
+- Jupyter magic commands
+- Incomplete snippets and pseudo-code
+- Examples requiring mantis to be installed
 
 ---
 
