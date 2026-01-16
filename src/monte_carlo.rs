@@ -39,6 +39,13 @@ pub struct MonteCarloConfig {
     pub resample_trades: bool,
     /// Whether to shuffle returns (destroy autocorrelation).
     pub shuffle_returns: bool,
+    /// Whether to use block bootstrap (preserves serial correlation).
+    /// When true, resamples blocks of returns instead of individual returns.
+    /// Block size = floor(sqrt(n)) where n is number of observations.
+    pub block_bootstrap: bool,
+    /// Optional custom block size for block bootstrap.
+    /// If None, uses floor(sqrt(n)).
+    pub block_size: Option<usize>,
 }
 
 impl Default for MonteCarloConfig {
@@ -49,6 +56,8 @@ impl Default for MonteCarloConfig {
             seed: None,
             resample_trades: true,
             shuffle_returns: false,
+            block_bootstrap: true, // Default to block bootstrap per spec
+            block_size: None,      // Auto-calculate as floor(sqrt(n))
         }
     }
 }
@@ -86,6 +95,29 @@ impl MonteCarloConfig {
     /// Set random seed for reproducibility.
     pub fn with_seed(mut self, seed: u64) -> Self {
         self.seed = Some(seed);
+        self
+    }
+
+    /// Enable or disable block bootstrap.
+    /// When enabled, resamples blocks of returns to preserve serial correlation.
+    pub fn with_block_bootstrap(mut self, enabled: bool) -> Self {
+        self.block_bootstrap = enabled;
+        self
+    }
+
+    /// Set custom block size for block bootstrap.
+    /// If not set, uses floor(sqrt(n)) where n is number of observations.
+    pub fn with_block_size(mut self, size: usize) -> Self {
+        self.block_size = Some(size);
+        self
+    }
+
+    /// Use simple bootstrap (individual resampling, no blocks).
+    /// This is the traditional bootstrap that may break serial correlation.
+    pub fn simple_bootstrap(mut self) -> Self {
+        self.block_bootstrap = false;
+        self.resample_trades = true;
+        self.shuffle_returns = false;
         self
     }
 }
@@ -278,6 +310,48 @@ impl MonteCarloSimulator {
         }
     }
 
+    /// Calculate block size for block bootstrap.
+    /// Per spec: block_size = floor(sqrt(n))
+    fn calculate_block_size(&self, n: usize) -> usize {
+        if let Some(size) = self.config.block_size {
+            return size.max(1).min(n);
+        }
+        // Default: floor(sqrt(n))
+        let block_size = (n as f64).sqrt().floor() as usize;
+        block_size.max(1) // Ensure at least 1
+    }
+
+    /// Perform block bootstrap resampling.
+    /// Divides returns into blocks, samples blocks with replacement,
+    /// and concatenates to form simulated return series.
+    fn block_bootstrap_resample(&mut self, returns: &[f64]) -> Vec<f64> {
+        let n = returns.len();
+        let block_size = self.calculate_block_size(n);
+
+        // Calculate number of blocks needed to reach target length
+        let num_blocks_needed = n.div_ceil(block_size);
+        let num_possible_blocks = n.saturating_sub(block_size - 1).max(1);
+
+        let mut result = Vec::with_capacity(n);
+
+        for _ in 0..num_blocks_needed {
+            // Randomly select a block start position
+            let start = self.random_index(num_possible_blocks);
+            let end = (start + block_size).min(n);
+
+            // Add the block to the result
+            result.extend_from_slice(&returns[start..end]);
+
+            if result.len() >= n {
+                break;
+            }
+        }
+
+        // Trim to exact target length
+        result.truncate(n);
+        result
+    }
+
     /// Run Monte Carlo simulation from backtest result.
     pub fn simulate_from_result(&mut self, result: &BacktestResult) -> MonteCarloResult {
         let closed_trades: Vec<&Trade> = result.trades.iter().filter(|t| t.is_closed()).collect();
@@ -312,10 +386,16 @@ impl MonteCarloSimulator {
         // Run simulations
         for _ in 0..self.config.num_simulations {
             let sim_returns = if self.config.resample_trades {
-                // Bootstrap: resample with replacement
-                (0..num_trades)
-                    .map(|_| returns[self.random_index(num_trades)])
-                    .collect::<Vec<f64>>()
+                if self.config.block_bootstrap {
+                    // Block bootstrap: resample blocks to preserve serial correlation
+                    // Per spec: block_size = floor(sqrt(n))
+                    self.block_bootstrap_resample(returns)
+                } else {
+                    // Simple bootstrap: resample individual returns with replacement
+                    (0..num_trades)
+                        .map(|_| returns[self.random_index(num_trades)])
+                        .collect::<Vec<f64>>()
+                }
             } else if self.config.shuffle_returns {
                 // Shuffle: permute returns
                 let mut shuffled = returns.to_vec();
@@ -738,5 +818,138 @@ mod tests {
             assert!(lower <= median);
             assert!(median <= upper);
         }
+    }
+
+    #[test]
+    fn test_block_bootstrap_block_size_calculation() {
+        // Test block size calculation: floor(sqrt(n))
+        let returns: Vec<f64> = (0..100).map(|i| (i as f64) * 0.1).collect();
+
+        let config = MonteCarloConfig::default()
+            .with_seed(42)
+            .with_simulations(10);
+        let simulator = MonteCarloSimulator::new(config);
+
+        // For n=100, block_size should be floor(sqrt(100)) = 10
+        let block_size = simulator.calculate_block_size(returns.len());
+        assert_eq!(block_size, 10);
+
+        // For n=2520 (10 years daily), block_size should be floor(sqrt(2520)) = 50
+        let returns_2520: Vec<f64> = (0..2520).map(|i| (i as f64) * 0.01).collect();
+        let block_size_2520 = simulator.calculate_block_size(returns_2520.len());
+        assert_eq!(block_size_2520, 50);
+    }
+
+    #[test]
+    fn test_block_bootstrap_preserves_length() {
+        let returns: Vec<f64> = (0..100).map(|i| (i as f64) * 0.1).collect();
+
+        let config = MonteCarloConfig::default()
+            .with_seed(42)
+            .with_simulations(10);
+        let mut simulator = MonteCarloSimulator::new(config);
+
+        // Block bootstrap should return same length as input
+        let resampled = simulator.block_bootstrap_resample(&returns);
+        assert_eq!(resampled.len(), returns.len());
+    }
+
+    #[test]
+    fn test_block_bootstrap_vs_simple_bootstrap() {
+        // Block bootstrap should preserve more serial correlation
+        let returns: Vec<f64> = vec![
+            1.0, 1.1, 1.2, 1.3, 1.4, // Trend up
+            -0.5, -0.6, -0.7, -0.8, -0.9, // Trend down
+            0.2, 0.3, 0.4, 0.5, 0.6, // Trend up
+            -0.1, -0.2, -0.3, -0.4, -0.5, // Trend down
+        ];
+
+        // Run both block and simple bootstrap
+        let config_block = MonteCarloConfig::default()
+            .with_seed(42)
+            .with_simulations(500)
+            .with_block_bootstrap(true);
+
+        let config_simple = MonteCarloConfig::default()
+            .with_seed(42)
+            .with_simulations(500)
+            .simple_bootstrap();
+
+        let mut sim_block = MonteCarloSimulator::new(config_block);
+        let mut sim_simple = MonteCarloSimulator::new(config_simple);
+
+        let result_block = sim_block.simulate_from_returns(&returns, 100_000.0);
+        let result_simple = sim_simple.simulate_from_returns(&returns, 100_000.0);
+
+        // Both should produce valid results
+        assert!(result_block.mean_return.is_finite());
+        assert!(result_simple.mean_return.is_finite());
+        assert_eq!(result_block.num_trades, 20);
+        assert_eq!(result_simple.num_trades, 20);
+    }
+
+    #[test]
+    fn test_block_bootstrap_custom_block_size() {
+        let returns: Vec<f64> = (0..100).map(|i| (i as f64) * 0.1).collect();
+
+        let config = MonteCarloConfig::default()
+            .with_seed(42)
+            .with_simulations(10)
+            .with_block_size(20);
+        let mut simulator = MonteCarloSimulator::new(config);
+
+        // Custom block size should override default
+        let block_size = simulator.calculate_block_size(returns.len());
+        assert_eq!(block_size, 20);
+
+        // Resample should work with custom block size
+        let resampled = simulator.block_bootstrap_resample(&returns);
+        assert_eq!(resampled.len(), returns.len());
+    }
+
+    #[test]
+    fn test_block_bootstrap_small_data() {
+        // Edge case: very small data should still work
+        let returns: Vec<f64> = vec![1.0, -0.5, 2.0];
+
+        let config = MonteCarloConfig::default()
+            .with_seed(42)
+            .with_simulations(100)
+            .with_block_bootstrap(true);
+        let mut simulator = MonteCarloSimulator::new(config);
+
+        let result = simulator.simulate_from_returns(&returns, 100_000.0);
+
+        // Should complete without panic
+        assert!(result.mean_return.is_finite());
+        assert_eq!(result.num_trades, 3);
+    }
+
+    #[test]
+    fn test_block_bootstrap_reproducibility() {
+        let returns: Vec<f64> = vec![
+            1.0, -0.5, 2.0, -1.0, 1.5, -0.8, 2.2, -1.2, 1.8, -0.6,
+        ];
+
+        // Same seed should produce same results with block bootstrap
+        let config1 = MonteCarloConfig::default()
+            .with_seed(12345)
+            .with_simulations(100)
+            .with_block_bootstrap(true);
+
+        let config2 = MonteCarloConfig::default()
+            .with_seed(12345)
+            .with_simulations(100)
+            .with_block_bootstrap(true);
+
+        let mut sim1 = MonteCarloSimulator::new(config1);
+        let mut sim2 = MonteCarloSimulator::new(config2);
+
+        let result1 = sim1.simulate_from_returns(&returns, 100_000.0);
+        let result2 = sim2.simulate_from_returns(&returns, 100_000.0);
+
+        // Same seed should produce same results
+        assert!((result1.mean_return - result2.mean_return).abs() < 0.001);
+        assert!((result1.median_return - result2.median_return).abs() < 0.001);
     }
 }

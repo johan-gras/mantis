@@ -2269,6 +2269,8 @@ fn run_monte_carlo(
         seed,
         resample_trades,
         shuffle_returns,
+        block_bootstrap: true, // Default to block bootstrap per spec
+        block_size: None,      // Auto-calculate as floor(sqrt(n))
     };
 
     let mut simulator = MonteCarloSimulator::new(mc_config);

@@ -567,6 +567,8 @@ fn test_monte_carlo_simulation() {
             seed: Some(42),
             resample_trades: true,
             shuffle_returns: false,
+            block_bootstrap: true,
+            block_size: None,
         };
 
         let mut simulator = MonteCarloSimulator::new(mc_config);

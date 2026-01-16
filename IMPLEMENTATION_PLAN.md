@@ -199,19 +199,23 @@ Mantis is a high-performance Rust CLI backtest engine for quantitative trading w
 
 ---
 
-### 3.2 Monte Carlo Uses Trade Bootstrap, Not Block Bootstrap
+### 3.2 ~~Monte Carlo Uses Trade Bootstrap, Not Block Bootstrap~~ RESOLVED
 
-| Issue | Spec calls for block bootstrap of daily returns |
-|-------|------------------------------------------------|
-| **Verified** | `src/monte_carlo.rs` lines 314-315 resample trades one-by-one with replacement |
-| **Searched** | No "block_size" or "block_bootstrap" found in codebase |
+| Status | ✅ FIXED - Block bootstrap implemented |
+|--------|---------------------------------------|
+| **Fix Date** | 2026-01-16 |
 
-**Spec says (validation-robustness.md lines 233-256):**
-- Block size = floor(sqrt(n)) to preserve serial correlation
-- Divide returns into blocks, sample blocks with replacement, concatenate
+**Implementation:**
+- [x] Added `block_bootstrap` field to `MonteCarloConfig` (default: true)
+- [x] Added `block_size` field to `MonteCarloConfig` (default: None, uses floor(sqrt(n)))
+- [x] Implemented `block_bootstrap_resample()` method that divides returns into blocks, samples blocks with replacement, and concatenates to form simulated return series
+- [x] Added builder methods: `with_block_bootstrap()`, `with_block_size()`, `simple_bootstrap()`
+- [x] Added 6 new tests for block bootstrap functionality
+- [x] Updated benchmarks and integration tests
 
-**Assessment:** Trade-level bootstrap is acceptable for strategy analysis but differs from spec
-**Impact:** May not preserve return autocorrelation in simulations
+**Spec compliance (validation-robustness.md lines 233-256):**
+- Block size = floor(sqrt(n)) to preserve serial correlation ✅
+- Divide returns into blocks, sample blocks with replacement, concatenate ✅
 
 ---
 
@@ -361,7 +365,7 @@ The following are **100% implemented** per specifications:
 
 ### Validation & Robustness (specs/validation-robustness.md)
 - [x] Walk-forward analysis (anchored/rolling windows, 12 folds default)
-- [x] Monte Carlo simulation (trade bootstrap, 1000 simulations default) - Note: uses trade bootstrap not block
+- [x] Monte Carlo simulation (block bootstrap default, 1000 simulations) - Block bootstrap preserves serial correlation per spec
 - [x] Overfitting detection (DSR, PSR)
 - [x] Parameter sensitivity analysis
 - [x] Auto-warnings (Sharpe > 3, win rate > 80%, trades < 30, OOS/IS < 0.60)
@@ -528,7 +532,7 @@ The following are **100% implemented** per specifications:
 | ~~Missing spec-required benchmarks~~ | ~~Can't verify performance claims~~ | ~~Medium~~ RESOLVED (2026-01-16) |
 | No ONNX benchmarks | Can't verify <1ms/bar target | Medium |
 | ~~No legal disclaimers~~ | ~~Regulatory risk~~ | ~~Low~~ RESOLVED |
-| Monte Carlo bootstrap method | Differs from spec (trade vs block) | Medium |
+| ~~Monte Carlo bootstrap method~~ | ~~Differs from spec (trade vs block)~~ | ~~Medium~~ RESOLVED (2026-01-16) |
 | ONNX batch inference sequential | 10-100x slower than true batching | Medium |
 
 ---

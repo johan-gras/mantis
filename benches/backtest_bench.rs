@@ -229,7 +229,7 @@ fn bench_monte_carlo(c: &mut Criterion) {
     // Create some test returns
     let returns: Vec<f64> = (0..100).map(|i| (i as f64 * 0.1).sin() * 5.0).collect();
 
-    // Monte Carlo with 100 simulations
+    // Monte Carlo with 100 simulations (block bootstrap)
     group.bench_function("mc_100_sims", |b| {
         b.iter(|| {
             let config = MonteCarloConfig {
@@ -238,13 +238,15 @@ fn bench_monte_carlo(c: &mut Criterion) {
                 seed: Some(42),
                 resample_trades: true,
                 shuffle_returns: false,
+                block_bootstrap: true,
+                block_size: None,
             };
             let mut simulator = MonteCarloSimulator::new(config);
             simulator.simulate_from_returns(black_box(&returns), 100_000.0)
         })
     });
 
-    // Monte Carlo with 1000 simulations
+    // Monte Carlo with 1000 simulations (block bootstrap)
     group.bench_function("mc_1000_sims", |b| {
         b.iter(|| {
             let config = MonteCarloConfig {
@@ -253,6 +255,8 @@ fn bench_monte_carlo(c: &mut Criterion) {
                 seed: Some(42),
                 resample_trades: true,
                 shuffle_returns: false,
+                block_bootstrap: true,
+                block_size: None,
             };
             let mut simulator = MonteCarloSimulator::new(config);
             simulator.simulate_from_returns(black_box(&returns), 100_000.0)
