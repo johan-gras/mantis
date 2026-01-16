@@ -14,7 +14,7 @@ use crate::strategies::{
     BreakoutStrategy, MacdStrategy, MeanReversion, MomentumStrategy, RsiStrategy, SmaCrossover,
 };
 use crate::strategy::Strategy;
-use crate::types::{Bar, ExecutionPrice, Signal, Verdict};
+use crate::types::{Bar, ExecutionPrice, Signal};
 use crate::walkforward::{WalkForwardConfig, WalkForwardResult, WalkForwardWindow, WindowResult};
 
 use super::results::PyBacktestResult;
@@ -1072,11 +1072,17 @@ pub fn validate(
         BacktestConfig::from(cfg)
     } else {
         let py_config = PyBacktestConfig::new(
-            cash, commission, slippage, size, true, // allow_short
-            true, // fractional_shares
-            None, // stop_loss
-            None, // take_profit
-            0.03, // borrow_cost
+            cash,
+            commission,
+            slippage,
+            size,
+            true,        // allow_short
+            true,        // fractional_shares
+            None,        // stop_loss
+            None,        // take_profit
+            0.03,        // borrow_cost
+            1.0,         // max_position
+            "next_open", // fill_price
         );
         BacktestConfig::from(&py_config)
     };

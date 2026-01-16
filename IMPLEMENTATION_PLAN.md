@@ -42,7 +42,7 @@ The Mantis backtesting framework has a solid core implementation with excellent 
 ## Test Status Summary
 
 **Last Run:** 2026-01-16
-- **Total Tests:** 552+ passed
+- **Total Tests:** 558 passed
 - **Failed:** 0 tests
 - **Status:** ALL TESTS PASSING
 
@@ -678,7 +678,8 @@ result.plot()  # Interactive Plotly in Jupyter
 | **Documentation Site** | **COMPLETE**: mkdocs.yml with material theme, dark/light mode, search; docs/ with quickstart.md, cookbook/ (6 recipe pages), concepts/ (4 pages), api/ (5 reference pages), playground.md; Custom CSS for styling; Full coverage of Quick Start, Cookbook, API Reference, Concepts |
 | **Python Sensitivity Analysis Bindings** | **COMPLETE**: src/python/sensitivity.rs (~1050 lines); mt.sensitivity() for parameter sensitivity on built-in strategies with stability scores, cliffs, plateaus, heatmaps; mt.cost_sensitivity() for cost robustness testing; parameter range functions (linear_range, log_range, discrete_range, centered_range); Plotly visualization in Jupyter; type stubs for IDE autocomplete |
 | Codebase Cleanliness | **VERIFIED**: No TODOs/FIXMEs in codebase |
-| ALL TESTS | **PASSING**: 558+ lib tests (0 failures) |
+| ALL TESTS | **PASSING**: 558 lib tests (0 failures) |
+| Python Bindings Build | **VERIFIED**: `cargo check --features python` compiles successfully (API drift fix 2026-01-16) |
 
 ---
 
@@ -726,6 +727,32 @@ The lookahead bias has been resolved using the **order buffering** approach:
 
 **Files modified:**
 - `src/engine.rs` - Main execution loop, `handle_pending_orders()`, `buffer_order_for_next_bar()` (new function)
+
+### Python Bindings API Drift Fix (2026-01-16)
+
+The Python bindings had compilation errors due to API drift between the core library and PyO3 bindings. All issues have been resolved and verified.
+
+**Issues Fixed:**
+
+1. **Strategy trait signature change**: Updated from `on_bar(&mut self, bars: &[Bar])` to `on_bar(&mut self, ctx: &StrategyContext)`
+2. **Strategy type renames**: Updated imports from `Breakout` → `BreakoutStrategy`, `Momentum` → `MomentumStrategy`
+3. **MeanReversion constructor change**: Now takes 4 parameters (period, num_std, entry_std, exit_std) instead of 2
+4. **WalkForwardResult struct additions**: Added 3 new fields: `combined_oos_return`, `oos_sharpe_threshold_met`, `walk_forward_efficiency`
+5. **BacktestResult struct additions**: Added new fields: `config`, `config_hash`, `data_checksums`, `experiment_id`, `git_info`, `seed`
+6. **PyBacktestConfig::new() expansion**: Added 2 new parameters: `max_position` and `fill_price`
+7. **Signal conversion refactor**: Replaced `From` trait usage with conditional logic for f64 → Signal conversion
+
+**Files Modified:**
+- `src/python/sensitivity.rs` - Fixed strategy imports, on_bar signature, MeanReversion constructor, removed unused imports
+- `src/python/results.rs` - Fixed on_bar signature, WalkForwardResult initialization, BacktestResult fields, added imports
+- `src/python/backtest.rs` - Fixed PyBacktestConfig::new() call, removed unused import
+
+**Verification:**
+- All 558 tests pass
+- Python bindings compile successfully with `cargo check --features python`
+- Build verified successful
+
+---
 
 ### ONNX Blocking Issue
 

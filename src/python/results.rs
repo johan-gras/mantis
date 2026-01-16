@@ -6,14 +6,14 @@
 use numpy::PyArray1;
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
+use std::collections::HashMap;
 use std::fs::File;
-use std::io::Write;
+use uuid::Uuid;
 
 use crate::analytics::PerformanceMetrics;
 use crate::engine::{BacktestConfig, BacktestResult, Engine};
 use crate::export::{export_walkforward_html, Exporter, PerformanceSummary};
-use crate::portfolio::CostModel;
-use crate::strategy::Strategy;
+use crate::strategy::{Strategy, StrategyContext};
 use crate::types::{Bar, Signal};
 use crate::viz::{sparkline, walkforward_fold_chart};
 use crate::walkforward::{WalkForwardConfig, WalkForwardResult, WalkForwardWindow, WindowResult};
@@ -435,6 +435,7 @@ impl PyBacktestResult {
             rust_result: BacktestResult {
                 strategy_name: summary.strategy_name.clone(),
                 symbols: summary.symbols.clone(),
+                config: BacktestConfig::default(),
                 start_time: summary.start_time,
                 end_time: summary.end_time,
                 trading_days: summary.trading_days as usize,
@@ -455,6 +456,11 @@ impl PyBacktestResult {
                 profit_factor: summary.profit_factor,
                 equity_curve: Vec::new(),
                 trades: Vec::new(),
+                experiment_id: Uuid::new_v4(),
+                git_info: None,
+                config_hash: String::new(),
+                data_checksums: HashMap::new(),
+                seed: None,
             },
             // No validation data available for loaded results
             bars: None,
@@ -726,11 +732,17 @@ impl Strategy for SignalStrategy {
         "signal"
     }
 
-    fn on_bar(&mut self, _bars: &[Bar]) -> Signal {
+    fn on_bar(&mut self, _ctx: &StrategyContext) -> Signal {
         if self.index < self.signals.len() {
             let sig = self.signals[self.index];
             self.index += 1;
-            Signal::from(sig)
+            if sig > 0.0 {
+                Signal::Long
+            } else if sig < 0.0 {
+                Signal::Short
+            } else {
+                Signal::Hold
+            }
         } else {
             Signal::Hold
         }
@@ -891,11 +903,14 @@ fn build_walkforward_result(
         return WalkForwardResult {
             config,
             windows: Vec::new(),
-            avg_is_sharpe: 0.0,
-            avg_oos_sharpe: 0.0,
+            combined_oos_return: 0.0,
             avg_is_return: 0.0,
             avg_oos_return: 0.0,
             avg_efficiency_ratio: 0.0,
+            walk_forward_efficiency: 0.0,
+            avg_is_sharpe: 0.0,
+            avg_oos_sharpe: 0.0,
+            oos_sharpe_threshold_met: false,
             parameter_stability: 0.0,
         };
     }
@@ -923,6 +938,28 @@ fn build_walkforward_result(
     let avg_efficiency: f64 =
         windows.iter().map(|w| w.efficiency_ratio).sum::<f64>() / num_windows as f64;
 
+    // Calculate combined OOS return (sum of all OOS returns)
+    let combined_oos_return: f64 = windows
+        .iter()
+        .map(|w| w.out_of_sample_result.total_return_pct)
+        .sum();
+
+    // Calculate combined IS return for walk-forward efficiency
+    let combined_is_return: f64 = windows
+        .iter()
+        .map(|w| w.in_sample_result.total_return_pct)
+        .sum();
+
+    // Walk-forward efficiency = combined OOS / combined IS (capped at 0-1 range)
+    let walk_forward_efficiency = if combined_is_return.abs() > f64::EPSILON {
+        (combined_oos_return / combined_is_return).clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
+
+    // OOS Sharpe threshold met if OOS Sharpe >= 0.5 * IS Sharpe (typical threshold)
+    let oos_sharpe_threshold_met = avg_oos_sharpe >= 0.5 * avg_is_sharpe;
+
     // Calculate parameter stability (std dev of OOS Sharpe ratios)
     let mean_oos = avg_oos_sharpe;
     let variance: f64 = windows
@@ -938,11 +975,14 @@ fn build_walkforward_result(
     WalkForwardResult {
         config,
         windows,
-        avg_is_sharpe,
-        avg_oos_sharpe,
+        combined_oos_return,
         avg_is_return,
         avg_oos_return,
         avg_efficiency_ratio: avg_efficiency,
+        walk_forward_efficiency,
+        avg_is_sharpe,
+        avg_oos_sharpe,
+        oos_sharpe_threshold_met,
         parameter_stability,
     }
 }

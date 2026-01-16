@@ -6,16 +6,15 @@
 use crate::cost_sensitivity::{
     run_cost_sensitivity_analysis, CostScenario, CostSensitivityAnalysis, CostSensitivityConfig,
 };
-use crate::engine::{BacktestConfig, Engine};
+use crate::engine::BacktestConfig;
 use crate::sensitivity::{
-    Cliff, HeatmapData, ParameterRange, ParameterResult, Plateau, SensitivityAnalysis,
-    SensitivityConfig, SensitivityMetric, SensitivitySummary,
+    Cliff, HeatmapData, ParameterRange, Plateau, SensitivityAnalysis, SensitivityConfig,
+    SensitivityMetric, SensitivitySummary,
 };
 use crate::strategies::{
-    Breakout, MacdStrategy, MeanReversion, Momentum, RsiStrategy, SmaCrossover,
+    BreakoutStrategy, MacdStrategy, MeanReversion, MomentumStrategy, RsiStrategy, SmaCrossover,
 };
-use crate::strategy::Strategy;
-use crate::types::Bar;
+use crate::strategy::{Strategy, StrategyContext};
 use numpy::{PyArray1, PyArray2, PyReadonlyArray1};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
@@ -279,20 +278,6 @@ impl PyHeatmapData {
     ///
     /// Returns NaN for missing values.
     fn values<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray2<f64>> {
-        let rows = self.inner.values.len();
-        let cols = if rows > 0 {
-            self.inner.values[0].len()
-        } else {
-            0
-        };
-
-        let flat: Vec<f64> = self
-            .inner
-            .values
-            .iter()
-            .flat_map(|row| row.iter().map(|v| v.unwrap_or(f64::NAN)))
-            .collect();
-
         PyArray2::from_vec2_bound(
             py,
             &self
@@ -829,13 +814,15 @@ pub fn sensitivity(
         "momentum" => SensitivityAnalysis::run(&bt_config, &sens_config, &bars, symbol, |p| {
             let period = p.get("period").copied().unwrap_or(20.0) as usize;
             let threshold = p.get("threshold").copied().unwrap_or(0.0);
-            Momentum::new(period, threshold)
+            MomentumStrategy::new(period, threshold)
         }),
         "mean-reversion" => {
             SensitivityAnalysis::run(&bt_config, &sens_config, &bars, symbol, |p| {
                 let period = p.get("period").copied().unwrap_or(20.0) as usize;
                 let num_std = p.get("num_std").copied().unwrap_or(2.0);
-                MeanReversion::new(period, num_std)
+                let entry_std = p.get("entry_std").copied().unwrap_or(2.0);
+                let exit_std = p.get("exit_std").copied().unwrap_or(0.5);
+                MeanReversion::new(period, num_std, entry_std, exit_std)
             })
         }
         "rsi" => SensitivityAnalysis::run(&bt_config, &sens_config, &bars, symbol, |p| {
@@ -851,8 +838,9 @@ pub fn sensitivity(
             MacdStrategy::new(fast, slow, signal)
         }),
         "breakout" => SensitivityAnalysis::run(&bt_config, &sens_config, &bars, symbol, |p| {
-            let period = p.get("period").copied().unwrap_or(20.0) as usize;
-            Breakout::new(period)
+            let entry_period = p.get("entry_period").copied().unwrap_or(20.0) as usize;
+            let exit_period = p.get("exit_period").copied().unwrap_or(10.0) as usize;
+            BreakoutStrategy::new(entry_period, exit_period)
         }),
         _ => unreachable!(),
     };
@@ -947,13 +935,10 @@ pub fn cost_sensitivity(
     };
 
     // Determine which strategy to use
-    let strategy_name: String;
     let mut boxed_strategy: Box<dyn Strategy> = if let Some(signal_arr) = signal {
-        strategy_name = "signal".to_string();
         let signal_vec: Vec<f64> = signal_arr.as_array().to_vec();
         Box::new(SignalStrategy::new(signal_vec))
     } else if let Some(strat_name) = strategy {
-        strategy_name = strat_name.to_string();
         create_strategy(strat_name, strategy_params)?
     } else {
         return Err(pyo3::exceptions::PyValueError::new_err(
@@ -999,11 +984,17 @@ impl Strategy for SignalStrategy {
         "signal"
     }
 
-    fn on_bar(&mut self, _bars: &[Bar]) -> crate::types::Signal {
+    fn on_bar(&mut self, _ctx: &StrategyContext) -> crate::types::Signal {
         if self.index < self.signals.len() {
             let sig = self.signals[self.index];
             self.index += 1;
-            crate::types::Signal::from(sig)
+            if sig > 0.0 {
+                crate::types::Signal::Long
+            } else if sig < 0.0 {
+                crate::types::Signal::Short
+            } else {
+                crate::types::Signal::Hold
+            }
         } else {
             crate::types::Signal::Hold
         }
@@ -1041,18 +1032,20 @@ fn create_strategy(name: &str, params: Option<&Bound<'_, PyDict>>) -> PyResult<B
             } else {
                 (20, 0.0)
             };
-            Ok(Box::new(Momentum::new(period, threshold)))
+            Ok(Box::new(MomentumStrategy::new(period, threshold)))
         }
         "mean-reversion" | "mean_reversion" => {
-            let (period, num_std) = if let Some(p) = params {
+            let (period, num_std, entry_std, exit_std) = if let Some(p) = params {
                 (
                     get_param(p, "period", 20.0) as usize,
                     get_param(p, "num_std", 2.0),
+                    get_param(p, "entry_std", 2.0),
+                    get_param(p, "exit_std", 0.5),
                 )
             } else {
-                (20, 2.0)
+                (20, 2.0, 2.0, 0.5)
             };
-            Ok(Box::new(MeanReversion::new(period, num_std)))
+            Ok(Box::new(MeanReversion::new(period, num_std, entry_std, exit_std)))
         }
         "rsi" => {
             let (period, oversold, overbought) = if let Some(p) = params {
@@ -1079,12 +1072,15 @@ fn create_strategy(name: &str, params: Option<&Bound<'_, PyDict>>) -> PyResult<B
             Ok(Box::new(MacdStrategy::new(fast, slow, signal)))
         }
         "breakout" => {
-            let period = if let Some(p) = params {
-                get_param(p, "period", 20.0) as usize
+            let (entry_period, exit_period) = if let Some(p) = params {
+                (
+                    get_param(p, "entry_period", 20.0) as usize,
+                    get_param(p, "exit_period", 10.0) as usize,
+                )
             } else {
-                20
+                (20, 10)
             };
-            Ok(Box::new(Breakout::new(period)))
+            Ok(Box::new(BreakoutStrategy::new(entry_period, exit_period)))
         }
         _ => Err(pyo3::exceptions::PyValueError::new_err(format!(
             "Unknown strategy '{}'. Valid options: sma-crossover, momentum, mean-reversion, rsi, macd, breakout",
