@@ -1126,19 +1126,66 @@ def validate(
     """
     ...
 
+class CompareResult:
+    """
+    Result of comparing multiple backtest strategies.
+
+    In Jupyter notebooks with plotly installed, automatically displays an
+    interactive equity curve chart with all strategies overlaid. Also provides
+    access to comparison metrics as a dictionary.
+    """
+
+    @property
+    def metrics(self) -> Dict[str, Any]:
+        """Get comparison metrics as a dictionary."""
+        ...
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary format."""
+        ...
+
+    def plot(
+        self,
+        title: Optional[str] = None,
+        height: Optional[int] = None,
+        theme: Optional[str] = None,
+        save: Optional[str] = None,
+    ) -> Any:
+        """
+        Display a visualization comparing all strategies.
+
+        In Jupyter notebooks with plotly installed, returns an interactive
+        Plotly figure with equity curves for all strategies overlaid.
+
+        Args:
+            title: Chart title (default: "Strategy Comparison")
+            height: Chart height in pixels (default: 500)
+            theme: "light" or "dark" theme
+            save: Optional path to save chart (HTML, PNG, PDF supported)
+
+        Returns:
+            Plotly Figure object in Jupyter with plotly, string otherwise.
+        """
+        ...
+
+
 def compare(
     results: List[BacktestResult],
     names: Optional[List[str]] = None,
-) -> Dict[str, Any]:
+) -> CompareResult:
     """
     Compare multiple backtest results side by side.
+
+    In Jupyter notebooks with plotly installed, automatically displays an
+    interactive equity curve chart with all strategies overlaid.
 
     Args:
         results: List of BacktestResult objects to compare
         names: Optional list of names for each result
 
     Returns:
-        Dictionary with comparison metrics
+        CompareResult object with metrics dict and plot() method.
+        In Jupyter, automatically renders as interactive chart.
     """
     ...
 

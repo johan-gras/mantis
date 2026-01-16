@@ -7,7 +7,7 @@
 
 ## Executive Summary
 
-The Mantis backtesting framework implementation is **complete**. All 29 planned items have been verified and implemented.
+The Mantis backtesting framework implementation is **complete**. All 30 planned items have been verified and implemented.
 
 **Core Features:**
 - Core backtest engine with comprehensive cost modeling
@@ -90,6 +90,7 @@ The Mantis backtesting framework implementation is **complete**. All 29 planned 
 | 27 | Limit Order Python | P3 | order_type="limit", limit_offset |
 | 28 | Volume Participation | P3 | max_volume_participation param |
 | 29 | Additional Metrics/Plots | P2 | volatility, duration, plot_drawdown, etc. |
+| 30 | mt.compare() Visualization | P2 | CompareResult with Plotly equity curve overlay |
 
 ---
 

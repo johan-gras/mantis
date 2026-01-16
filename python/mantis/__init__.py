@@ -1460,6 +1460,7 @@ __all__ = [
     "BacktestConfig",
     "Backtest",
     "compare",
+    "CompareResult",
     "sweep",
     # Sensitivity analysis
     "sensitivity",
@@ -1479,31 +1480,311 @@ __all__ = [
 ]
 
 
+class CompareResult:
+    """
+    Result of comparing multiple backtest strategies.
+
+    In Jupyter notebooks with plotly installed, automatically displays an
+    interactive equity curve chart with all strategies overlaid. Also provides
+    access to comparison metrics as a dictionary.
+
+    Attributes:
+        metrics: Dictionary of strategy names to their metrics
+        results: List of BacktestResult objects
+        names: List of strategy names
+    """
+
+    def __init__(
+        self,
+        results: List[BacktestResult],
+        names: List[str],
+        metrics: Dict[str, Any],
+    ):
+        self._results = results
+        self._names = names
+        self._metrics = metrics
+
+    @property
+    def metrics(self) -> Dict[str, Any]:
+        """Get comparison metrics as a dictionary."""
+        return self._metrics
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary format."""
+        return self._metrics
+
+    def plot(
+        self,
+        title: Optional[str] = None,
+        height: Optional[int] = None,
+        theme: Optional[str] = None,
+        save: Optional[str] = None,
+    ) -> Any:
+        """
+        Display a visualization comparing all strategies.
+
+        In Jupyter notebooks with plotly installed, returns an interactive
+        Plotly figure with equity curves for all strategies overlaid.
+        In terminal or without plotly, returns an ASCII summary string.
+
+        Args:
+            title: Chart title (default: "Strategy Comparison")
+            height: Chart height in pixels (default: 500)
+            theme: "light" or "dark" theme
+            save: Optional path to save chart (HTML, PNG, PDF supported)
+
+        Returns:
+            Plotly Figure object in Jupyter with plotly, string otherwise.
+
+        Example:
+            >>> comparison = mt.compare([lstm, baseline], names=["LSTM", "Baseline"])
+            >>> comparison.plot()  # Interactive chart in Jupyter
+            >>> comparison.plot(save="comparison.html")  # Save to file
+        """
+        if _has_plotly():
+            fig = self._plot_plotly(title=title, height=height, theme=theme)
+            if save:
+                return self._save_plot(fig, save)
+            return fig
+        else:
+            return self._ascii_summary()
+
+    def _plot_plotly(
+        self,
+        title: Optional[str] = None,
+        height: Optional[int] = None,
+        theme: Optional[str] = None,
+    ) -> Any:
+        """Create an interactive Plotly figure comparing strategies."""
+        import plotly.graph_objects as go
+        from plotly.subplots import make_subplots
+        import datetime
+
+        # Create figure with subplots: equity curves and metrics table
+        fig = make_subplots(
+            rows=2,
+            cols=1,
+            row_heights=[0.7, 0.3],
+            subplot_titles=("Equity Curves", "Performance Metrics"),
+            vertical_spacing=0.15,
+        )
+
+        # Color palette for different strategies
+        colors = [
+            "#1f77b4",  # blue
+            "#ff7f0e",  # orange
+            "#2ca02c",  # green
+            "#d62728",  # red
+            "#9467bd",  # purple
+            "#8c564b",  # brown
+            "#e377c2",  # pink
+            "#7f7f7f",  # gray
+        ]
+
+        # Plot equity curves for each strategy
+        for i, (result, name) in enumerate(zip(self._results, self._names)):
+            equity = result.equity_curve
+            timestamps = result.equity_timestamps
+            dates = [datetime.datetime.fromtimestamp(ts) for ts in timestamps]
+            color = colors[i % len(colors)]
+
+            fig.add_trace(
+                go.Scatter(
+                    x=dates,
+                    y=equity,
+                    mode="lines",
+                    name=name,
+                    line=dict(color=color, width=2),
+                    hovertemplate=f"{name}<br>Date: %{{x}}<br>Equity: $%{{y:,.0f}}<extra></extra>",
+                ),
+                row=1,
+                col=1,
+            )
+
+        # Create metrics table
+        headers = ["Strategy", "Return", "Sharpe", "Max DD", "Win Rate", "Trades"]
+        cells = [[], [], [], [], [], []]
+
+        for name in self._names:
+            m = self._metrics[name]
+            cells[0].append(name)
+            cells[1].append(f"{m['total_return']*100:+.1f}%")
+            cells[2].append(f"{m['sharpe']:.2f}")
+            cells[3].append(f"{m['max_drawdown']*100:.1f}%")
+            cells[4].append(f"{m['win_rate']*100:.1f}%")
+            cells[5].append(str(m["total_trades"]))
+
+        fig.add_trace(
+            go.Table(
+                header=dict(
+                    values=headers,
+                    fill_color="paleturquoise",
+                    align="center",
+                    font=dict(size=12, color="black"),
+                ),
+                cells=dict(
+                    values=cells,
+                    fill_color="lavender",
+                    align="center",
+                    font=dict(size=11),
+                ),
+            ),
+            row=2,
+            col=1,
+        )
+
+        # Theme settings
+        if theme == "dark":
+            template = "plotly_dark"
+            paper_bgcolor = "#1e1e1e"
+            plot_bgcolor = "#1e1e1e"
+        else:
+            template = "plotly_white"
+            paper_bgcolor = "white"
+            plot_bgcolor = "white"
+
+        fig_title = title or "Strategy Comparison"
+        fig_height = height or 600
+
+        fig.update_layout(
+            title=fig_title,
+            height=fig_height,
+            template=template,
+            paper_bgcolor=paper_bgcolor,
+            plot_bgcolor=plot_bgcolor,
+            showlegend=True,
+            legend=dict(
+                yanchor="top",
+                y=0.99,
+                xanchor="left",
+                x=0.01,
+            ),
+            hovermode="x unified",
+        )
+
+        fig.update_xaxes(title_text="Date", row=1, col=1)
+        fig.update_yaxes(title_text="Equity ($)", row=1, col=1)
+
+        return fig
+
+    def _save_plot(self, fig: Any, path: str) -> str:
+        """Save Plotly figure to file."""
+        import os
+
+        ext = os.path.splitext(path)[1].lower()
+
+        if ext == ".html":
+            fig.write_html(path, include_plotlyjs="cdn")
+        elif ext in (".png", ".jpg", ".jpeg", ".webp", ".svg", ".pdf"):
+            try:
+                fig.write_image(path)
+            except ValueError as e:
+                if "kaleido" in str(e).lower():
+                    raise ImportError(
+                        f"Saving to {ext} requires kaleido. Install with: pip install kaleido"
+                    ) from e
+                raise
+        else:
+            raise ValueError(
+                f"Unsupported file format: {ext}. Use .html, .png, .jpg, .svg, or .pdf"
+            )
+
+        return path
+
+    def _ascii_summary(self) -> str:
+        """Generate ASCII summary for terminal display."""
+        lines = ["Strategy Comparison", "=" * 60]
+        header = f"{'Strategy':<15} {'Return':>10} {'Sharpe':>8} {'Max DD':>8} {'Win Rate':>10}"
+        lines.append(header)
+        lines.append("-" * 60)
+
+        for name in self._names:
+            m = self._metrics[name]
+            row = (
+                f"{name:<15} "
+                f"{m['total_return']*100:>+9.1f}% "
+                f"{m['sharpe']:>8.2f} "
+                f"{m['max_drawdown']*100:>7.1f}% "
+                f"{m['win_rate']*100:>9.1f}%"
+            )
+            lines.append(row)
+
+        return "\n".join(lines)
+
+    def _repr_html_(self) -> str:
+        """Rich HTML display for Jupyter notebooks."""
+        if _is_jupyter() and _has_plotly():
+            fig = self._plot_plotly()
+            return fig.to_html(include_plotlyjs="cdn", full_html=False)
+        else:
+            # Return HTML table
+            rows = []
+            for name in self._names:
+                m = self._metrics[name]
+                rows.append(
+                    f"<tr><td>{name}</td>"
+                    f"<td>{m['total_return']*100:+.1f}%</td>"
+                    f"<td>{m['sharpe']:.2f}</td>"
+                    f"<td>{m['max_drawdown']*100:.1f}%</td>"
+                    f"<td>{m['win_rate']*100:.1f}%</td>"
+                    f"<td>{m['total_trades']}</td></tr>"
+                )
+            return f"""
+            <div style="font-family: monospace; padding: 10px;">
+                <h3>Strategy Comparison</h3>
+                <table border="1" style="border-collapse: collapse;">
+                    <tr>
+                        <th>Strategy</th>
+                        <th>Return</th>
+                        <th>Sharpe</th>
+                        <th>Max DD</th>
+                        <th>Win Rate</th>
+                        <th>Trades</th>
+                    </tr>
+                    {"".join(rows)}
+                </table>
+            </div>
+            """
+
+    def __repr__(self) -> str:
+        return self._ascii_summary()
+
+    def __str__(self) -> str:
+        return self._ascii_summary()
+
+
 def compare(
     results: List[BacktestResult],
     names: Optional[List[str]] = None,
-) -> Dict[str, Any]:
+) -> CompareResult:
     """
     Compare multiple backtest results side by side.
+
+    In Jupyter notebooks with plotly installed, automatically displays an
+    interactive equity curve chart with all strategies overlaid.
 
     Args:
         results: List of BacktestResult objects to compare
         names: Optional list of names for each result
 
     Returns:
-        Dictionary with comparison metrics
+        CompareResult object with metrics dict and plot() method.
+        In Jupyter, automatically renders as interactive chart.
 
     Example:
         >>> lstm_results = mt.backtest(data, lstm_signal)
         >>> baseline = mt.backtest(data, baseline_signal)
         >>> comparison = mt.compare([lstm_results, baseline], names=["LSTM", "Baseline"])
+        >>> comparison.metrics  # Get dict of metrics
+        >>> comparison.plot()  # Show interactive chart
+        >>> comparison.plot(save="comparison.html")  # Save to file
     """
     if names is None:
         names = [f"Strategy {i+1}" for i in range(len(results))]
 
-    comparison = {}
+    metrics = {}
     for name, result in zip(names, results):
-        comparison[name] = {
+        metrics[name] = {
             "total_return": result.total_return,
             "sharpe": result.sharpe,
             "max_drawdown": result.max_drawdown,
@@ -1512,7 +1793,7 @@ def compare(
             "profit_factor": result.profit_factor,
         }
 
-    return comparison
+    return CompareResult(results, names, metrics)
 
 
 def sweep(
