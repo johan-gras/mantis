@@ -163,3 +163,8 @@ pub use validation::{
     validate_signal, validate_signal_quick, validate_signals, SignalStats, SignalValidationConfig,
     SignalValidationResult,
 };
+
+// Risk management and position sizing
+pub use risk::{
+    PositionSizer, PositionSizingMethod, RiskConfig, RiskManager, StopLoss, TakeProfit,
+};

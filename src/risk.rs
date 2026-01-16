@@ -5,6 +5,68 @@
 use crate::types::Side;
 use serde::{Deserialize, Serialize};
 
+/// Position sizing method for determining trade size.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum PositionSizingMethod {
+    /// Fixed percentage of equity per trade (default: 10%).
+    PercentOfEquity(f64),
+    /// Fixed dollar amount per trade.
+    FixedDollar(f64),
+    /// Volatility-targeted sizing: scale position size inversely with asset volatility.
+    /// Parameters: (target_volatility, lookback_period)
+    VolatilityTargeted { target_vol: f64, lookback: usize },
+    /// Signal-scaled sizing: use signal magnitude to scale position size.
+    /// Parameters: base_size as fraction of equity
+    SignalScaled { base_size: f64 },
+    /// Risk-based sizing using ATR for stop-loss distance.
+    /// Parameters: (risk_per_trade as percentage, stop_atr_multiplier, atr_period)
+    RiskBased {
+        risk_per_trade: f64,
+        stop_atr: f64,
+        atr_period: usize,
+    },
+}
+
+impl Default for PositionSizingMethod {
+    fn default() -> Self {
+        PositionSizingMethod::PercentOfEquity(0.1) // 10% of equity
+    }
+}
+
+impl PositionSizingMethod {
+    /// Create percent of equity sizing (default method).
+    pub fn percent(pct: f64) -> Self {
+        PositionSizingMethod::PercentOfEquity(pct)
+    }
+
+    /// Create fixed dollar amount sizing.
+    pub fn fixed_dollar(amount: f64) -> Self {
+        PositionSizingMethod::FixedDollar(amount)
+    }
+
+    /// Create volatility-targeted sizing.
+    pub fn volatility(target_vol: f64, lookback: usize) -> Self {
+        PositionSizingMethod::VolatilityTargeted {
+            target_vol,
+            lookback,
+        }
+    }
+
+    /// Create signal-scaled sizing.
+    pub fn signal_scaled(base_size: f64) -> Self {
+        PositionSizingMethod::SignalScaled { base_size }
+    }
+
+    /// Create risk-based sizing.
+    pub fn risk_based(risk_per_trade: f64, stop_atr: f64, atr_period: usize) -> Self {
+        PositionSizingMethod::RiskBased {
+            risk_per_trade,
+            stop_atr,
+            atr_period,
+        }
+    }
+}
+
 /// Stop-loss configuration.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Default)]
 pub enum StopLoss {
@@ -328,6 +390,71 @@ impl PositionSizer {
         let adjusted_kelly = kelly * max_kelly_fraction;
         equity * adjusted_kelly.min(max_kelly_fraction) // Cap at max fraction
     }
+
+    /// Calculate position size for fixed dollar amount.
+    ///
+    /// # Arguments
+    /// * `amount` - Fixed dollar amount to trade
+    /// * `price` - Current price of the asset
+    ///
+    /// # Returns
+    /// Number of shares/contracts to trade
+    pub fn size_fixed_dollar(amount: f64, price: f64) -> f64 {
+        if price <= 0.0 {
+            return 0.0;
+        }
+        amount / price
+    }
+
+    /// Calculate position size scaled by signal magnitude.
+    ///
+    /// # Arguments
+    /// * `equity` - Current account equity
+    /// * `base_size` - Base position size as fraction of equity (e.g., 0.10 for 10%)
+    /// * `signal_magnitude` - Absolute value of the signal (scales the position)
+    ///
+    /// # Returns
+    /// Dollar amount to trade (not shares - divide by price for shares)
+    pub fn size_by_signal(equity: f64, base_size: f64, signal_magnitude: f64) -> f64 {
+        equity * base_size * signal_magnitude.abs()
+    }
+
+    /// Calculate position size targeting a specific portfolio volatility.
+    ///
+    /// This scales position size inversely with asset volatility to maintain
+    /// a target overall portfolio volatility.
+    ///
+    /// # Arguments
+    /// * `equity` - Current account equity
+    /// * `target_vol` - Target annual portfolio volatility (e.g., 0.15 for 15%)
+    /// * `asset_vol` - Current asset's annualized volatility
+    ///
+    /// # Returns
+    /// Dollar amount to allocate to this position
+    ///
+    /// # Formula
+    /// Position size = (equity × target_vol) / (asset_vol × √252)
+    /// For daily data, asset_vol should already be annualized or we annualize here.
+    pub fn size_by_volatility_target(equity: f64, target_vol: f64, asset_vol: f64) -> f64 {
+        if asset_vol <= 0.0 {
+            return 0.0;
+        }
+        // If asset_vol is already annualized, use it directly
+        // Position = equity × target_vol / asset_vol
+        equity * target_vol / asset_vol
+    }
+
+    /// Calculate percent of equity position size.
+    ///
+    /// # Arguments
+    /// * `equity` - Current account equity
+    /// * `percent` - Percentage of equity to allocate (e.g., 0.10 for 10%)
+    ///
+    /// # Returns
+    /// Dollar amount to allocate
+    pub fn size_percent_of_equity(equity: f64, percent: f64) -> f64 {
+        equity * percent
+    }
 }
 
 /// Result of a risk check.
@@ -531,5 +658,116 @@ mod tests {
         rm.update_equity(89000.0);
         let result = rm.check_new_position(89000.0, 10000.0, 0);
         assert!(matches!(result, RiskCheckResult::MaxDrawdownReached));
+    }
+
+    #[test]
+    fn test_size_fixed_dollar() {
+        // Fixed $10,000 at $50/share = 200 shares
+        let shares = PositionSizer::size_fixed_dollar(10000.0, 50.0);
+        assert!((shares - 200.0).abs() < 0.001);
+
+        // Fixed $10,000 at $100/share = 100 shares
+        let shares = PositionSizer::size_fixed_dollar(10000.0, 100.0);
+        assert!((shares - 100.0).abs() < 0.001);
+
+        // Edge case: zero price
+        let shares = PositionSizer::size_fixed_dollar(10000.0, 0.0);
+        assert_eq!(shares, 0.0);
+    }
+
+    #[test]
+    fn test_size_by_signal() {
+        // Base 10% of equity, signal magnitude 1.0
+        let value = PositionSizer::size_by_signal(100000.0, 0.1, 1.0);
+        assert!((value - 10000.0).abs() < 0.001);
+
+        // Base 10% of equity, signal magnitude 2.0 = 20% position
+        let value = PositionSizer::size_by_signal(100000.0, 0.1, 2.0);
+        assert!((value - 20000.0).abs() < 0.001);
+
+        // Base 10% of equity, signal magnitude 0.5 = 5% position
+        let value = PositionSizer::size_by_signal(100000.0, 0.1, 0.5);
+        assert!((value - 5000.0).abs() < 0.001);
+
+        // Negative signal (absolute value used)
+        let value = PositionSizer::size_by_signal(100000.0, 0.1, -2.0);
+        assert!((value - 20000.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_size_by_volatility_target() {
+        // $100k equity, target 15% vol, asset has 30% vol -> 50% position
+        let value = PositionSizer::size_by_volatility_target(100000.0, 0.15, 0.30);
+        assert!((value - 50000.0).abs() < 0.001);
+
+        // $100k equity, target 15% vol, asset has 15% vol -> 100% position
+        let value = PositionSizer::size_by_volatility_target(100000.0, 0.15, 0.15);
+        assert!((value - 100000.0).abs() < 0.001);
+
+        // $100k equity, target 15% vol, asset has 7.5% vol -> 200% position (leverage)
+        let value = PositionSizer::size_by_volatility_target(100000.0, 0.15, 0.075);
+        assert!((value - 200000.0).abs() < 0.001);
+
+        // Edge case: zero volatility
+        let value = PositionSizer::size_by_volatility_target(100000.0, 0.15, 0.0);
+        assert_eq!(value, 0.0);
+    }
+
+    #[test]
+    fn test_size_percent_of_equity() {
+        // 10% of $100,000 = $10,000
+        let value = PositionSizer::size_percent_of_equity(100000.0, 0.1);
+        assert!((value - 10000.0).abs() < 0.001);
+
+        // 25% of $100,000 = $25,000
+        let value = PositionSizer::size_percent_of_equity(100000.0, 0.25);
+        assert!((value - 25000.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_position_sizing_method_default() {
+        let method = PositionSizingMethod::default();
+        assert!(matches!(
+            method,
+            PositionSizingMethod::PercentOfEquity(pct) if (pct - 0.1).abs() < 0.001
+        ));
+    }
+
+    #[test]
+    fn test_position_sizing_method_constructors() {
+        let percent = PositionSizingMethod::percent(0.2);
+        assert!(matches!(
+            percent,
+            PositionSizingMethod::PercentOfEquity(p) if (p - 0.2).abs() < 0.001
+        ));
+
+        let fixed = PositionSizingMethod::fixed_dollar(5000.0);
+        assert!(matches!(
+            fixed,
+            PositionSizingMethod::FixedDollar(a) if (a - 5000.0).abs() < 0.001
+        ));
+
+        let volatility = PositionSizingMethod::volatility(0.12, 30);
+        assert!(matches!(
+            volatility,
+            PositionSizingMethod::VolatilityTargeted { target_vol, lookback }
+                if (target_vol - 0.12).abs() < 0.001 && lookback == 30
+        ));
+
+        let signal = PositionSizingMethod::signal_scaled(0.15);
+        assert!(matches!(
+            signal,
+            PositionSizingMethod::SignalScaled { base_size }
+                if (base_size - 0.15).abs() < 0.001
+        ));
+
+        let risk = PositionSizingMethod::risk_based(1.0, 2.5, 20);
+        assert!(matches!(
+            risk,
+            PositionSizingMethod::RiskBased { risk_per_trade, stop_atr, atr_period }
+                if (risk_per_trade - 1.0).abs() < 0.001
+                && (stop_atr - 2.5).abs() < 0.001
+                && atr_period == 20
+        ));
     }
 }

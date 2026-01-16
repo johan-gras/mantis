@@ -42,7 +42,7 @@ The Mantis backtesting framework has a solid core implementation with excellent 
 ## Test Status Summary
 
 **Last Run:** 2026-01-16
-- **Total Tests:** 532 passed
+- **Total Tests:** 551 passed
 - **Failed:** 0 tests
 - **Status:** ALL TESTS PASSING
 
@@ -204,24 +204,32 @@ All 3 previously failing tests now pass:
 
 ---
 
-### 9. Position Sizing Integration [PARTIAL - VERIFIED]
-**Status:** Utilities exist but not integrated into Engine
+### 9. Position Sizing Integration [COMPLETE]
+**Status:** COMPLETE
 
-**Current state:**
-- `src/engine.rs:451-522` - Only percent-of-equity sizing implemented
-- `src/risk.rs:273-331` - PositionSizer utilities exist but NEVER CALLED:
-  - `size_by_risk()` (line 273)
-  - `size_by_volatility()` (line 284)
-  - `size_by_kelly()` (line 302)
-- These methods are NEVER CALLED by engine.rs
-- engine.rs only uses percent-of-equity sizing
-- NO FixedDollar sizing
-- NO signal-scaled sizing
-
-**Files affected:**
-- `src/engine.rs` - Integrate PositionSizer into `signal_to_order()`
-- Add `PositionSizingMethod` enum to BacktestConfig
-- `src/risk.rs` - Add FixedDollar and SignalScaled methods
+**Implementation details:**
+- Created `PositionSizingMethod` enum with 5 methods:
+  - `PercentOfEquity` - Size based on percentage of current equity (default)
+  - `FixedDollar` - Fixed dollar amount per trade
+  - `VolatilityTargeted` - Target a specific annualized volatility
+  - `SignalScaled` - Scale position size by signal strength (0.0-1.0)
+  - `RiskBased` - Risk a fixed percentage with ATR-based stop loss
+- Added new `PositionSizer` methods in `src/risk.rs`:
+  - `size_fixed_dollar()` - Calculate shares for fixed dollar amount
+  - `size_by_signal()` - Scale position by signal strength with max position limit
+  - `size_by_volatility_target()` - Target volatility using rolling std dev
+  - `size_percent_of_equity()` - Wrapper for percent-of-equity sizing
+- Integrated `PositionSizingMethod` into `BacktestConfig` (`src/config.rs`)
+- Updated `signal_to_order()` in `src/engine.rs` to use selected sizing method with volatility and ATR calculations
+- Added CLI options in `src/cli.rs`:
+  - `--sizing-method` - Select sizing method (percent, fixed, volatility, signal, risk)
+  - `--fixed-dollar` - Dollar amount for fixed sizing
+  - `--target-vol` - Target annualized volatility (e.g., 0.15 for 15%)
+  - `--vol-lookback` - Lookback period for volatility calculation
+  - `--risk-per-trade` - Risk percentage for risk-based sizing
+  - `--stop-atr` - ATR multiplier for stop loss distance
+  - `--atr-period` - ATR calculation period
+- Added 7 new unit tests for position sizing methods (all passing)
 
 **Dependencies:** None
 **Effort:** Medium (2-3 days)
@@ -383,7 +391,7 @@ enum Verdict { Robust, Borderline, LikelyOverfit }
 | 6 | Short Borrow Costs | PARTIAL | P1 | Medium | None |
 | 7 | load_multi/load_dir | **COMPLETE** | P1 | Small | None |
 | 8 | Cost Sensitivity CLI | **COMPLETE** | P1 | Small | None |
-| 9 | Position Sizing Integration | PARTIAL | P1 | Medium | None |
+| 9 | Position Sizing Integration | **COMPLETE** | P1 | Medium | None |
 | 10 | Multi-Symbol Documentation | DOC GAP | P1 | Small | None |
 | 11 | Parameter Sensitivity | PARTIAL | P2 | Medium | None |
 | 12 | Visualization Module | MISSING | P2 | Medium | Item 2 |
@@ -428,8 +436,9 @@ enum Verdict { Robust, Borderline, LikelyOverfit }
 | **Helpful Error Messages** | **COMPLETE**: New error types (SignalShapeMismatch, InvalidSignal, LookaheadBias, SuspiciousSignal), ErrorHelp struct, validation.rs module with validate_signal(), validate_signal_quick(), validate_signals(), SignalValidationConfig, SignalStats - 11 tests |
 | **load_multi/load_dir** | **COMPLETE**: load_multi() and load_dir() functions, DataManager methods, glob pattern support, 5 unit tests |
 | **Rolling Metrics** | **COMPLETE**: rolling_sharpe(), rolling_drawdown(), rolling_drawdown_windowed(), rolling_max_drawdown(), rolling_volatility() - all exported from lib.rs, 8 unit tests |
+| **Position Sizing Integration** | **COMPLETE**: PositionSizingMethod enum (PercentOfEquity, FixedDollar, VolatilityTargeted, SignalScaled, RiskBased), new PositionSizer methods (size_fixed_dollar, size_by_signal, size_by_volatility_target, size_percent_of_equity), BacktestConfig integration, signal_to_order() updated with ATR/volatility calculations, CLI options (--sizing-method, --fixed-dollar, --target-vol, --vol-lookback, --risk-per-trade, --stop-atr, --atr-period), 7 unit tests |
 | Codebase Cleanliness | **VERIFIED**: No TODOs/FIXMEs in codebase |
-| ALL TESTS | **PASSING**: 532 tests (0 failures) |
+| ALL TESTS | **PASSING**: 551 tests (0 failures) |
 
 ---
 
@@ -446,7 +455,7 @@ enum Verdict { Robust, Borderline, LikelyOverfit }
 6. ~~Cost Sensitivity CLI (#8)~~ - **COMPLETE**
 
 **Phase 2 - Integration (Week 4):**
-7. Position Sizing Integration (#9) - 2-3 days
+7. ~~Position Sizing Integration (#9)~~ - **COMPLETE**
 8. Multi-Symbol Documentation (#10) - 1 day
 
 **Phase 3 - Analysis (Week 5):**

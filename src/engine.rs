@@ -4,7 +4,7 @@ use crate::data::DataManager;
 use crate::error::{BacktestError, Result};
 use crate::metadata::{compute_config_hash, generate_experiment_id, GitInfo};
 use crate::portfolio::{CostModel, MarginConfig, Portfolio};
-use crate::risk::{RiskConfig, StopLoss, TrailingStop};
+use crate::risk::{PositionSizer, PositionSizingMethod, RiskConfig, StopLoss, TrailingStop};
 use crate::strategy::{Strategy, StrategyContext};
 use crate::timeframe::TimeframeManager;
 use crate::types::{
@@ -30,7 +30,12 @@ pub struct BacktestConfig {
     #[serde(default)]
     pub margin: MarginConfig,
     /// Position sizing as fraction of equity (0.0 to 1.0).
+    /// This is used as fallback when `position_sizing_method` is `PercentOfEquity`.
     pub position_size: f64,
+    /// Position sizing method. Determines how position sizes are calculated.
+    /// If not specified, defaults to PercentOfEquity using the `position_size` field.
+    #[serde(default)]
+    pub position_sizing_method: Option<PositionSizingMethod>,
     /// Allow short selling.
     pub allow_short: bool,
     /// Allow fractional shares.
@@ -68,6 +73,7 @@ impl Default for BacktestConfig {
             cost_model: CostModel::default(),
             margin: MarginConfig::default(),
             position_size: 0.1,
+            position_sizing_method: None, // Uses position_size field as fallback
             allow_short: true,
             fractional_shares: true,
             show_progress: true,
@@ -431,7 +437,8 @@ impl Engine {
             } else {
                 // Get signal and convert to order
                 let signal = strategy.on_bar(&ctx);
-                if let Some(order) = self.signal_to_order(signal, symbol, bar, &portfolio) {
+                if let Some(order) = self.signal_to_order(signal, symbol, bar, &bars, i, &portfolio)
+                {
                     // Buffer order for execution at next bar's open (prevents lookahead bias)
                     // Entry tracking (entry_prices, trailing_stops) will be handled in
                     // handle_pending_orders when the order actually fills
@@ -474,6 +481,8 @@ impl Engine {
         signal: Signal,
         symbol: &str,
         bar: &Bar,
+        bars: &[Bar],
+        bar_index: usize,
         portfolio: &Portfolio,
     ) -> Option<Order> {
         let current_position = portfolio.position_qty(symbol);
@@ -489,7 +498,8 @@ impl Engine {
                 if current_position <= 0.0 {
                     // Close short if exists, then go long
                     let close_qty = current_position.abs();
-                    let long_value = equity * self.config.position_size;
+                    let long_value =
+                        self.calculate_position_value(equity, bar.close, bars, bar_index, 1.0);
                     let long_qty = if self.config.fractional_shares {
                         long_value / bar.close
                     } else {
@@ -506,7 +516,8 @@ impl Engine {
                 if self.config.allow_short && current_position >= 0.0 {
                     // Close long if exists, then go short
                     let close_qty = current_position;
-                    let short_value = equity * self.config.position_size;
+                    let short_value =
+                        self.calculate_position_value(equity, bar.close, bars, bar_index, 1.0);
                     let short_qty = if self.config.fractional_shares {
                         short_value / bar.close
                     } else {
@@ -540,6 +551,111 @@ impl Engine {
         }
 
         None
+    }
+
+    /// Calculate position value based on the configured sizing method.
+    fn calculate_position_value(
+        &self,
+        equity: f64,
+        price: f64,
+        bars: &[Bar],
+        bar_index: usize,
+        signal_magnitude: f64,
+    ) -> f64 {
+        let method = self.config.position_sizing_method.clone().unwrap_or(
+            PositionSizingMethod::PercentOfEquity(self.config.position_size),
+        );
+
+        match method {
+            PositionSizingMethod::PercentOfEquity(pct) => {
+                PositionSizer::size_percent_of_equity(equity, pct)
+            }
+            PositionSizingMethod::FixedDollar(amount) => {
+                // Return dollar amount directly (caller converts to shares)
+                amount
+            }
+            PositionSizingMethod::VolatilityTargeted {
+                target_vol,
+                lookback,
+            } => {
+                let asset_vol = self.calculate_volatility(bars, bar_index, lookback);
+                if asset_vol > 0.0 {
+                    PositionSizer::size_by_volatility_target(equity, target_vol, asset_vol)
+                } else {
+                    // Fallback to percent of equity if volatility can't be calculated
+                    warn!("Cannot calculate volatility, falling back to percent sizing");
+                    PositionSizer::size_percent_of_equity(equity, self.config.position_size)
+                }
+            }
+            PositionSizingMethod::SignalScaled { base_size } => {
+                PositionSizer::size_by_signal(equity, base_size, signal_magnitude)
+            }
+            PositionSizingMethod::RiskBased {
+                risk_per_trade,
+                stop_atr,
+                atr_period,
+            } => {
+                let atr = self.calculate_atr(bars, bar_index, atr_period);
+                if atr > 0.0 {
+                    // Position size in shares, convert to dollars
+                    let shares =
+                        PositionSizer::size_by_volatility(equity, risk_per_trade, atr, stop_atr);
+                    shares * price
+                } else {
+                    // Fallback to percent of equity if ATR can't be calculated
+                    warn!("Cannot calculate ATR, falling back to percent sizing");
+                    PositionSizer::size_percent_of_equity(equity, self.config.position_size)
+                }
+            }
+        }
+    }
+
+    /// Calculate annualized volatility from historical bars.
+    fn calculate_volatility(&self, bars: &[Bar], bar_index: usize, lookback: usize) -> f64 {
+        if bar_index < lookback || lookback < 2 {
+            return 0.0;
+        }
+
+        let start = bar_index.saturating_sub(lookback);
+        let returns: Vec<f64> = bars[start..=bar_index]
+            .windows(2)
+            .map(|w| (w[1].close / w[0].close).ln())
+            .collect();
+
+        if returns.is_empty() {
+            return 0.0;
+        }
+
+        let mean = returns.iter().sum::<f64>() / returns.len() as f64;
+        let variance =
+            returns.iter().map(|r| (r - mean).powi(2)).sum::<f64>() / returns.len() as f64;
+        let daily_vol = variance.sqrt();
+
+        // Annualize (assuming 252 trading days)
+        daily_vol * 252.0_f64.sqrt()
+    }
+
+    /// Calculate Average True Range (ATR) from historical bars.
+    fn calculate_atr(&self, bars: &[Bar], bar_index: usize, period: usize) -> f64 {
+        if bar_index < period || period == 0 {
+            return 0.0;
+        }
+
+        let start = bar_index.saturating_sub(period);
+        let mut tr_sum = 0.0;
+
+        for i in (start + 1)..=bar_index {
+            let bar = &bars[i];
+            let prev_close = bars[i - 1].close;
+
+            // True Range = max(High - Low, |High - PrevClose|, |Low - PrevClose|)
+            let tr = (bar.high - bar.low)
+                .max((bar.high - prev_close).abs())
+                .max((bar.low - prev_close).abs());
+            tr_sum += tr;
+        }
+
+        tr_sum / period as f64
     }
 
     #[allow(clippy::too_many_arguments)]

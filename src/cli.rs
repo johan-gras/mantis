@@ -77,6 +77,34 @@ pub enum Commands {
         #[arg(short, long, default_value = "0.1")]
         position_size: f64,
 
+        /// Position sizing method (percent, fixed, volatility, signal, risk)
+        #[arg(long, value_enum, default_value = "percent")]
+        sizing_method: PositionSizingMethodArg,
+
+        /// Fixed dollar amount for 'fixed' sizing method
+        #[arg(long)]
+        fixed_dollar: Option<f64>,
+
+        /// Target volatility for 'volatility' sizing method (e.g., 0.15 for 15%)
+        #[arg(long)]
+        target_vol: Option<f64>,
+
+        /// Volatility lookback period for 'volatility' sizing method
+        #[arg(long, default_value = "20")]
+        vol_lookback: usize,
+
+        /// Risk per trade for 'risk' sizing method (e.g., 0.01 for 1%)
+        #[arg(long)]
+        risk_per_trade: Option<f64>,
+
+        /// ATR multiplier for stop distance in 'risk' sizing method
+        #[arg(long, default_value = "2.0")]
+        stop_atr: f64,
+
+        /// ATR period for 'risk' sizing method
+        #[arg(long, default_value = "14")]
+        atr_period: usize,
+
         /// Commission percentage (e.g., 0.1 for 0.1%)
         #[arg(long, default_value = "0.1")]
         commission: f64,
@@ -652,6 +680,22 @@ pub enum DataFormatArg {
     Parquet,
 }
 
+#[derive(Debug, Copy, Clone, PartialEq, Eq, ValueEnum, Default)]
+#[value(rename_all = "kebab-case")]
+pub enum PositionSizingMethodArg {
+    /// Fixed percentage of equity (default)
+    #[default]
+    Percent,
+    /// Fixed dollar amount per trade
+    Fixed,
+    /// Volatility-targeted sizing
+    Volatility,
+    /// Signal-scaled sizing
+    Signal,
+    /// Risk-based sizing using ATR
+    Risk,
+}
+
 #[derive(Debug, Copy, Clone, PartialEq, Eq, ValueEnum)]
 pub enum ResampleIntervalArg {
     /// 1 minute
@@ -899,6 +943,13 @@ pub fn run() -> Result<()> {
             strategy,
             capital,
             position_size,
+            sizing_method,
+            fixed_dollar,
+            target_vol,
+            vol_lookback,
+            risk_per_trade,
+            stop_atr,
+            atr_period,
             commission,
             slippage,
             execution_price,
@@ -937,6 +988,13 @@ pub fn run() -> Result<()> {
             *strategy,
             *capital,
             *position_size,
+            *sizing_method,
+            *fixed_dollar,
+            *target_vol,
+            *vol_lookback,
+            *risk_per_trade,
+            *stop_atr,
+            *atr_period,
             *commission,
             *slippage,
             *max_volume_participation,
@@ -1185,6 +1243,13 @@ fn run_backtest(
     strategy_type: StrategyType,
     capital: f64,
     position_size: f64,
+    sizing_method: PositionSizingMethodArg,
+    fixed_dollar: Option<f64>,
+    target_vol: Option<f64>,
+    vol_lookback: usize,
+    risk_per_trade: Option<f64>,
+    stop_atr: f64,
+    atr_period: usize,
     commission: f64,
     slippage: f64,
     max_volume_participation: Option<f64>,
@@ -1219,6 +1284,8 @@ fn run_backtest(
     seed: Option<u64>,
     output: OutputFormat,
 ) -> Result<()> {
+    use mantis::risk::PositionSizingMethod;
+
     info!("Loading data from: {}", data_path.display());
     let bars = load_data_with_format(data_path, &DataConfig::default(), format)?;
 
@@ -1227,6 +1294,33 @@ fn run_backtest(
         None
     } else {
         Some(limit_order_ttl)
+    };
+
+    // Build position sizing method from CLI args
+    let position_sizing_method = match sizing_method {
+        PositionSizingMethodArg::Percent => None, // Use position_size field as fallback
+        PositionSizingMethodArg::Fixed => {
+            let amount = fixed_dollar.unwrap_or(10000.0);
+            Some(PositionSizingMethod::FixedDollar(amount))
+        }
+        PositionSizingMethodArg::Volatility => {
+            let vol = target_vol.unwrap_or(0.15);
+            Some(PositionSizingMethod::VolatilityTargeted {
+                target_vol: vol,
+                lookback: vol_lookback,
+            })
+        }
+        PositionSizingMethodArg::Signal => Some(PositionSizingMethod::SignalScaled {
+            base_size: position_size,
+        }),
+        PositionSizingMethodArg::Risk => {
+            let risk = risk_per_trade.unwrap_or(0.01);
+            Some(PositionSizingMethod::RiskBased {
+                risk_per_trade: risk * 100.0, // Convert to percentage (1% -> 1.0)
+                stop_atr,
+                atr_period,
+            })
+        }
     };
 
     let cost_model = CostModel {
@@ -1253,6 +1347,7 @@ fn run_backtest(
         cost_model,
         margin,
         position_size,
+        position_sizing_method,
         allow_short,
         show_progress: true,
         execution_price: execution_price.into(),

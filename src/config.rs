@@ -435,6 +435,7 @@ impl BacktestFileConfig {
             cost_model,
             margin,
             position_size: self.backtest.position_size,
+            position_sizing_method: None, // Uses position_size field as fallback
             allow_short: self.backtest.allow_short,
             fractional_shares: self.backtest.fractional_shares,
             show_progress: true,
