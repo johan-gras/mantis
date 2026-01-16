@@ -1367,16 +1367,25 @@ mod tests {
 
         // Long signal with zero equity should return None (no order)
         let order = engine.signal_to_order(Signal::Long, "AAPL", &bar, &bars, 0, &portfolio);
-        assert!(order.is_none(), "Long signal with zero equity should be skipped");
+        assert!(
+            order.is_none(),
+            "Long signal with zero equity should be skipped"
+        );
 
         // Short signal with zero equity should return None (no order)
         let order = engine.signal_to_order(Signal::Short, "AAPL", &bar, &bars, 0, &portfolio);
-        assert!(order.is_none(), "Short signal with zero equity should be skipped");
+        assert!(
+            order.is_none(),
+            "Short signal with zero equity should be skipped"
+        );
 
         // Exit signal with zero equity should still work (closing positions is allowed)
         // But since there's no position, it also returns None naturally
         let order = engine.signal_to_order(Signal::Exit, "AAPL", &bar, &bars, 0, &portfolio);
-        assert!(order.is_none(), "Exit with no position returns None naturally");
+        assert!(
+            order.is_none(),
+            "Exit with no position returns None naturally"
+        );
 
         // Hold signal always returns None
         let order = engine.signal_to_order(Signal::Hold, "AAPL", &bar, &bars, 0, &portfolio);
