@@ -61,10 +61,27 @@ Per spec gap analysis on 2026-01-16, all items resolved:
    - `unnecessary_get_then_check` → use `contains_key()` instead of `get().is_none()`
 5. `maturin develop` requires a virtual environment - added venv creation to python-test, docs-examples, and python-coverage jobs
 
-**Known Pre-existing Issues (not workflow bugs):**
-- Benchmark regression check fails due to CI runner variability (baseline captured on different runner)
-- Coverage is below 80% threshold (Rust: 70.7%, Python: 48.2%)
-- Documentation examples test may have failures unrelated to workflow
+### Remaining CI Issues (Priority: Medium)
+
+**1. Documentation Examples Test Failures**
+- [ ] Fix `scripts/test_doc_examples.py` failures
+- Location: `docs/**/*.md` code examples
+- The script runs but some doc examples fail execution
+
+**2. Rust Tests macOS Release Mode**
+- [ ] Fix Rust test failure on macOS in release mode
+- Passes in debug mode, fails in release mode
+- May be a timing/optimization issue
+
+**3. Benchmark Regression Check**
+- [ ] Address CI runner variability in benchmark comparisons
+- Options: increase threshold, use relative comparisons, or disable blocking check
+- Current: fails due to different runner performance vs baseline
+
+**4. Code Coverage Below Threshold**
+- [ ] Increase Rust coverage from 70.7% to >= 80%
+- [ ] Increase Python coverage from 48.2% to >= 80%
+- Required by specs/launch-requirements.md
 
 ### Optional Future Enhancements
 
