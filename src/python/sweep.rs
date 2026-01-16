@@ -237,6 +237,8 @@ fn build_backtest_config(
     borrow_cost: f64,
     max_position: f64,
     fill_price: &str,
+    stop_loss: Option<f64>,
+    take_profit: Option<f64>,
 ) -> BacktestConfig {
     let mut config = BacktestConfig {
         initial_capital: cash,
@@ -257,6 +259,16 @@ fn build_backtest_config(
 
     // Set risk config
     config.risk_config.max_position_size = max_position;
+
+    // Set stop loss if provided
+    if let Some(stop_pct) = stop_loss {
+        config.risk_config.stop_loss = crate::risk::StopLoss::Percentage(stop_pct * 100.0);
+    }
+
+    // Set take profit if provided
+    if let Some(tp_pct) = take_profit {
+        config.risk_config.take_profit = crate::risk::TakeProfit::Percentage(tp_pct * 100.0);
+    }
 
     // Set execution price model
     config.execution_price = match fill_price.to_lowercase().as_str() {
@@ -368,8 +380,8 @@ pub fn sweep(
     slippage: f64,
     size: f64,
     cash: f64,
-    #[allow(unused_variables)] stop_loss: Option<PyObject>, // TODO: Add stop/take profit support if needed
-    #[allow(unused_variables)] take_profit: Option<PyObject>, // For now, these are typically in the signal generation
+    stop_loss: Option<f64>,
+    take_profit: Option<f64>,
     allow_short: bool,
     borrow_cost: f64,
     max_position: f64,
@@ -394,6 +406,8 @@ pub fn sweep(
         borrow_cost,
         max_position,
         fill_price,
+        stop_loss,
+        take_profit,
     );
 
     // Extract all param/signal pairs from Python

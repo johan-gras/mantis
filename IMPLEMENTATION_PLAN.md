@@ -290,13 +290,17 @@ python3 scripts/test_doc_examples.py --file path  # Test single file
 
 ## Priority 4: LOW (Enhancements)
 
-### 4.1 TODO in Python Sweep
+### 4.1 ~~TODO in Python Sweep~~ RESOLVED
 
-| Location | `src/python/sweep.rs:371` |
-|----------|--------------------------|
-| **Content** | `// TODO: Add stop/take profit support if needed` |
-| **Status** | Parameters exist but are unused (`#[allow(unused_variables)]`) |
-| **Action** | Either implement or document as intentional limitation |
+| Status | ✅ FIXED - Stop/take profit support implemented in sweep |
+|--------|--------------------------------------------------------|
+| **Fix Date** | 2026-01-16 |
+
+**Implementation:**
+- `stop_loss` and `take_profit` parameters now wired to `build_backtest_config`
+- Values are passed as decimals (0.02 = 2%) and converted to `StopLoss::Percentage` and `TakeProfit::Percentage`
+- Removed `#[allow(unused_variables)]` markers
+- All sweep backtests now respect stop/take profit settings
 
 ---
 
