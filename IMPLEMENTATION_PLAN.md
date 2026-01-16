@@ -214,6 +214,28 @@ The Python API spec (`specs/python-api.md` lines 97-105) suggests that `results.
 - Add `output_format` parameter to `backtest()`: `"numpy"` (default), `"pandas"`, `"polars"`
 - Store preference in `BacktestResult` and convert on access
 
+### mt.load() backend Parameter (Not Implemented)
+
+The Python API spec (`specs/data-handling.md` lines 14-20) mentions `mt.load("file.csv", backend="polars")` to return a polars DataFrame instead of the default dictionary with numpy arrays.
+
+**Current Behavior:**
+- `mt.load()` always returns a dictionary with numpy arrays (`timestamp`, `open`, `high`, `low`, `close`, `volume`, `bars`)
+- Users can easily convert to polars: `pl.DataFrame(mt.load("file.csv"))`
+- The `backtest()` function accepts polars DataFrames as input
+
+**Why Not Implemented:**
+- The current dictionary format is universal and works with any Python data library
+- Adding polars as a dependency would increase wheel size
+- Manual conversion is straightforward
+- The spec item "Polars Backend" (ID 15) was implemented as: backtest accepts polars input, not load returns polars
+
+**Workaround:**
+```python
+import polars as pl
+data_dict = mt.load("file.csv")
+df = pl.DataFrame({k: v for k, v in data_dict.items() if k not in ['bars', 'path', 'n_bars']})
+```
+
 ---
 
 ## What's Already Excellent (No Action Needed)
