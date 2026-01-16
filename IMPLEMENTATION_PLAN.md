@@ -268,9 +268,12 @@ The following spec items have been identified as not fully implemented:
 - Slippage cap at 10% is now implemented (excess slippage capped with warning)
 
 **Performance Metrics (`specs/performance-metrics.md`):**
-- Zero trades returns 0.0 instead of NaN for trade-based metrics
+- ~~Zero trades returns 0.0 instead of NaN for trade-based metrics~~ **FIXED 2026-01-16** (now returns NaN)
 - Zero volatility Sharpe returns 0.0 instead of inf
 - Risk-free rate not subtracted in Sharpe/Sortino calculation (assumes 0)
+
+**Position Sizing (`specs/position-sizing.md`):**
+- ~~Insufficient cash fails entire backtest~~ **FIXED 2026-01-16** (now skips trade with warning)
 
 These are documented as known limitations rather than bugs, as the core functionality works correctly.
 
@@ -363,6 +366,29 @@ Per spec (`specs/validation-robustness.md` lines 160, 215, 244), added `warnings
 - `python/mantis/__init__.pyi`: Added type stub for `warnings()` method
 
 **Resolves:** `specs/validation-robustness.md` acceptance criteria item "Warning triggered when OOS/IS < 0.60"
+
+---
+
+### Spec Compliance Fixes (2026-01-16)
+
+The following fixes were implemented to bring behavior in line with specifications:
+
+**1. max_drawdown Sign Fix**
+- Per spec (`specs/performance-metrics.md`), `max_drawdown` now returns **negative percentage** (e.g., -0.184 instead of 0.184)
+- This matches financial convention where drawdowns are losses (negative)
+- **File modified:** `src/python/results.rs` line 816
+
+**2. Zero Trades Returns NaN**
+- Per spec (`specs/performance-metrics.md`), zero trades now returns **NaN** for trade-based metrics
+- Affected metrics: `win_rate`, `avg_win`, `avg_loss`, `profit_factor`
+- Previously returned 0.0, which could be confused with actual zero values
+- **File modified:** `src/engine.rs` lines 833-866
+
+**3. Insufficient Cash Skips Trade with Warning**
+- Per spec (`specs/position-sizing.md`), insufficient cash now **skips the trade with a warning** instead of failing the entire backtest
+- Warning is logged with details about the skipped trade
+- Allows backtests to continue even when position sizing exceeds available capital
+- **File modified:** `src/engine.rs` lines 720-733
 
 ---
 

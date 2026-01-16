@@ -104,7 +104,8 @@ fn test_full_backtest_rsi() {
     let result = engine.run(&mut strategy, "RSI_TEST").unwrap();
 
     assert!(result.final_equity > 0.0);
-    assert!(result.win_rate >= 0.0 && result.win_rate <= 100.0);
+    // NaN is valid when there are zero trades (per spec)
+    assert!(result.win_rate.is_nan() || (result.win_rate >= 0.0 && result.win_rate <= 100.0));
 }
 
 #[test]

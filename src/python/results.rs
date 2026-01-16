@@ -813,7 +813,7 @@ impl PyBacktestResult {
             sharpe: result.sharpe_ratio,
             sortino: result.sortino_ratio,
             calmar: result.calmar_ratio,
-            max_drawdown: result.max_drawdown_pct / 100.0,
+            max_drawdown: -result.max_drawdown_pct / 100.0, // Negative per spec
             win_rate: result.win_rate / 100.0,
             profit_factor: result.profit_factor,
             total_trades: result.total_trades,

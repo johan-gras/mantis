@@ -717,12 +717,23 @@ impl Engine {
             let mut pending_order = pending.order.clone();
             pending_order.quantity = pending.remaining_quantity;
             let signal = pending.signal;
-            match portfolio.execute_with_fill_probability(
+            // Per spec: Insufficient cash should skip trade with warning, not fail backtest
+            let execution_result = portfolio.execute_with_fill_probability(
                 &pending_order,
                 bar,
                 self.config.fill_probability,
-            )? {
-                Some(fill) => {
+            );
+            match execution_result {
+                Err(BacktestError::InsufficientFunds { required, available }) => {
+                    warn!(
+                        "Skipping trade for {}: insufficient funds (required: ${:.2}, available: ${:.2})",
+                        pending_order.symbol, required, available
+                    );
+                    pending_exits.remove(&pending_order.symbol);
+                    continue;
+                }
+                Err(e) => return Err(e),
+                Ok(Some(fill)) => {
                     if let Some(trade) = fill.trade.as_ref() {
                         strategy.on_trade(ctx, &pending_order);
                         debug!("Trade executed: {:?}", trade);
@@ -753,7 +764,7 @@ impl Engine {
                         pending_exits.remove(&pending_order.symbol);
                     }
                 }
-                None => still_pending.push(pending),
+                Ok(None) => still_pending.push(pending),
             }
         }
 
@@ -830,22 +841,23 @@ impl Engine {
             .filter(|t| t.net_pnl().unwrap_or(0.0) < 0.0)
             .collect();
 
+        // Per spec: Zero trades returns NaN for trade-based metrics
         let win_rate = if !closed_trades.is_empty() {
             winning.len() as f64 / closed_trades.len() as f64 * 100.0
         } else {
-            0.0
+            f64::NAN
         };
 
         let avg_win = if !winning.is_empty() {
             winning.iter().filter_map(|t| t.net_pnl()).sum::<f64>() / winning.len() as f64
         } else {
-            0.0
+            f64::NAN
         };
 
         let avg_loss = if !losing.is_empty() {
             losing.iter().filter_map(|t| t.net_pnl()).sum::<f64>() / losing.len() as f64
         } else {
-            0.0
+            f64::NAN
         };
 
         let gross_wins: f64 = winning.iter().filter_map(|t| t.net_pnl()).sum();
@@ -854,7 +866,10 @@ impl Engine {
             .filter_map(|t| t.net_pnl())
             .map(|p| p.abs())
             .sum();
-        let profit_factor = if gross_losses > 0.0 {
+        // Per spec: Zero trades returns NaN for trade-based metrics
+        let profit_factor = if closed_trades.is_empty() {
+            f64::NAN
+        } else if gross_losses > 0.0 {
             gross_wins / gross_losses
         } else if gross_wins > 0.0 {
             f64::INFINITY
