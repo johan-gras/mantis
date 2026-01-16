@@ -204,7 +204,17 @@ class BacktestResult:
     def metrics(self) -> Dict[str, Any]: ...
     def summary(self) -> str: ...
     def warnings(self) -> List[str]: ...
-    def plot(self, width: int = 40, show_drawdown: bool = True) -> Any:
+    def plot(
+        self,
+        width: int = 40,
+        show_drawdown: bool = True,
+        trades: bool = False,
+        benchmark: bool = False,
+        save: Optional[str] = None,
+        title: Optional[str] = None,
+        height: Optional[int] = None,
+        theme: Optional[str] = None,
+    ) -> Any:
         """
         Display a visualization of the equity curve.
 
@@ -215,13 +225,23 @@ class BacktestResult:
         Args:
             width: Width of the visualization (characters for ASCII, ignored for Plotly)
             show_drawdown: Whether to show drawdown subplot (Plotly only, default: True)
+            trades: Show trade entry/exit markers on the chart (Plotly only)
+            benchmark: Show benchmark comparison overlay if available (Plotly only)
+            save: Save the plot to a file. Supports .html, .png, .pdf, .svg extensions.
+                  Requires kaleido for image export (pip install kaleido)
+            title: Custom title for the plot
+            height: Custom height in pixels (Plotly only)
+            theme: Color theme - "light" or "dark" (Plotly only)
 
         Returns:
             Plotly Figure object in Jupyter with plotly, ASCII string otherwise.
+            If save is provided, saves to file and returns the file path.
 
         Example:
             >>> results = mt.backtest(data, signal)
             >>> results.plot()  # Shows interactive chart in Jupyter
+            >>> results.plot(save="report.html")  # Save to HTML file
+            >>> results.plot(trades=True, theme="dark")  # Show trades with dark theme
             >>> print(results.plot())  # ASCII sparkline in terminal
         """
         ...

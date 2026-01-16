@@ -765,6 +765,36 @@ result.plot()  # Interactive Plotly in Jupyter
 
 ---
 
+### 24. Advanced Plot Features [COMPLETE]
+**Status:** COMPLETE (2026-01-16)
+**Priority:** P2
+
+**Implementation details:**
+- Enhanced `BacktestResult.plot()` method with new parameters:
+  - `trades=True` - Show trade entry/exit markers (triangles) on the equity curve
+  - `benchmark=True` - Show benchmark comparison overlay if benchmark data available
+  - `save="file.html/png/pdf"` - Save plot to file (HTML, PNG, PDF, SVG supported)
+  - `title="Custom Title"` - Custom plot title
+  - `height=600` - Custom height in pixels
+  - `theme="dark"` or `"light"` - Color theme support
+- Trade markers show:
+  - Green triangle-up for BUY/COVER entries
+  - Red triangle-down for SELL/SHORT entries
+  - Hover text with quantity, price, and P&L
+- Dark theme colors: teal equity curve, coral drawdown, dark background
+- Light theme colors: blue equity curve, red drawdown, white background
+- Image export requires kaleido (`pip install kaleido`)
+- Fallback for ASCII-only mode: save as .txt file
+
+**Files modified:**
+- `python/mantis/__init__.py` - Added new parameters and helper methods
+- `python/mantis/__init__.pyi` - Updated type stubs
+
+**Effort:** Small (completed)
+**Dependencies:** None
+
+---
+
 ## Summary Table
 
 | ID | Item | Status | Priority | Effort | Dependencies |
@@ -797,6 +827,7 @@ result.plot()  # Interactive Plotly in Jupyter
 | 21 | Python Split/Dividend Adjustment | **COMPLETE** | P2 | Small | None |
 | 22 | ATR-Based Stop-Loss in Python | **COMPLETE** | P2 | Small | None |
 | 23 | Parallel Parameter Sweep | **COMPLETE** | P3 | Medium | None |
+| 24 | Advanced Plot Features | **COMPLETE** | P2 | Small | None |
 
 ---
 

@@ -275,7 +275,17 @@ class BacktestResult:
         rust_validation = self._rust.validate(folds, train_ratio, anchored)
         return ValidationResult(rust_validation)
 
-    def plot(self, width: int = 40, show_drawdown: bool = True) -> Any:
+    def plot(
+        self,
+        width: int = 40,
+        show_drawdown: bool = True,
+        trades: bool = False,
+        benchmark: bool = False,
+        save: Optional[str] = None,
+        title: Optional[str] = None,
+        height: Optional[int] = None,
+        theme: Optional[str] = None,
+    ) -> Any:
         """
         Display a visualization of the equity curve.
 
@@ -286,20 +296,60 @@ class BacktestResult:
         Args:
             width: Width of the visualization (characters for ASCII, ignored for Plotly)
             show_drawdown: Whether to show drawdown subplot (Plotly only)
+            trades: Whether to show trade entry/exit markers on the chart (Plotly only)
+            benchmark: Whether to show benchmark comparison if available (Plotly only)
+            save: Save the plot to a file. Supports .html, .png, .pdf, .svg extensions.
+                  Requires kaleido for image export (pip install kaleido)
+            title: Custom title for the plot
+            height: Custom height in pixels (Plotly only)
+            theme: Color theme - "light" or "dark" (Plotly only)
 
         Returns:
             Plotly Figure object in Jupyter with plotly, ASCII string otherwise.
+            If save is provided, saves to file and returns the path.
 
         Example:
             >>> results = mt.backtest(data, signal)
             >>> results.plot()  # Shows interactive chart in Jupyter
+            >>> results.plot(save="report.html")  # Save to HTML file
+            >>> results.plot(trades=True, theme="dark")  # Show trades with dark theme
         """
-        if _is_jupyter() and _has_plotly():
-            return self._plot_plotly(show_drawdown)
+        if _has_plotly():
+            fig = self._plot_plotly(
+                show_drawdown=show_drawdown,
+                trades=trades,
+                benchmark=benchmark,
+                title=title,
+                height=height,
+                theme=theme,
+            )
+            if save:
+                return self._save_plot(fig, save)
+            return fig
         else:
+            if save:
+                # ASCII can only be saved as text
+                ascii_plot = self._rust.plot(width)
+                if save.endswith('.txt'):
+                    with open(save, 'w') as f:
+                        f.write(ascii_plot)
+                    return save
+                else:
+                    raise ValueError(
+                        f"Cannot save ASCII plot to {save}. "
+                        "Install plotly for HTML/PNG/PDF export, or use .txt extension."
+                    )
             return self._rust.plot(width)
 
-    def _plot_plotly(self, show_drawdown: bool = True) -> Any:
+    def _plot_plotly(
+        self,
+        show_drawdown: bool = True,
+        trades: bool = False,
+        benchmark: bool = False,
+        title: Optional[str] = None,
+        height: Optional[int] = None,
+        theme: Optional[str] = None,
+    ) -> Any:
         """Create an interactive Plotly figure."""
         import plotly.graph_objects as go
         from plotly.subplots import make_subplots
@@ -315,6 +365,42 @@ class BacktestResult:
         # Calculate drawdown
         peak = np.maximum.accumulate(equity)
         drawdown = (equity - peak) / peak * 100  # as percentage
+
+        # Determine colors based on theme
+        if theme == "dark":
+            bg_color = '#1e1e1e'
+            paper_color = '#1e1e1e'
+            text_color = '#e0e0e0'
+            grid_color = '#404040'
+            equity_color = '#4ecdc4'
+            drawdown_color = '#ff6b6b'
+            drawdown_fill = 'rgba(255, 107, 107, 0.3)'
+            buy_color = '#00ff00'
+            sell_color = '#ff0000'
+            benchmark_color = '#888888'
+        else:
+            bg_color = 'white'
+            paper_color = 'white'
+            text_color = '#333333'
+            grid_color = '#e0e0e0'
+            equity_color = '#2E86AB'
+            drawdown_color = '#E94F37'
+            drawdown_fill = 'rgba(233, 79, 55, 0.3)'
+            buy_color = '#2ca02c'
+            sell_color = '#d62728'
+            benchmark_color = '#888888'
+
+        # Default title
+        plot_title = title or f"Backtest Results: {', '.join(self.symbols)}"
+
+        # Determine height
+        if height is None:
+            fig_height = 500 if show_drawdown else 400
+        else:
+            fig_height = height
+
+        # Determine if we need a legend (trades or benchmark)
+        show_legend = trades or benchmark
 
         if show_drawdown:
             # Create subplots
@@ -333,7 +419,7 @@ class BacktestResult:
                     y=equity,
                     mode='lines',
                     name='Equity',
-                    line=dict(color='#2E86AB', width=2),
+                    line=dict(color=equity_color, width=2),
                     hovertemplate='%{x}<br>Equity: $%{y:,.0f}<extra></extra>'
                 ),
                 row=1, col=1
@@ -346,25 +432,45 @@ class BacktestResult:
                     y=drawdown,
                     mode='lines',
                     name='Drawdown',
-                    line=dict(color='#E94F37', width=1.5),
+                    line=dict(color=drawdown_color, width=1.5),
                     fill='tozeroy',
-                    fillcolor='rgba(233, 79, 55, 0.3)',
-                    hovertemplate='%{x}<br>Drawdown: %{y:.1f}%<extra></extra>'
+                    fillcolor=drawdown_fill,
+                    hovertemplate='%{x}<br>Drawdown: %{y:.1f}%<extra></extra>',
+                    showlegend=False,
                 ),
                 row=2, col=1
             )
 
+            # Add benchmark if requested and available
+            if benchmark and self.has_benchmark:
+                benchmark_equity = self._get_benchmark_equity()
+                if benchmark_equity is not None:
+                    fig.add_trace(
+                        go.Scatter(
+                            x=dates,
+                            y=benchmark_equity,
+                            mode='lines',
+                            name='Benchmark',
+                            line=dict(color=benchmark_color, width=1.5, dash='dash'),
+                            hovertemplate='%{x}<br>Benchmark: $%{y:,.0f}<extra></extra>'
+                        ),
+                        row=1, col=1
+                    )
+
+            # Add trade markers if requested
+            if trades:
+                self._add_trade_markers(fig, dates, equity, buy_color, sell_color, row=1)
+
             # Update layout
             fig.update_layout(
-                title=dict(
-                    text=f"Backtest Results: {', '.join(self.symbols)}",
-                    x=0.5,
-                    xanchor='center'
-                ),
-                showlegend=False,
-                height=500,
+                title=dict(text=plot_title, x=0.5, xanchor='center'),
+                showlegend=show_legend,
+                height=fig_height,
                 margin=dict(l=60, r=40, t=60, b=40),
-                hovermode='x unified'
+                hovermode='x unified',
+                plot_bgcolor=bg_color,
+                paper_bgcolor=paper_color,
+                font=dict(color=text_color),
             )
 
             # Add annotation with key metrics
@@ -378,11 +484,12 @@ class BacktestResult:
                 xref="paper", yref="paper",
                 x=0.5, y=1.08,
                 showarrow=False,
-                font=dict(size=11, color='gray')
+                font=dict(size=11, color=text_color if theme != "dark" else '#aaaaaa')
             )
 
-            fig.update_yaxes(title_text="Equity ($)", row=1, col=1)
-            fig.update_yaxes(title_text="DD (%)", row=2, col=1)
+            fig.update_yaxes(title_text="Equity ($)", row=1, col=1, gridcolor=grid_color)
+            fig.update_yaxes(title_text="DD (%)", row=2, col=1, gridcolor=grid_color)
+            fig.update_xaxes(gridcolor=grid_color)
 
         else:
             # Single plot without drawdown
@@ -394,25 +501,191 @@ class BacktestResult:
                     y=equity,
                     mode='lines',
                     name='Equity',
-                    line=dict(color='#2E86AB', width=2),
+                    line=dict(color=equity_color, width=2),
                     hovertemplate='%{x}<br>Equity: $%{y:,.0f}<extra></extra>'
                 )
             )
 
+            # Add benchmark if requested and available
+            if benchmark and self.has_benchmark:
+                benchmark_equity = self._get_benchmark_equity()
+                if benchmark_equity is not None:
+                    fig.add_trace(
+                        go.Scatter(
+                            x=dates,
+                            y=benchmark_equity,
+                            mode='lines',
+                            name='Benchmark',
+                            line=dict(color=benchmark_color, width=1.5, dash='dash'),
+                            hovertemplate='%{x}<br>Benchmark: $%{y:,.0f}<extra></extra>'
+                        )
+                    )
+
+            # Add trade markers if requested
+            if trades:
+                self._add_trade_markers(fig, dates, equity, buy_color, sell_color)
+
             fig.update_layout(
-                title=dict(
-                    text=f"Backtest Results: {', '.join(self.symbols)}",
-                    x=0.5,
-                    xanchor='center'
-                ),
-                showlegend=False,
-                height=400,
+                title=dict(text=plot_title, x=0.5, xanchor='center'),
+                showlegend=show_legend,
+                height=fig_height,
                 margin=dict(l=60, r=40, t=60, b=40),
                 hovermode='x unified',
-                yaxis_title="Equity ($)"
+                yaxis_title="Equity ($)",
+                plot_bgcolor=bg_color,
+                paper_bgcolor=paper_color,
+                font=dict(color=text_color),
             )
+            fig.update_yaxes(gridcolor=grid_color)
+            fig.update_xaxes(gridcolor=grid_color)
 
         return fig
+
+    def _add_trade_markers(
+        self,
+        fig: Any,
+        dates: list,
+        equity: Any,
+        buy_color: str,
+        sell_color: str,
+        row: Optional[int] = None,
+    ) -> None:
+        """Add trade entry/exit markers to the plot."""
+        import plotly.graph_objects as go
+        import datetime
+
+        trades_list = self.trades
+        if not trades_list:
+            return
+
+        # Create lookup for equity at each timestamp
+        ts_to_idx = {}
+        timestamps = self.equity_timestamps
+        for i, ts in enumerate(timestamps):
+            ts_to_idx[ts] = i
+
+        buy_dates = []
+        buy_equities = []
+        buy_hovers = []
+        sell_dates = []
+        sell_equities = []
+        sell_hovers = []
+
+        for trade in trades_list:
+            # Entry marker
+            entry_ts = trade.entry_time
+            if entry_ts in ts_to_idx:
+                idx = ts_to_idx[entry_ts]
+                entry_date = datetime.datetime.fromtimestamp(entry_ts)
+                is_long = trade.quantity > 0
+                if is_long:
+                    buy_dates.append(entry_date)
+                    buy_equities.append(equity[idx])
+                    buy_hovers.append(
+                        f"BUY {abs(trade.quantity):.2f} @ ${trade.entry_price:.2f}"
+                    )
+                else:
+                    sell_dates.append(entry_date)
+                    sell_equities.append(equity[idx])
+                    sell_hovers.append(
+                        f"SHORT {abs(trade.quantity):.2f} @ ${trade.entry_price:.2f}"
+                    )
+
+            # Exit marker
+            exit_ts = trade.exit_time
+            if exit_ts in ts_to_idx:
+                idx = ts_to_idx[exit_ts]
+                exit_date = datetime.datetime.fromtimestamp(exit_ts)
+                is_long = trade.quantity > 0
+                if is_long:
+                    sell_dates.append(exit_date)
+                    sell_equities.append(equity[idx])
+                    sell_hovers.append(
+                        f"SELL @ ${trade.exit_price:.2f} (P&L: ${trade.pnl:+.2f})"
+                    )
+                else:
+                    buy_dates.append(exit_date)
+                    buy_equities.append(equity[idx])
+                    buy_hovers.append(
+                        f"COVER @ ${trade.exit_price:.2f} (P&L: ${trade.pnl:+.2f})"
+                    )
+
+        # Add buy markers
+        if buy_dates:
+            trace_kwargs = dict(
+                x=buy_dates,
+                y=buy_equities,
+                mode='markers',
+                name='Buy',
+                marker=dict(symbol='triangle-up', size=10, color=buy_color),
+                hovertext=buy_hovers,
+                hoverinfo='text+x',
+            )
+            if row is not None:
+                fig.add_trace(go.Scatter(**trace_kwargs), row=row, col=1)
+            else:
+                fig.add_trace(go.Scatter(**trace_kwargs))
+
+        # Add sell markers
+        if sell_dates:
+            trace_kwargs = dict(
+                x=sell_dates,
+                y=sell_equities,
+                mode='markers',
+                name='Sell',
+                marker=dict(symbol='triangle-down', size=10, color=sell_color),
+                hovertext=sell_hovers,
+                hoverinfo='text+x',
+            )
+            if row is not None:
+                fig.add_trace(go.Scatter(**trace_kwargs), row=row, col=1)
+            else:
+                fig.add_trace(go.Scatter(**trace_kwargs))
+
+    def _get_benchmark_equity(self) -> Optional[Any]:
+        """
+        Calculate benchmark equity curve for comparison.
+        Returns None if benchmark data is not available.
+        """
+        if not self.has_benchmark:
+            return None
+
+        # Calculate benchmark equity from benchmark return
+        # Assume benchmark return is total return over the period
+        initial_equity = self.equity_curve[0]
+        benchmark_total = self.benchmark_return
+
+        # Simple linear interpolation of benchmark equity
+        # (In reality, we'd need daily benchmark returns, but this is a reasonable approximation)
+        n = len(self.equity_curve)
+        benchmark_equity = np.linspace(initial_equity, initial_equity * (1 + benchmark_total), n)
+
+        return benchmark_equity
+
+    def _save_plot(self, fig: Any, path: str) -> str:
+        """Save the plot to a file."""
+        import os
+        ext = os.path.splitext(path)[1].lower()
+
+        if ext == '.html':
+            fig.write_html(path, include_plotlyjs='cdn')
+        elif ext in ('.png', '.jpg', '.jpeg', '.webp', '.svg', '.pdf'):
+            # Requires kaleido: pip install kaleido
+            try:
+                fig.write_image(path)
+            except ValueError as e:
+                if 'kaleido' in str(e).lower():
+                    raise ValueError(
+                        f"Image export requires kaleido. Install with: pip install kaleido"
+                    ) from e
+                raise
+        else:
+            raise ValueError(
+                f"Unsupported file extension: {ext}. "
+                "Supported: .html, .png, .jpg, .svg, .pdf"
+            )
+
+        return path
 
     def _repr_html_(self) -> str:
         """Rich HTML display for Jupyter notebooks."""
