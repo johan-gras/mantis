@@ -93,6 +93,11 @@ nav:
   - Playground: playground.md
 
 extra:
+  # Privacy-respecting analytics via Plausible (GDPR compliant, no cookies)
+  # To enable: Set up Plausible account and uncomment the analytics section
+  # analytics:
+  #   provider: custom
+  #   property: mantis.example.com  # Replace with your Plausible domain
   social:
     - icon: fontawesome/brands/github
       link: https://github.com/johan-gras/mantis
@@ -101,3 +106,6 @@ extra:
 
 extra_css:
   - stylesheets/extra.css
+
+extra_javascript:
+  - javascripts/analytics.js
