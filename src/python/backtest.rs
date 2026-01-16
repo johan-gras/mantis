@@ -1399,24 +1399,35 @@ pub fn extract_bars(py: Python<'_>, data: &PyObject) -> PyResult<Vec<Bar>> {
             .ok_or_else(|| pyo3::exceptions::PyKeyError::new_err("Missing 'volume' key"))?
             .extract()?;
 
-        let bars: Vec<Bar> = timestamps
+        let bars: Result<Vec<Bar>, _> = timestamps
             .into_iter()
             .zip(opens)
             .zip(highs)
             .zip(lows)
             .zip(closes)
             .zip(volumes)
-            .map(|(((((ts, o), h), l), c), v)| Bar {
-                timestamp: chrono::TimeZone::timestamp_opt(&chrono::Utc, ts, 0).unwrap(),
-                open: o,
-                high: h,
-                low: l,
-                close: c,
-                volume: v,
+            .enumerate()
+            .map(|(i, (((((ts, o), h), l), c), v))| {
+                let timestamp = chrono::TimeZone::timestamp_opt(&chrono::Utc, ts, 0)
+                    .single()
+                    .ok_or_else(|| {
+                        pyo3::exceptions::PyValueError::new_err(format!(
+                            "Invalid timestamp at row {}: {} (Unix timestamp out of valid range)",
+                            i, ts
+                        ))
+                    })?;
+                Ok(Bar {
+                    timestamp,
+                    open: o,
+                    high: h,
+                    low: l,
+                    close: c,
+                    volume: v,
+                })
             })
             .collect();
 
-        return Ok(bars);
+        return Ok(bars?);
     }
 
     // Try as string (file path)
@@ -1534,24 +1545,35 @@ fn extract_bars_from_pandas(py: Python<'_>, data: &PyObject) -> PyResult<Vec<Bar
         )));
     }
 
-    let bars: Vec<Bar> = timestamps
+    let bars: Result<Vec<Bar>, _> = timestamps
         .into_iter()
         .zip(opens)
         .zip(highs)
         .zip(lows)
         .zip(closes)
         .zip(volumes)
-        .map(|(((((ts, o), h), l), c), v)| Bar {
-            timestamp: chrono::TimeZone::timestamp_opt(&chrono::Utc, ts, 0).unwrap(),
-            open: o,
-            high: h,
-            low: l,
-            close: c,
-            volume: v,
+        .enumerate()
+        .map(|(i, (((((ts, o), h), l), c), v))| {
+            let timestamp = chrono::TimeZone::timestamp_opt(&chrono::Utc, ts, 0)
+                .single()
+                .ok_or_else(|| {
+                    pyo3::exceptions::PyValueError::new_err(format!(
+                        "Invalid timestamp at row {}: {} (Unix timestamp out of valid range)",
+                        i, ts
+                    ))
+                })?;
+            Ok(Bar {
+                timestamp,
+                open: o,
+                high: h,
+                low: l,
+                close: c,
+                volume: v,
+            })
         })
         .collect();
 
-    Ok(bars)
+    Ok(bars?)
 }
 
 /// Extract timestamps from pandas DataFrame index or date column.
@@ -1687,24 +1709,35 @@ fn extract_bars_from_polars(py: Python<'_>, data: &PyObject) -> PyResult<Vec<Bar
         )));
     }
 
-    let bars: Vec<Bar> = timestamps
+    let bars: Result<Vec<Bar>, _> = timestamps
         .into_iter()
         .zip(opens)
         .zip(highs)
         .zip(lows)
         .zip(closes)
         .zip(volumes)
-        .map(|(((((ts, o), h), l), c), v)| Bar {
-            timestamp: chrono::TimeZone::timestamp_opt(&chrono::Utc, ts, 0).unwrap(),
-            open: o,
-            high: h,
-            low: l,
-            close: c,
-            volume: v,
+        .enumerate()
+        .map(|(i, (((((ts, o), h), l), c), v))| {
+            let timestamp = chrono::TimeZone::timestamp_opt(&chrono::Utc, ts, 0)
+                .single()
+                .ok_or_else(|| {
+                    pyo3::exceptions::PyValueError::new_err(format!(
+                        "Invalid timestamp at row {}: {} (Unix timestamp out of valid range)",
+                        i, ts
+                    ))
+                })?;
+            Ok(Bar {
+                timestamp,
+                open: o,
+                high: h,
+                low: l,
+                close: c,
+                volume: v,
+            })
         })
         .collect();
 
-    Ok(bars)
+    Ok(bars?)
 }
 
 /// Extract timestamps from polars DataFrame.

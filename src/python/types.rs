@@ -74,7 +74,10 @@ impl From<&Bar> for PyBar {
 impl From<PyBar> for Bar {
     fn from(bar: PyBar) -> Self {
         Bar {
-            timestamp: Utc.timestamp_opt(bar.timestamp, 0).unwrap(),
+            timestamp: Utc
+                .timestamp_opt(bar.timestamp, 0)
+                .single()
+                .expect("PyBar timestamp should be valid UTC timestamp"),
             open: bar.open,
             high: bar.high,
             low: bar.low,

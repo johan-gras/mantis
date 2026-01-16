@@ -417,22 +417,32 @@ pub fn adjust(
         .extract()?;
 
     // Create mutable bars
-    let mut bars: Vec<Bar> = timestamps
+    let bars_result: Result<Vec<Bar>, _> = timestamps
         .into_iter()
         .zip(opens)
         .zip(highs)
         .zip(lows)
         .zip(closes)
         .zip(volumes)
-        .map(|(((((ts, o), h), l), c), v)| Bar {
-            timestamp: chrono::Utc.timestamp_opt(ts, 0).unwrap(),
-            open: o,
-            high: h,
-            low: l,
-            close: c,
-            volume: v,
+        .enumerate()
+        .map(|(i, (((((ts, o), h), l), c), v))| {
+            let timestamp = chrono::Utc.timestamp_opt(ts, 0).single().ok_or_else(|| {
+                pyo3::exceptions::PyValueError::new_err(format!(
+                    "Invalid timestamp at row {}: {} (Unix timestamp out of valid range)",
+                    i, ts
+                ))
+            })?;
+            Ok(Bar {
+                timestamp,
+                open: o,
+                high: h,
+                low: l,
+                close: c,
+                volume: v,
+            })
         })
         .collect();
+    let mut bars = bars_result?;
 
     // Parse and apply splits
     if let Some(splits_list) = splits {

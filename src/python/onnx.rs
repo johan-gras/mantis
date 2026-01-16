@@ -495,7 +495,14 @@ pub fn generate_signals(
         }
 
         // Get the length from the first column
-        let first_col: Vec<f64> = dict.get_item(&columns[0])?.unwrap().extract()?;
+        let first_col_name = &columns[0];
+        let first_col_value = dict.get_item(first_col_name)?.ok_or_else(|| {
+            pyo3::exceptions::PyKeyError::new_err(format!(
+                "Column '{}' not found in feature dictionary",
+                first_col_name
+            ))
+        })?;
+        let first_col: Vec<f64> = first_col_value.extract()?;
         let n_rows = first_col.len();
         let n_cols = columns.len();
 
@@ -504,7 +511,13 @@ pub fn generate_signals(
         for i in 0..n_rows {
             let mut row = Vec::with_capacity(n_cols);
             for col in &columns {
-                let col_data: Vec<f64> = dict.get_item(col)?.unwrap().extract()?;
+                let col_value = dict.get_item(col)?.ok_or_else(|| {
+                    pyo3::exceptions::PyKeyError::new_err(format!(
+                        "Column '{}' not found in feature dictionary",
+                        col
+                    ))
+                })?;
+                let col_data: Vec<f64> = col_value.extract()?;
                 row.push(col_data[i]);
             }
             rows.push(row);

@@ -437,6 +437,31 @@ The following edge case fixes were implemented to match specification requiremen
 
 ---
 
+### Timestamp Conversion Safety (2026-01-16)
+
+Improved error handling for timestamp conversions in Python bindings to prevent panics:
+- Replaced `.unwrap()` on `timestamp_opt()` with `.single()` + proper error handling
+- Invalid timestamps now return descriptive Python errors instead of panicking
+- Error messages include the row index and invalid timestamp value
+
+**Files modified:**
+- `src/python/backtest.rs`: Updated `extract_bars()`, `extract_bars_from_pandas()`, `extract_bars_from_polars()`
+- `src/python/data.rs`: Updated `adjust()` function
+- `src/python/types.rs`: Updated `From<PyBar> for Bar` with explicit expect message
+
+---
+
+### ONNX Feature Dictionary Access Safety (2026-01-16)
+
+Improved error handling for ONNX feature dictionary access:
+- Replaced `.unwrap()` on `dict.get_item()` with proper `ok_or_else()` error handling
+- Missing columns now return descriptive `PyKeyError` instead of panicking
+
+**Files modified:**
+- `src/python/onnx.rs`: Updated feature extraction from dictionary
+
+---
+
 ## Completed Items - GitHub Pages Deployment (2026-01-16)
 
 ### Item 39: GitHub Pages Deployment
