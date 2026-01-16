@@ -432,7 +432,7 @@ pub fn adjust(
                     i, ts
                 ))
             })?;
-            Ok(Bar {
+            Ok::<_, PyErr>(Bar {
                 timestamp,
                 open: o,
                 high: h,

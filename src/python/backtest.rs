@@ -1416,7 +1416,7 @@ pub fn extract_bars(py: Python<'_>, data: &PyObject) -> PyResult<Vec<Bar>> {
                             i, ts
                         ))
                     })?;
-                Ok(Bar {
+                Ok::<_, PyErr>(Bar {
                     timestamp,
                     open: o,
                     high: h,
@@ -1562,7 +1562,7 @@ fn extract_bars_from_pandas(py: Python<'_>, data: &PyObject) -> PyResult<Vec<Bar
                         i, ts
                     ))
                 })?;
-            Ok(Bar {
+            Ok::<_, PyErr>(Bar {
                 timestamp,
                 open: o,
                 high: h,
@@ -1726,7 +1726,7 @@ fn extract_bars_from_polars(py: Python<'_>, data: &PyObject) -> PyResult<Vec<Bar
                         i, ts
                     ))
                 })?;
-            Ok(Bar {
+            Ok::<_, PyErr>(Bar {
                 timestamp,
                 open: o,
                 high: h,
