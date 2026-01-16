@@ -724,7 +724,10 @@ impl Engine {
                 self.config.fill_probability,
             );
             match execution_result {
-                Err(BacktestError::InsufficientFunds { required, available }) => {
+                Err(BacktestError::InsufficientFunds {
+                    required,
+                    available,
+                }) => {
                     warn!(
                         "Skipping trade for {}: insufficient funds (required: ${:.2}, available: ${:.2})",
                         pending_order.symbol, required, available
