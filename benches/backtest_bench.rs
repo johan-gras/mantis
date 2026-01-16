@@ -5,7 +5,7 @@
 //! Spec-required benchmarks (benchmarking.md):
 //! - single_bar_1000: < 10ms - 1000-bar backtest, single symbol
 //! - daily_10y: < 100ms - 10-year daily data (2520 bars)
-//! - optimization_9param: < 1ms - 9-parameter grid search setup
+//! - optimization_9param: < 10ms - 9-parameter grid optimization (full execution)
 //! - sweep_1000: < 30s - 1000 parameter combinations
 //! - walkforward_12fold: < 2s - Walk-forward with 12 folds
 //! - multi_symbol_3: < 300ms - 3-symbol portfolio, 10y daily
