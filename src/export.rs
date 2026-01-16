@@ -1798,7 +1798,12 @@ pub fn export_walkforward_html(result: &WalkForwardResult, path: impl AsRef<Path
     writeln!(writer, "  <div class=\"section\">")?;
     writeln!(writer, "    <h2>Verdict</h2>")?;
     writeln!(writer, "    <div class=\"metrics-grid\">")?;
-    write_metric_card(&mut writer, "Classification", verdict.label(), verdict_color)?;
+    write_metric_card(
+        &mut writer,
+        "Classification",
+        verdict.label(),
+        verdict_color,
+    )?;
     write_metric_card(
         &mut writer,
         "OOS/IS Degradation",
@@ -1926,7 +1931,11 @@ pub fn export_walkforward_html(result: &WalkForwardResult, path: impl AsRef<Path
 
             writeln!(writer, "          <tr class=\"{}\">", row_class)?;
             writeln!(writer, "            <td>{}</td>", i + 1)?;
-            writeln!(writer, "            <td>{}</td>", window_result.window.is_bars)?;
+            writeln!(
+                writer,
+                "            <td>{}</td>",
+                window_result.window.is_bars
+            )?;
             writeln!(
                 writer,
                 "            <td>{}</td>",
@@ -2077,7 +2086,11 @@ fn write_walkforward_bar_chart<W: Write>(writer: &mut W, result: &WalkForwardRes
         writeln!(
             writer,
             r##"        <rect x="{:.1}" y="{:.1}" width="{:.1}" height="{:.1}" fill="{}" opacity="0.8"/>"##,
-            is_x, is_y, bar_width, is_height.max(1.0), is_color
+            is_x,
+            is_y,
+            bar_width,
+            is_height.max(1.0),
+            is_color
         )?;
 
         // OOS bar
@@ -2091,7 +2104,11 @@ fn write_walkforward_bar_chart<W: Write>(writer: &mut W, result: &WalkForwardRes
         writeln!(
             writer,
             r##"        <rect x="{:.1}" y="{:.1}" width="{:.1}" height="{:.1}" fill="{}" opacity="0.8"/>"##,
-            oos_x, oos_y, bar_width, oos_height.max(1.0), oos_color
+            oos_x,
+            oos_y,
+            bar_width,
+            oos_height.max(1.0),
+            oos_color
         )?;
 
         // X-axis label (fold number)

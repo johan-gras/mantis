@@ -321,20 +321,23 @@ impl PyBacktestResult {
     ///     >>> print(validation.oos_degradation)
     ///     0.71
     #[pyo3(signature = (folds=12, train_ratio=0.75, anchored=true))]
-    fn validate(&self, folds: usize, train_ratio: f64, anchored: bool) -> PyResult<PyValidationResult> {
+    fn validate(
+        &self,
+        folds: usize,
+        train_ratio: f64,
+        anchored: bool,
+    ) -> PyResult<PyValidationResult> {
         // Check if we have the required data
         let bars = self.bars.as_ref().ok_or_else(|| {
             pyo3::exceptions::PyRuntimeError::new_err(
                 "Cannot validate: backtest was run without storing validation data.\n\
                  This can happen if the result was loaded from a file.\n\n\
-                 Quick fix: Use mt.validate(data, signal) instead."
+                 Quick fix: Use mt.validate(data, signal) instead.",
             )
         })?;
 
         let signal_vec = self.signal.as_ref().ok_or_else(|| {
-            pyo3::exceptions::PyRuntimeError::new_err(
-                "Cannot validate: signal data not available."
-            )
+            pyo3::exceptions::PyRuntimeError::new_err("Cannot validate: signal data not available.")
         })?;
 
         let bt_config = self.backtest_config.clone().unwrap_or_default();
@@ -342,13 +345,13 @@ impl PyBacktestResult {
         // Validate parameters
         if folds < 2 {
             return Err(pyo3::exceptions::PyValueError::new_err(
-                "Need at least 2 folds for walk-forward validation."
+                "Need at least 2 folds for walk-forward validation.",
             ));
         }
 
         if train_ratio <= 0.0 || train_ratio >= 1.0 {
             return Err(pyo3::exceptions::PyValueError::new_err(
-                "train_ratio must be between 0 and 1 (exclusive)."
+                "train_ratio must be between 0 and 1 (exclusive).",
             ));
         }
 
@@ -636,10 +639,7 @@ impl PyValidationResult {
     ///     >>> validation.report("validation_report.html")
     fn report(&self, path: &str) -> PyResult<()> {
         export_walkforward_html(&self.rust_result, path).map_err(|e| {
-            pyo3::exceptions::PyIOError::new_err(format!(
-                "Failed to generate HTML report: {}",
-                e
-            ))
+            pyo3::exceptions::PyIOError::new_err(format!("Failed to generate HTML report: {}", e))
         })?;
         Ok(())
     }
@@ -762,10 +762,7 @@ struct WfWindow {
 }
 
 /// Calculate window boundaries for walk-forward validation.
-fn calculate_windows(
-    bars: &[Bar],
-    config: &WalkForwardConfig,
-) -> Result<Vec<WfWindow>, String> {
+fn calculate_windows(bars: &[Bar], config: &WalkForwardConfig) -> Result<Vec<WfWindow>, String> {
     let total_bars = bars.len();
     let window_size = total_bars / config.num_windows;
     let is_size = (window_size as f64 * config.in_sample_ratio) as usize;
@@ -814,13 +811,12 @@ fn run_walkforward_validation(
     bt_config: &BacktestConfig,
     wf_config: &WalkForwardConfig,
 ) -> PyResult<WalkForwardResult> {
-    let windows = calculate_windows(bars, wf_config).map_err(|e| {
-        pyo3::exceptions::PyValueError::new_err(e)
-    })?;
+    let windows = calculate_windows(bars, wf_config)
+        .map_err(|e| pyo3::exceptions::PyValueError::new_err(e))?;
 
     if windows.is_empty() {
         return Err(pyo3::exceptions::PyValueError::new_err(
-            "Could not create any valid walk-forward windows with the given parameters."
+            "Could not create any valid walk-forward windows with the given parameters.",
         ));
     }
 
@@ -904,8 +900,11 @@ fn build_walkforward_result(
         };
     }
 
-    let avg_is_sharpe: f64 =
-        windows.iter().map(|w| w.in_sample_result.sharpe_ratio).sum::<f64>() / num_windows as f64;
+    let avg_is_sharpe: f64 = windows
+        .iter()
+        .map(|w| w.in_sample_result.sharpe_ratio)
+        .sum::<f64>()
+        / num_windows as f64;
     let avg_oos_sharpe: f64 = windows
         .iter()
         .map(|w| w.out_of_sample_result.sharpe_ratio)

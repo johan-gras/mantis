@@ -479,11 +479,16 @@ fn extract_bars_from_pandas(py: Python<'_>, data: &PyObject) -> PyResult<Vec<Bar
     let class_name: String = class.getattr(py, "__name__")?.extract(py)?;
 
     if !module.starts_with("pandas") || class_name != "DataFrame" {
-        return Err(pyo3::exceptions::PyTypeError::new_err("Not a pandas DataFrame"));
+        return Err(pyo3::exceptions::PyTypeError::new_err(
+            "Not a pandas DataFrame",
+        ));
     }
 
     // Get column names to find OHLCV columns (case-insensitive)
-    let columns: Vec<String> = data.getattr(py, "columns")?.call_method0(py, "tolist")?.extract(py)?;
+    let columns: Vec<String> = data
+        .getattr(py, "columns")?
+        .call_method0(py, "tolist")?
+        .extract(py)?;
 
     let find_column = |names: &[&str]| -> Option<String> {
         for col in &columns {
@@ -572,7 +577,11 @@ fn extract_bars_from_pandas(py: Python<'_>, data: &PyObject) -> PyResult<Vec<Bar
 }
 
 /// Extract timestamps from pandas DataFrame index or date column.
-fn extract_pandas_timestamps(py: Python<'_>, data: &PyObject, columns: &[String]) -> PyResult<Vec<i64>> {
+fn extract_pandas_timestamps(
+    py: Python<'_>,
+    data: &PyObject,
+    columns: &[String],
+) -> PyResult<Vec<i64>> {
     // First, try to get timestamps from the index
     let index = data.getattr(py, "index")?;
     let index_class = index.getattr(py, "__class__")?;
@@ -631,7 +640,9 @@ fn extract_bars_from_polars(py: Python<'_>, data: &PyObject) -> PyResult<Vec<Bar
     let class_name: String = class.getattr(py, "__name__")?.extract(py)?;
 
     if !module.starts_with("polars") || class_name != "DataFrame" {
-        return Err(pyo3::exceptions::PyTypeError::new_err("Not a polars DataFrame"));
+        return Err(pyo3::exceptions::PyTypeError::new_err(
+            "Not a polars DataFrame",
+        ));
     }
 
     // Get column names
@@ -719,7 +730,11 @@ fn extract_bars_from_polars(py: Python<'_>, data: &PyObject) -> PyResult<Vec<Bar
 }
 
 /// Extract timestamps from polars DataFrame.
-fn extract_polars_timestamps(py: Python<'_>, data: &PyObject, columns: &[String]) -> PyResult<Vec<i64>> {
+fn extract_polars_timestamps(
+    py: Python<'_>,
+    data: &PyObject,
+    columns: &[String],
+) -> PyResult<Vec<i64>> {
     let find_date_column = |names: &[&str]| -> Option<String> {
         for col in columns {
             let col_lower = col.to_lowercase();
