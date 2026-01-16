@@ -62,16 +62,20 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Install maturin and test dependencies
+      - name: Create virtual environment and install dependencies
         run: |
+          python -m venv .venv
+          source .venv/bin/activate
           pip install maturin pytest pytest-cov numpy pandas
 
       - name: Build and install package
         run: |
+          source .venv/bin/activate
           maturin develop --release
 
       - name: Run Python tests with coverage
         run: |
+          source .venv/bin/activate
           pytest tests/python/ -v --cov=mantis --cov-report=lcov:python-coverage.lcov --cov-report=term-missing
 
       - name: Upload Python coverage
