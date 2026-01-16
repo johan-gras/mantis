@@ -600,6 +600,28 @@ class ValidationResult:
 
     def fold_details(self) -> List[FoldDetail]: ...
     def is_robust(self) -> bool: ...
+    def warnings(self) -> List[str]:
+        """
+        Get a list of warning messages for suspicious validation metrics.
+
+        Checks for:
+        - OOS/IS degradation < 60% (likely overfit)
+        - OOS/IS degradation 60-80% (borderline)
+        - Negative OOS returns
+        - Negative OOS Sharpe
+        - Low parameter stability
+        - High variance across folds
+        - Negative deflated Sharpe when trials > 1
+
+        Returns:
+            List of warning message strings
+
+        Example:
+            >>> validation = mt.validate(data, signal)
+            >>> for warning in validation.warnings():
+            ...     print(f"⚠️ {warning}")
+        """
+        ...
     def summary(self) -> str: ...
     def plot(self, width: int = 20) -> Any:
         """

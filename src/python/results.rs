@@ -935,6 +935,91 @@ impl PyValidationResult {
         self.verdict == "robust" || self.verdict == "borderline"
     }
 
+    /// Check for suspicious validation metrics and return warnings.
+    ///
+    /// Returns a list of warning messages for:
+    /// - OOS/IS degradation < 60% (likely overfit)
+    /// - OOS/IS degradation 60-80% (borderline)
+    /// - Negative OOS returns
+    /// - Low parameter stability
+    /// - Insufficient data for robust validation
+    ///
+    /// Example:
+    ///     >>> validation = mt.validate(data, signal)
+    ///     >>> for warning in validation.warnings():
+    ///     ...     print(f"⚠️ {warning}")
+    fn warnings<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyList>> {
+        let mut warnings = Vec::new();
+
+        // Check OOS/IS degradation per spec (validation-robustness.md line 160, 244)
+        if self.oos_degradation < 0.40 {
+            warnings.push(format!(
+                "OOS/IS ratio of {:.0}% is a red flag - strategy probably won't work live",
+                self.oos_degradation * 100.0
+            ));
+        } else if self.oos_degradation < 0.60 {
+            warnings.push(format!(
+                "OOS/IS ratio of {:.0}% suggests likely overfitting (threshold: 60%)",
+                self.oos_degradation * 100.0
+            ));
+        } else if self.oos_degradation < 0.80 {
+            warnings.push(format!(
+                "OOS/IS ratio of {:.0}% is borderline - proceed with caution",
+                self.oos_degradation * 100.0
+            ));
+        }
+
+        // Check for negative OOS returns
+        if self.avg_oos_return < 0.0 {
+            warnings.push(format!(
+                "Average OOS return is negative ({:.1}%) - strategy loses money out-of-sample",
+                self.avg_oos_return * 100.0
+            ));
+        }
+
+        // Check for negative OOS Sharpe
+        if self.oos_sharpe < 0.0 {
+            warnings.push(format!(
+                "OOS Sharpe ratio is negative ({:.2}) - risk-adjusted performance is poor",
+                self.oos_sharpe
+            ));
+        }
+
+        // Check parameter stability (low stability suggests fragile strategy)
+        if self.parameter_stability < 0.5 && self.parameter_stability > 0.0 {
+            warnings.push(format!(
+                "Parameter stability of {:.0}% is low - strategy may be fragile",
+                self.parameter_stability * 100.0
+            ));
+        }
+
+        // Check deflated Sharpe when multiple trials were used
+        if self.trials > 1 && self.deflated_sharpe < 0.0 {
+            warnings.push(format!(
+                "Deflated Sharpe of {:.2} (after {} trials) suggests performance may be spurious",
+                self.deflated_sharpe, self.trials
+            ));
+        }
+
+        // Check for high variance across folds
+        let fold_returns: Vec<f64> = self.fold_data.iter().map(|f| f.oos_return).collect();
+        if fold_returns.len() > 1 {
+            let mean: f64 = fold_returns.iter().sum::<f64>() / fold_returns.len() as f64;
+            let variance: f64 = fold_returns.iter().map(|r| (r - mean).powi(2)).sum::<f64>()
+                / fold_returns.len() as f64;
+            let std_dev = variance.sqrt();
+            if std_dev > 0.10 {
+                // More than 10% standard deviation
+                warnings.push(format!(
+                    "High variance across folds (std={:.1}%) - inconsistent performance",
+                    std_dev * 100.0
+                ));
+            }
+        }
+
+        Ok(PyList::new_bound(py, warnings))
+    }
+
     /// Display an ASCII visualization of fold-by-fold performance.
     ///
     /// Shows in-sample vs out-of-sample returns for each fold with

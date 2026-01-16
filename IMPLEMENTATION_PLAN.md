@@ -268,9 +268,6 @@ The following spec items have been identified as not fully implemented:
 - Zero volatility Sharpe returns 0.0 instead of inf
 - Risk-free rate not subtracted in Sharpe/Sortino calculation (assumes 0)
 
-**Validation (`specs/validation-robustness.md`):**
-- OOS/IS < 60% warning not in `warnings()` method
-
 These are documented as known limitations rather than bugs, as the core functionality works correctly.
 
 ---
@@ -340,6 +337,28 @@ Per spec (`specs/validation-robustness.md`), added `trials` parameter for Deflat
 - `src/python/backtest.rs`: Added trials parameter to validate functions, added deflated_sharpe field
 
 **Resolves:** `specs/validation-robustness.md` gap for trials parameter exposure
+
+---
+
+### ValidationResult.warnings() Method (2026-01-16)
+
+Per spec (`specs/validation-robustness.md` lines 160, 215, 244), added `warnings()` method to `PyValidationResult`:
+- Returns list of warning messages for suspicious validation metrics
+- Checks implemented:
+  - OOS/IS degradation < 40% (red flag)
+  - OOS/IS degradation < 60% (likely overfit - per spec threshold)
+  - OOS/IS degradation < 80% (borderline)
+  - Negative OOS returns
+  - Negative OOS Sharpe ratio
+  - Low parameter stability (< 50%)
+  - Negative deflated Sharpe when trials > 1
+  - High variance across folds (> 10% std)
+
+**Files modified:**
+- `src/python/results.rs`: Added `warnings()` method to `PyValidationResult`
+- `python/mantis/__init__.pyi`: Added type stub for `warnings()` method
+
+**Resolves:** `specs/validation-robustness.md` acceptance criteria item "Warning triggered when OOS/IS < 0.60"
 
 ---
 
