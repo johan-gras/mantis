@@ -468,6 +468,83 @@ fn bench_parquet_export(c: &mut Criterion) {
     group.finish();
 }
 
+/// Benchmark ONNX model inference (spec-required: < 1ms/bar).
+///
+/// Run with: cargo bench --features onnx -- onnx
+#[cfg(feature = "onnx")]
+fn bench_onnx_inference(c: &mut Criterion) {
+    use mantis::onnx::{ModelConfig, OnnxModel};
+    use std::path::Path;
+
+    let model_path = Path::new("data/models/minimal.onnx");
+
+    // Skip if test models not available
+    if !model_path.exists() {
+        eprintln!(
+            "ONNX benchmarks skipped: test models not found. Run: python scripts/generate_test_onnx.py"
+        );
+        return;
+    }
+
+    let mut group = c.benchmark_group("onnx");
+
+    // Single inference benchmark (target: < 1ms)
+    group.bench_function("single_inference_minimal", |b| {
+        let config = ModelConfig::new("minimal", 10);
+        let mut model = OnnxModel::from_file(model_path, config).unwrap();
+        let features: Vec<f64> = vec![0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0];
+
+        b.iter(|| model.predict(black_box(&features)))
+    });
+
+    // Batch inference benchmark (100 samples)
+    group.bench_function("batch_inference_100", |b| {
+        let config = ModelConfig::new("minimal", 10);
+        let mut model = OnnxModel::from_file(model_path, config).unwrap();
+        let batch: Vec<Vec<f64>> = (0..100)
+            .map(|i| (0..10).map(|j| ((i * 10 + j) as f64) / 1000.0).collect())
+            .collect();
+
+        b.iter(|| model.predict_batch(black_box(&batch)))
+    });
+
+    // Batch inference benchmark (1000 samples - 10-year daily equivalent)
+    group.bench_function("batch_inference_1000", |b| {
+        let config = ModelConfig::new("minimal", 10);
+        let mut model = OnnxModel::from_file(model_path, config).unwrap();
+        let batch: Vec<Vec<f64>> = (0..1000)
+            .map(|i| (0..10).map(|j| ((i * 10 + j) as f64) / 10000.0).collect())
+            .collect();
+
+        b.iter(|| model.predict_batch(black_box(&batch)))
+    });
+
+    // Larger model with 20 inputs
+    let larger_model_path = Path::new("data/models/simple_mlp.onnx");
+    if larger_model_path.exists() {
+        group.bench_function("single_inference_simple_mlp", |b| {
+            let config = ModelConfig::new("simple_mlp", 10);
+            let mut model = OnnxModel::from_file(larger_model_path, config).unwrap();
+            let features: Vec<f64> = vec![0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0];
+
+            b.iter(|| model.predict(black_box(&features)))
+        });
+
+        // Spec-required: ONNX inference for 2520 bars (10-year daily) should complete quickly
+        group.bench_function("batch_inference_2520_10y", |b| {
+            let config = ModelConfig::new("simple_mlp", 10);
+            let mut model = OnnxModel::from_file(larger_model_path, config).unwrap();
+            let batch: Vec<Vec<f64>> = (0..2520)
+                .map(|i| (0..10).map(|j| ((i * 10 + j) as f64) / 25200.0).collect())
+                .collect();
+
+            b.iter(|| model.predict_batch(black_box(&batch)))
+        });
+    }
+
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_indicators,
@@ -484,4 +561,12 @@ criterion_group!(
     bench_walkforward,
 );
 
+// ONNX benchmarks are in a separate group due to feature flag
+#[cfg(feature = "onnx")]
+criterion_group!(onnx_benches, bench_onnx_inference);
+
+#[cfg(feature = "onnx")]
+criterion_main!(benches, onnx_benches);
+
+#[cfg(not(feature = "onnx"))]
 criterion_main!(benches);
