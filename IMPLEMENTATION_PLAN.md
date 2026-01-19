@@ -72,6 +72,14 @@ Per spec gap analysis on 2026-01-16, all items resolved:
 **Issue Found & Fixed:**
 1. Release workflow YAML parse error due to unquoted `run:` command with a `:` inside the Python f-string; updated to a quoted string so GitHub Actions can parse the workflow.
 
+### CI Issues (Priority: High) - RESOLVED 2026-01-19
+
+**Location:** `.github/workflows/ci.yml`, `.github/workflows/coverage.yml`
+**Status:** Fixed
+
+**Issue Found & Fixed:**
+1. Python tests and coverage failed because Plotly wasn't installed; added `plotly` to CI and coverage dependency installs to satisfy visualization tests.
+
 ### Remaining CI Issues (Priority: Medium)
 
 **1. Rust Tests macOS Release Mode**
