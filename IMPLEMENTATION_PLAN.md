@@ -127,7 +127,7 @@ Per spec gap analysis on 2026-01-16, all items resolved:
 
 **Issue Found & Fixed:**
 1. Documentation examples failed because `backtest()` rejected integer NumPy arrays and lacked `max_leverage`; normalized signals to float and forwarded full sizing-related parameters.
-2. Windows Python tests failed saving ASCII plots to `.txt`; opened files with UTF-8 encoding to avoid cp1252 errors.
+2. Windows Python tests failed saving ASCII plots to `.txt`; wrote and read files as UTF-8 to avoid cp1252 errors.
 
 ### Documentation Updates (Priority: High) - RESOLVED 2026-01-19
 

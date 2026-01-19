@@ -653,7 +653,7 @@ class TestPlotSaveAscii:
             returned_path = result.plot(save=save_path)
             assert returned_path == save_path
             # Verify file was created
-            with open(save_path) as f:
+            with open(save_path, encoding="utf-8") as f:
                 content = f.read()
                 assert len(content) > 0
 
