@@ -458,10 +458,10 @@ fn bench_parquet_export(c: &mut Criterion) {
         .collect();
     let columns = vec!["f1", "f2", "f3", "f4", "f5"];
 
-    group.bench_function("export_1000_rows", |b| {
-        let temp_dir = TempDir::new().unwrap();
-        let path = temp_dir.path().join("features.parquet");
+    let temp_dir = TempDir::new().unwrap();
+    let path = temp_dir.path().join("features.parquet");
 
+    group.bench_function("export_1000_rows", |b| {
         b.iter(|| export_features_parquet(black_box(&features), &columns, &path).unwrap())
     });
 

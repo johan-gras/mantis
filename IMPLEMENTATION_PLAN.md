@@ -104,6 +104,14 @@ Per spec gap analysis on 2026-01-16, all items resolved:
 **Issue Found & Fixed:**
 1. `cargo fmt --check` failed in CI due to formatting drift; ran `cargo fmt` to normalize test formatting.
 
+### CI Issues (Priority: High) - RESOLVED 2026-01-19
+
+**Location:** `benches/backtest_bench.rs`
+**Status:** Fixed
+
+**Issue Found & Fixed:**
+1. Benchmark regression flagged `parquet/export_1000_rows` as >10% slower; reduced per-iteration temp dir overhead by reusing a single temp directory for the bench.
+
 ### CI Issues (Priority: Medium) - RESOLVED 2026-01-19
 
 **1. Rust Tests macOS Release Mode**
