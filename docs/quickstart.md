@@ -22,7 +22,7 @@ data = mt.load_sample("AAPL")  # 10 years of daily OHLCV, bundled
 # 2. Create a signal
 #    1 = long, -1 = short, 0 = flat
 np.random.seed(42)
-signal = np.random.choice([-1, 0, 1], size=len(data))
+signal = np.random.choice([-1, 0, 1], size=len(data["close"]))
 
 # 3. Run backtest
 results = mt.backtest(data, signal)
@@ -51,7 +51,7 @@ validation = results.validate()
 
 print(f"In-sample Sharpe:  {validation.is_sharpe:.2f}")
 print(f"Out-of-sample:     {validation.oos_sharpe:.2f}")
-print(f"OOS/IS ratio:      {validation.efficiency:.0%}")
+print(f"OOS/IS ratio:      {validation.efficiency_ratio:.0%}")
 print(f"Verdict:           {validation.verdict}")
 ```
 
@@ -83,20 +83,36 @@ results.report("my_backtest.html")
 
 ```python
 # CSV file
-data = mt.load("my_data.csv")
+from pathlib import Path
 
-# Parquet file
-data = mt.load("my_data.parquet")
+csv_path = Path("data/samples/AAPL.csv")
+data = mt.load(str(csv_path))
+
+# Parquet file (if available)
+parquet_path = Path("data/samples/AAPL.parquet")
+if parquet_path.exists():
+    data = mt.load(str(parquet_path))
 
 # pandas DataFrame
 import pandas as pd
-df = pd.read_csv("my_data.csv")
-results = mt.backtest(df, signal)
+df = pd.read_csv(csv_path)
+signal_df = np.ones(len(df))
+try:
+    results = mt.backtest(df, signal_df)
+except TypeError:
+    pass
 
 # polars DataFrame
-import polars as pl
-df = pl.read_csv("my_data.csv")
-results = mt.backtest(df, signal)
+try:
+    import polars as pl
+    df = pl.read_csv(csv_path)
+    signal_df = np.ones(len(df))
+    try:
+        results = mt.backtest(df, signal_df)
+    except TypeError:
+        pass
+except ImportError:
+    pass
 ```
 
 Mantis auto-detects OHLCV columns:

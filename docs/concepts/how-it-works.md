@@ -135,6 +135,9 @@ Profit = sell_price - buy_price - costs
 ### Sharpe Ratio
 
 ```python
+# Example equity curve
+equity = np.array([100_000, 101_500, 99_750, 102_300, 101_900])
+
 # Daily returns
 returns = np.diff(equity) / equity[:-1]
 
@@ -154,6 +157,9 @@ sharpe = (returns.mean() / returns.std()) * np.sqrt(252)
 ### Maximum Drawdown
 
 ```python
+# Example equity curve
+equity = np.array([100_000, 101_500, 99_750, 102_300, 101_900])
+
 # Running maximum
 peak = np.maximum.accumulate(equity)
 

@@ -25,7 +25,7 @@ import numpy as np
 data = mt.load_sample("AAPL")
 
 # Your signal (replace with your model's predictions)
-signal = np.random.choice([-1, 0, 1], size=len(data))
+signal = np.random.choice([-1, 0, 1], size=len(data["close"]))
 
 # Run backtest
 results = mt.backtest(data, signal)

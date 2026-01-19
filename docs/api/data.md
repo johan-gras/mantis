@@ -25,6 +25,7 @@ def load(
 Dictionary with numpy arrays:
 
 ```python
+# skip-test
 {
     "timestamp": np.ndarray,  # datetime64
     "open": np.ndarray,       # float64
@@ -42,10 +43,10 @@ Dictionary with numpy arrays:
 import mantis as mt
 
 # Load from CSV
-data = mt.load("prices.csv")
+data = mt.load("data/samples/AAPL.csv")
 
-# Load from Parquet
-data = mt.load("prices.parquet")
+# Load from Parquet (if available)
+# data = mt.load("data/samples/AAPL.parquet")
 
 # Access data
 print(f"Bars: {len(data['bars'])}")
@@ -155,9 +156,9 @@ Dictionary mapping symbol names to data dictionaries.
 import mantis as mt
 
 data = mt.load_multi({
-    "AAPL": "data/AAPL.csv",
-    "GOOGL": "data/GOOGL.csv",
-    "MSFT": "data/MSFT.csv"
+    "AAPL": "data/samples/AAPL.csv",
+    "SPY": "data/samples/SPY.csv",
+    "BTC": "data/samples/BTC.csv"
 })
 
 # Access by symbol
@@ -194,10 +195,10 @@ Dictionary mapping filenames (without extension) to data dictionaries.
 import mantis as mt
 
 # Load all CSVs
-data = mt.load_dir("data/stocks/", pattern="*.csv")
+data = mt.load_dir("data/samples/*.csv")
 
-# Load all Parquet files
-data = mt.load_dir("data/stocks/", pattern="*.parquet")
+# Load all Parquet files (if available)
+# data = mt.load_dir("data/samples/*.parquet")
 
 # Symbols are derived from filenames
 # data/stocks/AAPL.csv → data["AAPL"]
@@ -231,13 +232,16 @@ import pandas as pd
 import mantis as mt
 
 # pandas
-df = pd.read_csv("prices.csv")
+df = pd.read_csv("data/samples/AAPL.csv")
 results = mt.backtest(df, signal)
 
 # polars
-import polars as pl
-df = pl.read_csv("prices.csv")
-results = mt.backtest(df, signal)
+try:
+    import polars as pl
+    df = pl.read_csv("data/samples/AAPL.csv")
+    results = mt.backtest(df, signal)
+except ImportError:
+    pass
 ```
 
 Mantis auto-detects DataFrame types and extracts OHLCV columns.

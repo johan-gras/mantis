@@ -112,6 +112,33 @@ Per spec gap analysis on 2026-01-16, all items resolved:
 **Issue Found & Fixed:**
 1. Benchmark regression flagged `parquet/export_1000_rows` as >10% slower; reduced per-iteration temp dir overhead by reusing a single temp directory for the bench.
 
+### CI Issues (Priority: High) - RESOLVED 2026-01-19
+
+**Location:** `.github/workflows/release.yml`
+**Status:** Fixed
+
+**Issue Found & Fixed:**
+1. Release wheel tests failed with `--no-index` because pip tried to resolve dependencies; added `--no-deps` when installing the wheel, then installed numpy/pandas/pytest separately.
+
+### CI Issues (Priority: High) - RESOLVED 2026-01-19
+
+**Location:** `python/mantis/__init__.py`
+**Status:** Fixed
+
+**Issue Found & Fixed:**
+1. Documentation examples failed because `backtest()` rejected integer NumPy arrays and lacked `max_leverage`; normalized signals to float and forwarded full sizing-related parameters.
+2. Windows Python tests failed saving ASCII plots to `.txt`; opened files with UTF-8 encoding to avoid cp1252 errors.
+
+### Documentation Updates (Priority: High) - RESOLVED 2026-01-19
+
+**Location:** `docs/`
+**Status:** Fixed
+
+**Issue Found & Fixed:**
+1. Doc examples failed due to signal length mismatches, outdated `sweep` API usage, and `load_dir` signature drift; updated examples to use sample data, correct glob patterns, and `sweep.best()`.
+2. Multi-symbol examples attempted unsupported dict signals; replaced with per-symbol backtests and clarified metrics.
+3. Quickstart and cookbook examples now use real sample files, guarded optional dependencies, and safe validation outputs.
+
 ### CI Issues (Priority: Medium) - RESOLVED 2026-01-19
 
 **1. Rust Tests macOS Release Mode**

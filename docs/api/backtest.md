@@ -60,7 +60,7 @@ import mantis as mt
 import numpy as np
 
 data = mt.load_sample("AAPL")
-signal = np.random.choice([-1, 0, 1], size=len(data))
+signal = np.random.choice([-1, 0, 1], size=len(data["close"]))
 
 results = mt.backtest(
     data,
@@ -167,8 +167,8 @@ def sweep(
 import mantis as mt
 
 def create_signal(fast, slow):
-    # Create signal based on parameters
-    return signal
+    idx = np.arange(len(data["close"]))
+    return np.where((idx % slow) < fast, 1.0, -1.0)
 
 sweep = mt.sweep(
     data,
@@ -179,8 +179,9 @@ sweep = mt.sweep(
     }
 )
 
-print(f"Best params: {sweep.best_params}")
-print(f"Best Sharpe: {sweep.best_result.sharpe:.2f}")
+best = sweep.best()
+print(f"Best params: {best.params}")
+print(f"Best Sharpe: {best.result.sharpe:.2f}")
 ```
 
 ---

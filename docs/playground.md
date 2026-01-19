@@ -33,7 +33,7 @@ print(f"Loaded {len(data['bars'])} bars of AAPL data")
 
 # Create a simple signal
 np.random.seed(42)
-signal = np.random.choice([-1, 0, 1], size=len(data))
+signal = np.random.choice([-1, 0, 1], size=len(data["close"]))
 
 # Run backtest
 results = mt.backtest(data, signal)
@@ -76,7 +76,7 @@ import mantis as mt
 import numpy as np
 
 data = mt.load_sample("AAPL")
-signal = np.random.choice([-1, 0, 1], size=len(data))
+signal = np.random.choice([-1, 0, 1], size=len(data["close"]))
 results = mt.backtest(data, signal)
 print(results)
 ```
@@ -103,16 +103,16 @@ print(f"Date range: {data['timestamp'][0]} to {data['timestamp'][-1]}")
 
 ```python
 # With a signal array
-results = mt.backtest(data, signal)
+signal_results = mt.backtest(data, signal)
 
 # With a built-in strategy
-results = mt.backtest(data, strategy="sma-crossover")
+strategy_results = mt.backtest(data, strategy="sma-crossover")
 ```
 
 ### Validate strategies
 
 ```python
-validation = results.validate()
+validation = signal_results.validate()
 print(validation.verdict)
 ```
 
@@ -120,12 +120,14 @@ print(validation.verdict)
 
 ```python
 # Interactive Plotly chart in Colab
-results.plot()
+signal_results.plot()
 ```
 
 ### Compare strategies
 
 ```python
+signal_a = np.where(np.arange(len(data["close"])) % 2 == 0, 1.0, -1.0)
+signal_b = np.where(np.arange(len(data["close"])) % 3 == 0, 1.0, -1.0)
 results_a = mt.backtest(data, signal_a)
 results_b = mt.backtest(data, signal_b)
 print(mt.compare([results_a, results_b], names=["A", "B"]))

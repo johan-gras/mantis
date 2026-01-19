@@ -10,7 +10,7 @@ Mantis supports multiple data formats and auto-detects column names.
 import mantis as mt
 
 # Basic load
-data = mt.load("prices.csv")
+data = mt.load("data/samples/AAPL.csv")
 
 # Access columns
 print(data["open"][:5])     # First 5 opens
@@ -21,7 +21,7 @@ print(data["bars"])         # List of Bar objects
 ### Parquet
 
 ```python
-data = mt.load("prices.parquet")
+# data = mt.load("data/samples/AAPL.parquet")
 ```
 
 Parquet is faster for large files (10GB in < 5 seconds).
@@ -47,17 +47,19 @@ print(mt.list_samples())  # ["AAPL", "SPY", "BTC"]
 ```python
 import pandas as pd
 
-df = pd.read_csv("prices.csv")
+df = pd.read_csv("data/samples/AAPL.csv")
 results = mt.backtest(df, signal)
 ```
 
 ### polars
 
 ```python
-import polars as pl
-
-df = pl.read_csv("prices.csv")
-results = mt.backtest(df, signal)
+try:
+    import polars as pl
+    df = pl.read_csv("data/samples/AAPL.csv")
+    results = mt.backtest(df, signal)
+except ImportError:
+    pass
 ```
 
 ## Multiple Symbols
@@ -67,9 +69,9 @@ results = mt.backtest(df, signal)
 ```python
 # Provide paths
 data = mt.load_multi({
-    "AAPL": "data/AAPL.csv",
-    "GOOGL": "data/GOOGL.csv",
-    "MSFT": "data/MSFT.csv"
+    "AAPL": "data/samples/AAPL.csv",
+    "SPY": "data/samples/SPY.csv",
+    "BTC": "data/samples/BTC.csv"
 })
 ```
 
@@ -77,7 +79,7 @@ data = mt.load_multi({
 
 ```python
 # Load all CSVs from a directory
-data = mt.load_dir("data/stocks/", pattern="*.csv")
+data = mt.load_dir("data/samples/*.csv")
 # Symbol names derived from filenames
 ```
 
@@ -109,7 +111,7 @@ Common formats are auto-detected:
 Mantis validates data on load:
 
 ```python
-data = mt.load("prices.csv")
+data = mt.load("data/samples/AAPL.csv")
 # Automatic checks:
 # - Missing OHLCV columns → error
 # - Duplicate timestamps → removed with warning
@@ -124,7 +126,7 @@ data = mt.load("prices.csv")
 `mt.load()` returns a dictionary:
 
 ```python
-data = mt.load("prices.csv")
+data = mt.load("data/samples/AAPL.csv")
 
 # numpy arrays
 data["timestamp"]  # datetime64 array

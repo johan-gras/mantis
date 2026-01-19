@@ -6,30 +6,34 @@ Backtest across multiple assets with automatic portfolio math.
 
 ```python
 import mantis as mt
+import numpy as np
 
 # From paths
 data = mt.load_multi({
-    "AAPL": "data/AAPL.csv",
-    "GOOGL": "data/GOOGL.csv",
-    "MSFT": "data/MSFT.csv"
+    "AAPL": "data/samples/AAPL.csv",
+    "SPY": "data/samples/SPY.csv",
+    "BTC": "data/samples/BTC.csv"
 })
 
 # From directory
-data = mt.load_dir("data/stocks/", pattern="*.csv")
+data = mt.load_dir("data/samples/*.csv")
 ```
 
-## Multi-Symbol Backtest
+## Multi-Symbol Backtests
 
-Provide signals as a dictionary:
+Run a separate backtest per symbol:
 
 ```python
 signals = {
-    "AAPL": aapl_signal,
-    "GOOGL": googl_signal,
-    "MSFT": msft_signal
+    "AAPL": np.ones(len(data["AAPL"]["close"])),
+    "SPY": np.ones(len(data["SPY"]["close"])),
+    "BTC": np.ones(len(data["BTC"]["close"]))
 }
 
-results = mt.backtest(data, signals)
+results = {
+    symbol: mt.backtest(symbol_data, signals[symbol])
+    for symbol, symbol_data in data.items()
+}
 ```
 
 ## Portfolio Strategies (CLI)
@@ -104,21 +108,13 @@ mantis portfolio -d ./data/ -p "*.csv" --strategy risk-parity -o json
 mantis portfolio -d ./data/ -p "*.csv" --strategy risk-parity -o csv
 ```
 
-## Portfolio Metrics
+## Per-Symbol Metrics
 
-Multi-symbol backtests return portfolio-level metrics:
+Inspect metrics per symbol:
 
 ```python
-results = mt.backtest(data, signals)
-
-# Portfolio metrics
-results.total_return      # Portfolio return
-results.sharpe            # Portfolio Sharpe
-results.max_drawdown      # Portfolio max drawdown
-
-# Per-symbol breakdown available in trades
-for trade in results.trades:
-    print(f"{trade.symbol}: {trade.pnl:.2f}")
+for symbol, result in results.items():
+    print(f"{symbol}: Sharpe {result.sharpe:.2f}, Return {result.total_return:.1%}")
 ```
 
 ## Correlation and Diversification

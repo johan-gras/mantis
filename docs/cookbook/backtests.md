@@ -10,10 +10,11 @@ import numpy as np
 data = mt.load_sample("AAPL")
 
 # Create signal: 1=long, -1=short, 0=flat
-signal = np.random.choice([-1, 0, 1], size=len(data))
+signal = np.random.choice([-1, 0, 1], size=len(data["close"]))
 
 # Run backtest
-results = mt.backtest(data, signal)
+benchmark = mt.load_sample("SPY")
+results = mt.backtest(data, signal, benchmark=benchmark)
 
 # View results
 print(results)
@@ -107,7 +108,8 @@ trades = results.trades  # List of Trade objects
 ## Benchmark Comparison
 
 ```python
-results = mt.backtest(data, signal)
+benchmark = mt.load_sample("SPY")
+results = mt.backtest(data, signal, benchmark=benchmark)
 
 # Default: buy-and-hold
 print(f"Strategy:     {results.total_return:.1%}")
@@ -142,9 +144,12 @@ Test multiple parameter combinations:
 
 ```python
 def create_signal(fast, slow):
-    fast_sma = data["close"].rolling(fast).mean()
-    slow_sma = data["close"].rolling(slow).mean()
-    return np.where(fast_sma > slow_sma, 1, -1)
+    import pandas as pd
+
+    close = pd.Series(data["close"])
+    fast_sma = close.rolling(fast).mean()
+    slow_sma = close.rolling(slow).mean()
+    return np.where(fast_sma > slow_sma, 1.0, -1.0)
 
 sweep = mt.sweep(
     data,
@@ -155,13 +160,16 @@ sweep = mt.sweep(
     }
 )
 
-print(f"Best params: {sweep.best_params}")
-print(f"Best Sharpe: {sweep.best_result.sharpe:.2f}")
+best = sweep.best()
+print(f"Best params: {best.params}")
+print(f"Best Sharpe: {best.result.sharpe:.2f}")
 ```
 
 ## Compare Strategies
 
 ```python
+signal_a = np.where(np.arange(len(data["close"])) % 2 == 0, 1.0, -1.0)
+signal_b = np.where(np.arange(len(data["close"])) % 3 == 0, 1.0, -1.0)
 results_a = mt.backtest(data, signal_a)
 results_b = mt.backtest(data, signal_b)
 

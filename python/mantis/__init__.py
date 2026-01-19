@@ -36,7 +36,7 @@ from mantis._mantis import (
     load_results,
     adjust,
     backtest as _backtest_raw,
-    signal_check,
+    signal_check as _signal_check_raw,
     validate as _validate_raw,
     BacktestResult as _BacktestResult,
     ValidationResult as _ValidationResult,
@@ -455,7 +455,7 @@ class BacktestResult:
                 # ASCII can only be saved as text
                 ascii_plot = self._rust.plot(width)
                 if save.endswith('.txt'):
-                    with open(save, 'w') as f:
+                    with open(save, 'w', encoding='utf-8') as f:
                         f.write(ascii_plot)
                     return save
                 else:
@@ -1563,8 +1563,10 @@ def backtest(
     strategy_params: Optional[Dict[str, Any]] = None,
     config: Optional[BacktestConfig] = None,
     commission: float = 0.001,
-    slippage: float = 0.001,
-    size: float = 0.10,
+    commission_per_share: float = 0.0,
+    slippage: Union[float, str] = 0.001,
+    slippage_factor: Optional[float] = None,
+    size: Union[float, str] = 0.10,
     cash: float = 100_000.0,
     stop_loss: Optional[Union[float, str]] = None,
     take_profit: Optional[Union[float, str]] = None,
@@ -1572,6 +1574,13 @@ def backtest(
     fractional: bool = False,
     borrow_cost: float = 0.03,
     max_position: float = 1.0,
+    max_leverage: float = 2.0,
+    target_vol: Optional[float] = None,
+    vol_lookback: Optional[int] = None,
+    base_size: Optional[float] = None,
+    risk_per_trade: Optional[float] = None,
+    stop_atr: Optional[float] = None,
+    atr_period: Optional[int] = None,
     fill_price: str = "next_open",
     benchmark: Optional[Any] = None,
     freq: Optional[str] = None,
@@ -1579,6 +1588,10 @@ def backtest(
     max_volume_participation: Optional[float] = None,
     order_type: str = "market",
     limit_offset: float = 0.0,
+    model: Optional[str] = None,
+    features: Optional[Any] = None,
+    model_input_size: Optional[int] = None,
+    signal_threshold: Optional[float] = None,
 ) -> BacktestResult:
     """
     Run a backtest on historical data with a signal array.
@@ -1609,6 +1622,9 @@ def backtest(
             For sells: limit_price = close * (1 + limit_offset) (above close)
             Only used when order_type="limit".
     """
+    if signal is not None:
+        signal = np.asarray(signal, dtype=float)
+
     rust_result = _backtest_raw(
         data=data,
         signal=signal,
@@ -1616,7 +1632,9 @@ def backtest(
         strategy_params=strategy_params,
         config=config,
         commission=commission,
+        commission_per_share=commission_per_share,
         slippage=slippage,
+        slippage_factor=slippage_factor,
         size=size,
         cash=cash,
         stop_loss=stop_loss,
@@ -1625,6 +1643,13 @@ def backtest(
         fractional=fractional,
         borrow_cost=borrow_cost,
         max_position=max_position,
+        max_leverage=max_leverage,
+        target_vol=target_vol,
+        vol_lookback=vol_lookback,
+        base_size=base_size,
+        risk_per_trade=risk_per_trade,
+        stop_atr=stop_atr,
+        atr_period=atr_period,
         fill_price=fill_price,
         benchmark=benchmark,
         freq=freq,
@@ -1632,8 +1657,25 @@ def backtest(
         max_volume_participation=max_volume_participation,
         order_type=order_type,
         limit_offset=limit_offset,
+        model=model,
+        features=features,
+        model_input_size=model_input_size,
+        signal_threshold=signal_threshold,
     )
     return BacktestResult(rust_result)
+
+
+def signal_check(
+    data: Any,
+    signal: np.ndarray,
+) -> List[str]:
+    """
+    Validate signal before backtesting.
+
+    Returns a list of warning messages (empty if signal is valid).
+    """
+    signal = np.asarray(signal, dtype=float)
+    return _signal_check_raw(data, signal)
 
 
 def validate(
@@ -1671,6 +1713,7 @@ def validate(
         ValidationResult with IS/OOS metrics, verdict, and deflated_sharpe
         adjusted for the number of trials.
     """
+    signal = np.asarray(signal, dtype=float)
     rust_result = _validate_raw(
         data, signal, folds, in_sample_ratio, anchored,
         config, commission, slippage, size, cash, trials

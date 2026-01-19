@@ -234,6 +234,18 @@ Formatted comparison table as string.
 **Example:**
 
 ```python
+import mantis as mt
+import numpy as np
+
+data = mt.load_sample("AAPL")
+signal_a = np.ones(len(data["close"]))
+signal_b = -signal_a
+signal_c = np.where(np.arange(len(data["close"])) % 2 == 0, 1.0, -1.0)
+
+results_a = mt.backtest(data, signal_a)
+results_b = mt.backtest(data, signal_b)
+results_c = mt.backtest(data, signal_c)
+
 comparison = mt.compare(
     [results_a, results_b, results_c],
     names=["LSTM", "Transformer", "Baseline"]
