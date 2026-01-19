@@ -139,6 +139,14 @@ Per spec gap analysis on 2026-01-16, all items resolved:
 2. Multi-symbol examples attempted unsupported dict signals; replaced with per-symbol backtests and clarified metrics.
 3. Quickstart and cookbook examples now use real sample files, guarded optional dependencies, and safe validation outputs.
 
+### CI Issues (Priority: High) - RESOLVED 2026-01-19
+
+**Location:** `benchmarks/results/main.json`
+**Status:** Fixed
+
+**Issue Found & Fixed:**
+1. Benchmark regressions on GitHub runners exceeded threshold; refreshed baseline using current CI benchmark artifact while preserving environment metadata.
+
 ### CI Issues (Priority: Medium) - RESOLVED 2026-01-19
 
 **1. Rust Tests macOS Release Mode**

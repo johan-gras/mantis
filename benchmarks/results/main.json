@@ -1,68 +1,68 @@
 {
-  "timestamp": "2026-01-19T16:11:56.813119+00:00",
+  "timestamp": "2026-01-19T16:54:47.478078+00:00",
   "benchmarks": {
     "backtest/macd_strategy_1000": {
-      "mean_ns": 35739447.865
+      "mean_ns": 28973577.585
     },
     "backtest/momentum_strategy_1000": {
-      "mean_ns": 2297581.329090908
+      "mean_ns": 2552980.8400000003
     },
     "backtest/rsi_strategy_1000": {
-      "mean_ns": 2728323.824736843
+      "mean_ns": 3032390.167058823
     },
     "indicators/atr_14": {
-      "mean_ns": 1299.1567419821572
+      "mean_ns": 1063.384098876372
     },
     "indicators/bbands_20_2": {
-      "mean_ns": 30.937327729584062
+      "mean_ns": 26.01156413603028
     },
     "indicators/macd_12_26_9": {
-      "mean_ns": 68917.93559509603
+      "mean_ns": 54173.49859647893
     },
     "indicators/rsi_14": {
-      "mean_ns": 586.9952320121498
+      "mean_ns": 717.4150644749064
     },
     "monte_carlo/mc_1000_sims": {
-      "mean_ns": 769271.1103418034
+      "mean_ns": 759748.2879669314
     },
     "monte_carlo/mc_100_sims": {
-      "mean_ns": 77042.63518613801
+      "mean_ns": 75015.0752786953
     },
     "onnx/batch_inference_100": {
-      "mean_ns": 4857.334967363866
+      "mean_ns": 5085.404427980811
     },
     "onnx/batch_inference_1000": {
-      "mean_ns": 23080.958795792292
+      "mean_ns": 22723.109451247794
     },
     "onnx/batch_inference_2520_10y": {
-      "mean_ns": 150644.59867556253
+      "mean_ns": 170480.2147954982
     },
     "onnx/single_inference_minimal": {
-      "mean_ns": 2722.4522683614055
+      "mean_ns": 2905.7284780216582
     },
     "onnx/single_inference_simple_mlp": {
-      "mean_ns": 4056.72650630523
+      "mean_ns": 4387.019955607126
     },
     "optimization/optimize_9_params": {
-      "mean_ns": 8745307.052784992
+      "mean_ns": 8124480.971134258
     },
     "parquet/export_1000_rows": {
-      "mean_ns": 347211.29877519177
+      "mean_ns": 484012.5008847254
     },
     "spec_required/daily_10y": {
-      "mean_ns": 2341359.259090909
+      "mean_ns": 2539956.4210000006
     },
     "spec_required/multi_symbol_3": {
-      "mean_ns": 7106947.705
+      "mean_ns": 7689965.747142856
     },
     "spec_required/single_bar_1000": {
-      "mean_ns": 1942516.8721977312
+      "mean_ns": 2143084.195833332
     },
     "sweep/sweep_1000": {
-      "mean_ns": 71596154.91950397
+      "mean_ns": 62703734.10440476
     },
     "walkforward/walkforward_12fold": {
-      "mean_ns": 64679207.044821426
+      "mean_ns": 61787133.19886905
     }
   },
   "environment": {
