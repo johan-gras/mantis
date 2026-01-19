@@ -88,6 +88,14 @@ Per spec gap analysis on 2026-01-16, all items resolved:
 **Issue Found & Fixed:**
 1. Release test-wheel jobs failed on Linux because `pip install dist/*.whl` tried to install all platform wheels; switched to `pip install --no-index --find-links dist mantis-bt` so pip selects the compatible wheel.
 
+### CI Issues (Priority: High) - RESOLVED 2026-01-19
+
+**Location:** `.github/workflows/bench.yml`
+**Status:** Fixed
+
+**Issue Found & Fixed:**
+1. Update baseline job failed with 403 when pushing benchmark results; added `permissions: contents: write` to allow the auto-commit action to push.
+
 ### Remaining CI Issues (Priority: Medium)
 
 **1. Rust Tests macOS Release Mode**
