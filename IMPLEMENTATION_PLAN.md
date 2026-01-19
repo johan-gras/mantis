@@ -96,6 +96,14 @@ Per spec gap analysis on 2026-01-16, all items resolved:
 **Issue Found & Fixed:**
 1. Update baseline job failed with 403 when pushing benchmark results; added `permissions: contents: write` to allow the auto-commit action to push.
 
+### CI Issues (Priority: High) - RESOLVED 2026-01-19
+
+**Location:** `src/cli.rs`
+**Status:** Fixed
+
+**Issue Found & Fixed:**
+1. `cargo fmt --check` failed in CI due to formatting drift; ran `cargo fmt` to normalize test formatting.
+
 ### CI Issues (Priority: Medium) - RESOLVED 2026-01-19
 
 **1. Rust Tests macOS Release Mode**

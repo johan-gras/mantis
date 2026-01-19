@@ -3514,8 +3514,14 @@ mod tests {
 
     #[test]
     fn test_run_backtest_sizing_methods() {
-        run_backtest_with(PositionSizingMethodArg::Percent, None, None, None, OutputFormat::Json)
-            .unwrap();
+        run_backtest_with(
+            PositionSizingMethodArg::Percent,
+            None,
+            None,
+            None,
+            OutputFormat::Json,
+        )
+        .unwrap();
         run_backtest_with(
             PositionSizingMethodArg::Fixed,
             Some(1000.0),
@@ -3532,8 +3538,14 @@ mod tests {
             OutputFormat::Text,
         )
         .unwrap();
-        run_backtest_with(PositionSizingMethodArg::Signal, None, None, None, OutputFormat::Text)
-            .unwrap();
+        run_backtest_with(
+            PositionSizingMethodArg::Signal,
+            None,
+            None,
+            None,
+            OutputFormat::Text,
+        )
+        .unwrap();
         run_backtest_with(
             PositionSizingMethodArg::Risk,
             None,
