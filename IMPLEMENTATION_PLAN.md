@@ -64,6 +64,14 @@ Per spec gap analysis on 2026-01-16, all items resolved:
    - `unnecessary_get_then_check` → use `contains_key()` instead of `get().is_none()`
 5. `maturin develop` requires a virtual environment - added venv creation to python-test, docs-examples, and python-coverage jobs
 
+### CI Issues (Priority: High) - RESOLVED 2026-01-19
+
+**Location:** `.github/workflows/release.yml`
+**Status:** Fixed
+
+**Issue Found & Fixed:**
+1. Release workflow YAML parse error due to unquoted `run:` command with a `:` inside the Python f-string; updated to a quoted string so GitHub Actions can parse the workflow.
+
 ### Remaining CI Issues (Priority: Medium)
 
 **1. Rust Tests macOS Release Mode**

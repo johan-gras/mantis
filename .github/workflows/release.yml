@@ -108,7 +108,7 @@ jobs:
           pip install numpy pandas pytest
 
       - name: Test import
-        run: python -c "import mantis; print(f'mantis version: {mantis.__version__}')"
+        run: "python -c \"import mantis; print(f'mantis version: {mantis.__version__}')\""
 
       - name: Run quick tests
         run: |
