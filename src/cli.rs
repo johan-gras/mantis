@@ -3092,6 +3092,279 @@ fn validate_data(data_path: &PathBuf) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::{Duration, TimeZone, Utc};
+    use mantis::engine::BacktestResult;
+    use mantis::sensitivity::{Cliff, ParameterResult, Plateau};
+    use mantis::walkforward::{WalkForwardWindow, WindowResult};
+    use mantis::CostScenario;
+    use std::collections::HashMap;
+    use std::io::Write;
+    use tempfile::NamedTempFile;
+    use uuid::Uuid;
+
+    fn sample_data_path() -> PathBuf {
+        let path = PathBuf::from("data/sample.csv");
+        assert!(path.exists(), "sample data missing: {:?}", path);
+        path
+    }
+
+    fn make_test_result(
+        strategy: &str,
+        total_return_pct: f64,
+        sharpe_ratio: f64,
+        max_drawdown_pct: f64,
+    ) -> BacktestResult {
+        let start_time = Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap();
+        let end_time = start_time + Duration::days(10);
+        BacktestResult {
+            strategy_name: strategy.to_string(),
+            symbols: vec!["TEST".to_string()],
+            config: BacktestConfig::default(),
+            initial_capital: 100_000.0,
+            final_equity: 100_000.0 * (1.0 + total_return_pct / 100.0),
+            total_return_pct,
+            annual_return_pct: total_return_pct,
+            trading_days: 10,
+            total_trades: 4,
+            winning_trades: 2,
+            losing_trades: 2,
+            win_rate: 50.0,
+            avg_win: 100.0,
+            avg_loss: -100.0,
+            profit_factor: 1.0,
+            max_drawdown_pct,
+            sharpe_ratio,
+            sortino_ratio: sharpe_ratio * 1.2,
+            calmar_ratio: if max_drawdown_pct.abs() > 0.0 {
+                total_return_pct / max_drawdown_pct.abs()
+            } else {
+                0.0
+            },
+            trades: Vec::new(),
+            equity_curve: Vec::new(),
+            start_time,
+            end_time,
+            experiment_id: Uuid::new_v4(),
+            git_info: None,
+            config_hash: String::new(),
+            data_checksums: HashMap::new(),
+            seed: Some(42),
+        }
+    }
+
+    fn make_walk_forward_result() -> WalkForwardResult {
+        let start = Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap();
+        let window = WalkForwardWindow {
+            index: 0,
+            is_start: start,
+            is_end: start + Duration::days(4),
+            oos_start: start + Duration::days(5),
+            oos_end: start + Duration::days(9),
+            is_bars: 5,
+            oos_bars: 5,
+        };
+
+        WalkForwardResult {
+            config: WalkForwardConfig {
+                num_windows: 1,
+                in_sample_ratio: 0.7,
+                anchored: true,
+                min_bars_per_window: 5,
+            },
+            windows: vec![WindowResult {
+                window,
+                in_sample_result: make_test_result("IS", 5.0, 1.2, -5.0),
+                out_of_sample_result: make_test_result("OOS", 2.5, 0.6, -6.0),
+                efficiency_ratio: 0.5,
+                parameter_hash: 123,
+            }],
+            combined_oos_return: 2.5,
+            avg_is_return: 5.0,
+            avg_oos_return: 2.5,
+            avg_efficiency_ratio: 0.5,
+            walk_forward_efficiency: 0.5,
+            avg_is_sharpe: 1.2,
+            avg_oos_sharpe: 0.6,
+            oos_sharpe_threshold_met: true,
+            parameter_stability: 0.8,
+        }
+    }
+
+    fn make_cost_sensitivity_analysis() -> CostSensitivityAnalysis {
+        let base = make_test_result("Base", 4.0, 1.0, -8.0);
+        let scenario = |multiplier: f64, ret: f64, sharpe: f64| CostScenario {
+            multiplier,
+            result: make_test_result("Test", ret, sharpe, -10.0),
+            total_costs: 10.0 * multiplier,
+            avg_cost_per_trade: 1.0 * multiplier,
+        };
+
+        CostSensitivityAnalysis {
+            scenarios: vec![
+                CostScenario {
+                    multiplier: 1.0,
+                    result: base,
+                    total_costs: 10.0,
+                    avg_cost_per_trade: 1.0,
+                },
+                scenario(2.0, 2.0, 0.7),
+                scenario(5.0, 1.0, 0.3),
+                scenario(10.0, -1.0, -0.2),
+            ],
+            symbol: "TEST".to_string(),
+            strategy_name: "TestStrategy".to_string(),
+        }
+    }
+
+    fn make_sensitivity_analysis() -> SensitivityAnalysis {
+        let config = SensitivityConfig::new()
+            .add_parameter("fast", ParameterRange::discrete(vec![5.0, 10.0]))
+            .add_parameter("slow", ParameterRange::discrete(vec![20.0, 30.0]))
+            .metric(SensitivityMetric::Sharpe);
+
+        let mut params_a = HashMap::new();
+        params_a.insert("fast".to_string(), 5.0);
+        params_a.insert("slow".to_string(), 20.0);
+
+        let mut params_b = HashMap::new();
+        params_b.insert("fast".to_string(), 10.0);
+        params_b.insert("slow".to_string(), 30.0);
+
+        SensitivityAnalysis {
+            results: vec![
+                ParameterResult {
+                    params: params_a,
+                    metric_value: 1.2,
+                    result: make_test_result("SensA", 3.0, 1.2, -4.0),
+                },
+                ParameterResult {
+                    params: params_b,
+                    metric_value: 0.4,
+                    result: make_test_result("SensB", 1.0, 0.4, -6.0),
+                },
+            ],
+            strategy_name: "TestStrategy".to_string(),
+            symbol: "TEST".to_string(),
+            config,
+            cliffs: vec![Cliff {
+                parameter: "fast".to_string(),
+                value_before: 5.0,
+                value_after: 10.0,
+                metric_before: 1.2,
+                metric_after: 0.4,
+                drop_pct: 66.0,
+            }],
+            plateaus: vec![Plateau {
+                parameter: "slow".to_string(),
+                start_value: 20.0,
+                end_value: 30.0,
+                avg_metric: 0.8,
+                std_metric: 0.05,
+            }],
+        }
+    }
+
+    fn make_monte_carlo_result() -> MonteCarloResult {
+        let mut percentiles = HashMap::new();
+        percentiles.insert("5th".to_string(), -2.0);
+        percentiles.insert("10th".to_string(), -1.0);
+        percentiles.insert("25th".to_string(), 0.0);
+        percentiles.insert("50th".to_string(), 1.0);
+        percentiles.insert("75th".to_string(), 2.0);
+        percentiles.insert("90th".to_string(), 3.0);
+        percentiles.insert("95th".to_string(), 4.0);
+
+        MonteCarloResult {
+            config: MonteCarloConfig {
+                num_simulations: 100,
+                confidence_level: 0.9,
+                seed: Some(42),
+                resample_trades: true,
+                shuffle_returns: false,
+                block_bootstrap: true,
+                block_size: None,
+            },
+            num_simulations: 100,
+            num_trades: 25,
+            mean_return: -1.0,
+            median_return: -0.5,
+            return_std: 2.0,
+            return_ci: (-3.0, 1.0),
+            prob_positive_return: 0.4,
+            mean_max_drawdown: -12.0,
+            median_max_drawdown: -10.0,
+            max_drawdown_ci: (-20.0, -5.0),
+            max_drawdown_95th: -22.0,
+            mean_sharpe: -0.2,
+            median_sharpe: -0.3,
+            sharpe_ci: (-0.8, 0.1),
+            prob_positive_sharpe: 0.4,
+            var: -4.0,
+            cvar: -6.0,
+            return_distribution: vec![-2.0, -1.0, 0.0, 1.0],
+            sharpe_distribution: vec![-0.5, -0.2, 0.0, 0.1],
+            drawdown_distribution: vec![-10.0, -12.0, -15.0],
+            return_percentiles: percentiles,
+        }
+    }
+
+    fn run_backtest_with(
+        sizing_method: PositionSizingMethodArg,
+        fixed_dollar: Option<f64>,
+        target_vol: Option<f64>,
+        risk_per_trade: Option<f64>,
+        output: OutputFormat,
+    ) -> Result<()> {
+        let data_path = sample_data_path();
+        run_backtest(
+            &data_path,
+            "TEST",
+            StrategyType::SmaCrossover,
+            10_000.0,
+            0.02,
+            sizing_method,
+            fixed_dollar,
+            target_vol,
+            20,
+            risk_per_trade,
+            2.0,
+            14,
+            0.1,
+            0.1,
+            3.0,
+            None,
+            ExecutionPriceArg::Open,
+            1.0,
+            5,
+            LotSelectionArg::Fifo,
+            true,
+            10.0,
+            0.5,
+            1.5,
+            0.25,
+            0.30,
+            0.03,
+            false,
+            0.15,
+            true,
+            3,
+            5,
+            14,
+            5,
+            DataFormatArg::Csv,
+            AssetClassArg::Equity,
+            1.0,
+            0.01,
+            0.5,
+            8,
+            8,
+            0.0001,
+            1.0,
+            None,
+            Some(42),
+            output,
+        )
+    }
 
     #[test]
     fn test_cli_parse() {
@@ -3140,5 +3413,390 @@ mod tests {
     fn test_walk_forward_metric_arg_conversion() {
         let metric: WalkForwardMetric = WalkForwardMetricArg::ProfitFactor.into();
         assert!(matches!(metric, WalkForwardMetric::ProfitFactor));
+    }
+
+    #[test]
+    fn test_enum_conversions() {
+        assert_eq!(
+            ExecutionPrice::from(ExecutionPriceArg::Midpoint),
+            ExecutionPrice::Midpoint
+        );
+        match LotSelectionMethod::from(LotSelectionArg::HighestCost) {
+            LotSelectionMethod::HighestCost => {}
+            other => panic!("unexpected lot selection: {:?}", other),
+        }
+        assert_eq!(
+            SensitivityMetric::from(SensitivityMetricArg::WinRate),
+            SensitivityMetric::WinRate
+        );
+    }
+
+    #[test]
+    fn test_build_asset_config_variants() {
+        let equity = build_asset_config(
+            "EQ",
+            AssetClassArg::Equity,
+            1.0,
+            0.01,
+            0.5,
+            8,
+            8,
+            0.0001,
+            1.0,
+            None,
+        );
+        assert!(matches!(equity.asset_class, AssetClass::Equity));
+
+        let future = build_asset_config(
+            "FUT",
+            AssetClassArg::Future,
+            50.0,
+            0.25,
+            0.1,
+            8,
+            8,
+            0.0001,
+            1.0,
+            None,
+        );
+        if let AssetClass::Future { multiplier, .. } = future.asset_class {
+            assert_eq!(multiplier, 50.0);
+        } else {
+            panic!("expected future asset class");
+        }
+
+        let crypto = build_asset_config(
+            "BTC",
+            AssetClassArg::Crypto,
+            1.0,
+            0.01,
+            0.5,
+            8,
+            8,
+            0.0001,
+            1.0,
+            None,
+        );
+        assert!(matches!(crypto.asset_class, AssetClass::Crypto { .. }));
+
+        let forex = build_asset_config(
+            "FX",
+            AssetClassArg::Forex,
+            1.0,
+            0.01,
+            0.5,
+            8,
+            8,
+            0.0001,
+            1.0,
+            None,
+        );
+        assert!(matches!(forex.asset_class, AssetClass::Forex { .. }));
+
+        let option = build_asset_config(
+            "OPT",
+            AssetClassArg::Option,
+            100.0,
+            0.01,
+            0.5,
+            8,
+            8,
+            0.0001,
+            1.0,
+            Some("UNDER".to_string()),
+        );
+        if let AssetClass::Option { underlying, .. } = option.asset_class {
+            assert_eq!(underlying, "UNDER");
+        } else {
+            panic!("expected option asset class");
+        }
+    }
+
+    #[test]
+    fn test_run_backtest_sizing_methods() {
+        run_backtest_with(PositionSizingMethodArg::Percent, None, None, None, OutputFormat::Json)
+            .unwrap();
+        run_backtest_with(
+            PositionSizingMethodArg::Fixed,
+            Some(1000.0),
+            None,
+            None,
+            OutputFormat::Csv,
+        )
+        .unwrap();
+        run_backtest_with(
+            PositionSizingMethodArg::Volatility,
+            None,
+            Some(0.15),
+            None,
+            OutputFormat::Text,
+        )
+        .unwrap();
+        run_backtest_with(PositionSizingMethodArg::Signal, None, None, None, OutputFormat::Text)
+            .unwrap();
+        run_backtest_with(
+            PositionSizingMethodArg::Risk,
+            None,
+            None,
+            Some(0.001),
+            OutputFormat::Text,
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn test_run_walk_forward_and_errors() {
+        let data_path = sample_data_path();
+
+        let ok = run_walk_forward(
+            &data_path,
+            "TEST",
+            StrategyType::SmaCrossover,
+            10_000.0,
+            0.1,
+            0.1,
+            0.1,
+            3.0,
+            None,
+            ExecutionPriceArg::Open,
+            1.0,
+            5,
+            LotSelectionArg::Fifo,
+            true,
+            2.0,
+            0.5,
+            1.5,
+            0.25,
+            0.30,
+            0.03,
+            false,
+            0.15,
+            false,
+            2,
+            0.7,
+            true,
+            5,
+            WalkForwardMetricArg::Sharpe,
+            DataFormatArg::Csv,
+            OutputFormat::Text,
+        );
+        assert!(ok.is_ok());
+
+        let err = run_walk_forward(
+            &data_path,
+            "TEST",
+            StrategyType::SmaCrossover,
+            10_000.0,
+            0.1,
+            0.1,
+            0.1,
+            3.0,
+            None,
+            ExecutionPriceArg::Open,
+            1.0,
+            5,
+            LotSelectionArg::Fifo,
+            true,
+            2.0,
+            0.5,
+            1.5,
+            0.25,
+            0.30,
+            0.03,
+            false,
+            0.15,
+            false,
+            0,
+            0.7,
+            true,
+            5,
+            WalkForwardMetricArg::Sharpe,
+            DataFormatArg::Csv,
+            OutputFormat::Text,
+        )
+        .unwrap_err();
+        assert!(format!("{}", err).contains("folds"));
+
+        let err = run_walk_forward(
+            &data_path,
+            "TEST",
+            StrategyType::SmaCrossover,
+            10_000.0,
+            0.1,
+            0.1,
+            0.1,
+            3.0,
+            None,
+            ExecutionPriceArg::Open,
+            1.0,
+            5,
+            LotSelectionArg::Fifo,
+            true,
+            2.0,
+            0.5,
+            1.5,
+            0.25,
+            0.30,
+            0.03,
+            false,
+            0.15,
+            false,
+            2,
+            1.2,
+            true,
+            5,
+            WalkForwardMetricArg::Sharpe,
+            DataFormatArg::Csv,
+            OutputFormat::Text,
+        )
+        .unwrap_err();
+        assert!(format!("{}", err).contains("In-sample"));
+    }
+
+    #[test]
+    fn test_run_optimization_and_prints() {
+        let data_path = sample_data_path();
+        let ok = run_optimization(
+            &data_path,
+            "TEST",
+            StrategyType::SmaCrossover,
+            10_000.0,
+            OptimizeMetric::Return,
+            OutputFormat::Csv,
+        );
+        assert!(ok.is_ok());
+
+        print_strategies();
+
+        let wf = make_walk_forward_result();
+        print_walk_forward_text(&wf);
+        print_walk_forward_csv(&wf);
+    }
+
+    #[test]
+    fn test_run_monte_carlo_and_helpers() {
+        let data_path = sample_data_path();
+        let ok = run_monte_carlo(
+            &data_path,
+            "TEST",
+            StrategyType::SmaCrossover,
+            10_000.0,
+            0.1,
+            0.1,
+            0.1,
+            10,
+            0.9,
+            Some(42),
+            true,
+            false,
+            3,
+            5,
+            14,
+            5,
+            DataFormatArg::Csv,
+            OutputFormat::Csv,
+        );
+        assert!(ok.is_ok());
+
+        let mc = make_monte_carlo_result();
+        print_monte_carlo_text(&mc);
+        print_monte_carlo_warnings(&mc);
+        print_monte_carlo_csv(&mc);
+    }
+
+    #[test]
+    fn test_run_cost_sensitivity_and_prints() {
+        let data_path = sample_data_path();
+        let ok = run_cost_sensitivity(
+            &data_path,
+            "TEST",
+            StrategyType::SmaCrossover,
+            10_000.0,
+            0.1,
+            0.1,
+            0.1,
+            "1,2,5,10",
+            true,
+            0.5,
+            3,
+            5,
+            14,
+            5,
+            DataFormatArg::Csv,
+            OutputFormat::Json,
+        );
+        assert!(ok.is_ok());
+
+        let analysis = make_cost_sensitivity_analysis();
+        print_cost_sensitivity_text(&analysis);
+        print_cost_sensitivity_csv(&analysis);
+    }
+
+    #[test]
+    fn test_run_sensitivity_and_export_heatmap() {
+        let data_path = sample_data_path();
+        let heatmap = NamedTempFile::new().unwrap();
+        let ok = run_sensitivity(
+            &data_path,
+            "TEST",
+            StrategyType::SmaCrossover,
+            10_000.0,
+            0.1,
+            0.1,
+            0.1,
+            SensitivityMetricArg::Return,
+            2,
+            Some(heatmap.path().to_path_buf()),
+            DataFormatArg::Csv,
+            OutputFormat::Text,
+        );
+        assert!(ok.is_ok());
+
+        let analysis = make_sensitivity_analysis();
+        print_sensitivity_text(&analysis);
+    }
+
+    #[test]
+    fn test_resample_and_quality_report() {
+        let data_path = sample_data_path();
+        let output = NamedTempFile::new().unwrap();
+        let output_path = output.path().with_extension("csv");
+        let ok = resample_data(
+            &data_path,
+            &output_path,
+            ResampleIntervalArg::FiveMinutes,
+            DataFormatArg::Csv,
+        );
+        assert!(ok.is_ok());
+
+        let bad_output = output.path().with_extension("parquet");
+        let err = resample_data(
+            &data_path,
+            &bad_output,
+            ResampleIntervalArg::FiveMinutes,
+            DataFormatArg::Csv,
+        )
+        .unwrap_err();
+        assert!(format!("{}", err).contains("Parquet output"));
+
+        let ok = run_quality_report(&data_path, 60 * 60 * 24, DataFormatArg::Csv);
+        assert!(ok.is_ok());
+    }
+
+    #[test]
+    fn test_init_run_config_and_validate() {
+        let mut config_file = NamedTempFile::new().unwrap();
+        let config_path = config_file.path().to_path_buf();
+
+        let ok = init_config(&config_path);
+        assert!(ok.is_ok());
+
+        let ok = run_from_config(&config_path, OutputFormat::Json);
+        assert!(ok.is_ok());
+
+        let ok = validate_data(&sample_data_path());
+        assert!(ok.is_ok());
+
+        writeln!(config_file, "\n# updated").unwrap();
     }
 }

@@ -18,6 +18,8 @@ Mantis is a high-performance Rust CLI backtest engine for quantitative trading w
 
 ## Remaining Items
 
+PRIORITY: fix github CI until it's working or modify the CI if it doesn't make sense
+
 ### CI/Documentation Gaps (COMPLETE)
 
 Per spec gap analysis on 2026-01-16, all items resolved:
@@ -72,12 +74,6 @@ Per spec gap analysis on 2026-01-16, all items resolved:
 - [ ] Address CI runner variability in benchmark comparisons
 - Options: increase threshold, use relative comparisons, or disable blocking check
 - Current: fails due to different runner performance vs baseline
-
-**3. Code Coverage Below Threshold**
-- [ ] Increase Rust coverage from 70.7% to >= 80%
-- [x] Increase Python coverage from 68% to >= 80% - **DONE: now at 81%**
-- Required by specs/launch-requirements.md
-- Note: Python coverage was actually 68% (not 48.2%), now at 81% with 63 new tests
 
 ### Optional Future Enhancements
 
@@ -255,3 +251,4 @@ The following items were resolved on 2026-01-16:
 - **CI maturin venv fix (2026-01-16)** → Added virtual environment creation for `maturin develop` in python-test, docs-examples, and python-coverage jobs. `maturin develop` requires a venv to work correctly.
 - **Python coverage improvement (2026-01-16)** → Increased Python test coverage from 68% to 81% (above 80% threshold). Added 63 new tests in `tests/python/test_coverage_gaps.py` covering: Plotly visualization code paths (mocked Jupyter environment), ASCII plot save paths, result repr/str methods, Monte Carlo distribution methods, sensitivity/cost sensitivity methods, backtest configuration variants.
 - **Doc examples fix (2026-01-16)** → Changed the competitor benchmark command block in `docs/concepts/benchmarks.md` from a Python fence to a bash fence to prevent doc example execution errors.
+- **Rust coverage improvement (2026-01-16)** → Raised Rust line coverage to 80.13% (cargo llvm-cov, --features onnx) with new CLI/error/viz tests.

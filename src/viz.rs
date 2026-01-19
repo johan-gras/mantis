@@ -924,6 +924,106 @@ pub fn heatmap_to_ascii(heatmap: &HeatmapData) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::engine::BacktestConfig;
+    use crate::types::EquityPoint;
+    use crate::walkforward::{WalkForwardConfig, WalkForwardWindow, WindowResult};
+    use chrono::{Duration, TimeZone, Utc};
+    use uuid::Uuid;
+
+    fn make_equity_curve() -> Vec<EquityPoint> {
+        let start = Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap();
+        (0..5)
+            .map(|i| EquityPoint {
+                timestamp: start + Duration::days(i),
+                equity: 100.0 + i as f64,
+                cash: 100.0 + i as f64,
+                positions_value: 0.0,
+                drawdown: 0.0,
+                drawdown_pct: 0.0,
+            })
+            .collect()
+    }
+
+    fn make_backtest_result(
+        name: &str,
+        total_return_pct: f64,
+        sharpe_ratio: f64,
+        max_drawdown_pct: f64,
+    ) -> BacktestResult {
+        let start_time = Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap();
+        let end_time = start_time + Duration::days(4);
+        BacktestResult {
+            strategy_name: name.to_string(),
+            symbols: vec!["TEST".to_string()],
+            config: BacktestConfig::default(),
+            initial_capital: 100.0,
+            final_equity: 100.0 * (1.0 + total_return_pct / 100.0),
+            total_return_pct,
+            annual_return_pct: total_return_pct,
+            trading_days: 5,
+            total_trades: 3,
+            winning_trades: 2,
+            losing_trades: 1,
+            win_rate: 66.7,
+            avg_win: 1.0,
+            avg_loss: -0.5,
+            profit_factor: 2.0,
+            max_drawdown_pct,
+            sharpe_ratio,
+            sortino_ratio: sharpe_ratio * 1.1,
+            calmar_ratio: if max_drawdown_pct.abs() > 0.0 {
+                total_return_pct / max_drawdown_pct.abs()
+            } else {
+                0.0
+            },
+            trades: Vec::new(),
+            equity_curve: make_equity_curve(),
+            start_time,
+            end_time,
+            experiment_id: Uuid::new_v4(),
+            git_info: None,
+            config_hash: String::new(),
+            data_checksums: std::collections::HashMap::new(),
+            seed: Some(7),
+        }
+    }
+
+    fn make_walkforward_result() -> WalkForwardResult {
+        let start = Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap();
+        let window = WalkForwardWindow {
+            index: 0,
+            is_start: start,
+            is_end: start + Duration::days(1),
+            oos_start: start + Duration::days(2),
+            oos_end: start + Duration::days(3),
+            is_bars: 2,
+            oos_bars: 2,
+        };
+        WalkForwardResult {
+            config: WalkForwardConfig {
+                num_windows: 1,
+                in_sample_ratio: 0.7,
+                anchored: true,
+                min_bars_per_window: 2,
+            },
+            windows: vec![WindowResult {
+                window,
+                in_sample_result: make_backtest_result("IS", 2.0, 1.0, -1.0),
+                out_of_sample_result: make_backtest_result("OOS", 1.0, 0.5, -1.5),
+                efficiency_ratio: 0.5,
+                parameter_hash: 42,
+            }],
+            combined_oos_return: 1.0,
+            avg_is_return: 2.0,
+            avg_oos_return: 1.0,
+            avg_efficiency_ratio: 0.5,
+            walk_forward_efficiency: 0.5,
+            avg_is_sharpe: 1.0,
+            avg_oos_sharpe: 0.5,
+            oos_sharpe_threshold_met: true,
+            parameter_stability: 0.8,
+        }
+    }
 
     #[test]
     fn test_sparkline_empty() {
@@ -1067,5 +1167,53 @@ mod tests {
         assert!(ascii.contains("param_a"));
         assert!(ascii.contains("param_b"));
         assert!(ascii.contains("Legend"));
+    }
+
+    #[test]
+    fn test_result_summary_and_verdict() {
+        let result = make_backtest_result("Summary", 5.0, 1.2, -2.0);
+        let summary = result_summary(&result, 10);
+        assert!(summary.contains("Summary"));
+        assert!(summary.contains("Sharpe"));
+
+        let verdict = result_with_verdict(&result, 10);
+        assert!(verdict.contains("Backtest Results"));
+    }
+
+    #[test]
+    fn test_compare_strategies_table() {
+        let a = make_backtest_result("A", 5.0, 1.0, -2.0);
+        let b = make_backtest_result("B", 3.0, 0.8, -1.5);
+        let comparison = compare_strategies(&[&a, &b], &["Alpha", "Beta"]);
+        let table = comparison.format_table();
+        assert!(table.contains("Alpha"));
+        assert!(table.contains("Beta"));
+    }
+
+    #[test]
+    fn test_walkforward_summary_and_chart() {
+        let wf = make_walkforward_result();
+        let summary = walkforward_summary(&wf);
+        assert!(summary.contains("Walk-Forward"));
+
+        let chart = walkforward_fold_chart(&wf, 10);
+        assert!(chart.contains("Fold Performance"));
+    }
+
+    #[test]
+    fn test_export_heatmap_svg() {
+        let heatmap = HeatmapData {
+            x_param: "x".to_string(),
+            y_param: "y".to_string(),
+            x_values: vec![1.0, 2.0],
+            y_values: vec![10.0, 20.0],
+            values: vec![vec![Some(0.5), Some(0.8)], vec![Some(0.2), Some(0.4)]],
+            metric: SensitivityMetric::Return,
+        };
+
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        export_heatmap_svg(&heatmap, tmp.path().to_str().unwrap()).unwrap();
+        let contents = std::fs::read_to_string(tmp.path()).unwrap();
+        assert!(contents.contains("<svg"));
     }
 }

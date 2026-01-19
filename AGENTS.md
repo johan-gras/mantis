@@ -13,6 +13,7 @@ Run these after implementing to get immediate feedback:
 - Format check: `cargo fmt --check`
 - Format fix: `cargo fmt`
 - Benchmarks: `cargo bench --features onnx`
+- Rust coverage: `cargo llvm-cov --features onnx --lcov --output-path rust-coverage.lcov`
 
 ## Python Tests
 

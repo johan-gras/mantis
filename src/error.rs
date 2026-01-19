@@ -283,3 +283,65 @@ impl BacktestError {
 
 /// Result type alias for backtest operations.
 pub type Result<T> = std::result::Result<T, BacktestError>;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_error_help_display_with_content() {
+        let help = ErrorHelp {
+            common_causes: vec!["cause one", "cause two"],
+            quick_fixes: vec!["fix one", "fix two"],
+        };
+        let rendered = format!("{}", help);
+        assert!(rendered.contains("Common causes:"));
+        assert!(rendered.contains("Quick fix:"));
+        assert!(rendered.contains("cause one"));
+        assert!(rendered.contains("fix two"));
+    }
+
+    #[test]
+    fn test_error_help_display_empty() {
+        let help = ErrorHelp {
+            common_causes: vec![],
+            quick_fixes: vec![],
+        };
+        let rendered = format!("{}", help);
+        assert!(rendered.trim().is_empty());
+    }
+
+    #[test]
+    fn test_error_helpers_include_help() {
+        let mismatch = BacktestError::signal_shape_mismatch(10, 12);
+        assert!(mismatch.has_help());
+        assert!(format!("{}", mismatch).contains("Signal shape mismatch"));
+
+        let nan = BacktestError::signal_nan(3, 2, 10);
+        assert!(nan.has_help());
+        assert!(format!("{}", nan).contains("NaN value"));
+
+        let inf = BacktestError::signal_infinite(4, f64::INFINITY);
+        assert!(inf.has_help());
+        assert!(format!("{}", inf).contains("positive infinity"));
+
+        let lookahead = BacktestError::lookahead_bias("future data");
+        assert!(lookahead.has_help());
+        assert!(format!("{}", lookahead).contains("lookahead bias"));
+
+        let constant = BacktestError::signal_constant(1.0, 100);
+        assert!(constant.has_help());
+        assert!(format!("{}", constant).contains("Signal is constant"));
+
+        let extreme = BacktestError::signal_extreme_values(-1000.0, 1000.0, 5);
+        assert!(extreme.has_help());
+        assert!(format!("{}", extreme).contains("extreme values"));
+    }
+
+    #[test]
+    fn test_non_help_error_has_no_help() {
+        let err = BacktestError::DataError("bad data".to_string());
+        assert!(!err.has_help());
+        assert!(format!("{}", err).contains("Data error"));
+    }
+}
