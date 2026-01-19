@@ -95,7 +95,7 @@ impl Default for BacktestSettings {
             fractional_shares: false, // Default: whole shares (per spec)
             execution_price: ExecutionPrice::Open,
             fill_probability: default_fill_probability(),
-            limit_order_ttl_bars: Some(5),
+            limit_order_ttl_bars: Some(1),
             lot_selection: LotSelectionMethod::default(),
             start_date: None,
             end_date: None,
@@ -178,7 +178,7 @@ fn default_fill_probability() -> f64 {
 }
 
 fn default_limit_order_ttl() -> Option<usize> {
-    Some(5)
+    Some(1)
 }
 
 /// Data settings.
@@ -477,7 +477,7 @@ allow_short = true
 fractional_shares = true
 execution_price = "open"
 fill_probability = 1.0
-limit_order_ttl_bars = 5
+limit_order_ttl_bars = 1
 lot_selection = "fifo"       # fifo|lifo|highest-cost|lowest-cost
 # start_date = "2023-01-01"
 # end_date = "2023-12-31"
@@ -610,7 +610,7 @@ stop_loss_value = 3.0
         assert!((config.cost_model.commission_pct - 0.0015).abs() < 0.0001);
         assert_eq!(config.execution_price, ExecutionPrice::Open);
         assert!((config.fill_probability - 1.0).abs() < f64::EPSILON);
-        assert_eq!(config.limit_order_ttl_bars, Some(5));
+        assert_eq!(config.limit_order_ttl_bars, Some(1));
     }
 
     #[test]

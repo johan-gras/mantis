@@ -128,7 +128,7 @@ pub enum Commands {
         fill_probability: f64,
 
         /// Lifetime of pending limit orders in bars (0 = good-till-cancelled)
-        #[arg(long, default_value = "5")]
+        #[arg(long, default_value = "1")]
         limit_order_ttl: usize,
 
         /// Tax-lot selection policy when closing positions
@@ -283,7 +283,7 @@ pub enum Commands {
         fill_probability: f64,
 
         /// Lifetime of pending limit orders in bars (0 = good-till-cancelled)
-        #[arg(long, default_value = "5")]
+        #[arg(long, default_value = "1")]
         limit_order_ttl: usize,
 
         /// Tax-lot selection policy when closing positions

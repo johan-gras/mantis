@@ -147,6 +147,14 @@ Per spec gap analysis on 2026-01-16, all items resolved:
 **Issue Found & Fixed:**
 1. Benchmark regressions on GitHub runners exceeded threshold; refreshed baseline using current CI benchmark artifact while preserving environment metadata.
 
+### Spec Compliance (Priority: Medium) - RESOLVED 2026-01-19
+
+**Location:** `src/engine.rs`, `src/config.rs`, `src/cli.rs`
+**Status:** Fixed
+
+**Issue Found & Fixed:**
+1. Limit order TTL default and expiry semantics disagreed with execution-realism spec (1 bar only). Defaults set to 1 bar, expiry check corrected, end-of-data expiry logged, and TTL behavior covered by a unit test.
+
 ### CI Issues (Priority: High) - RESOLVED 2026-01-19
 
 **Location:** `.github/workflows/release.yml`

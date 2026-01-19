@@ -104,7 +104,7 @@ impl Default for BacktestConfig {
             risk_config: RiskConfig::default(),
             execution_price: ExecutionPrice::Open,
             fill_probability: default_fill_probability(),
-            limit_order_ttl_bars: Some(5),
+            limit_order_ttl_bars: Some(1),
             lot_selection: LotSelectionMethod::default(),
             seed: None,
             data_frequency: None,   // Auto-detect from data
@@ -199,7 +199,7 @@ struct PendingOrder {
 impl PendingOrder {
     fn is_expired(&self, timestamp: DateTime<Utc>) -> bool {
         self.expires_at
-            .map(|expires| timestamp >= expires)
+            .map(|expires| timestamp > expires)
             .unwrap_or(false)
     }
 }
@@ -481,6 +481,24 @@ impl Engine {
 
             if let Some(ref pb) = progress {
                 pb.inc(1);
+            }
+        }
+
+        if !pending_orders.is_empty() {
+            for pending in &pending_orders {
+                let order_type = match pending.order.order_type {
+                    OrderType::Market => "market",
+                    OrderType::Limit(_) => "limit",
+                    OrderType::Stop(_) => "stop",
+                    OrderType::StopLimit { .. } => "stop-limit",
+                };
+                info!(
+                    "Pending {} order for {} expired at end of data (created {}, remaining qty {:.4})",
+                    order_type,
+                    pending.order.symbol,
+                    pending.created_at,
+                    pending.remaining_quantity
+                );
             }
         }
 
@@ -1245,6 +1263,28 @@ mod tests {
         assert_eq!(pending.len(), 2);
         assert!((pending[1].remaining_quantity - 5.0).abs() < f64::EPSILON);
         assert!(pending[1].expires_at.is_none()); // Market orders have no expiry
+    }
+
+    #[test]
+    fn test_limit_order_ttl_one_bar() {
+        let config = BacktestConfig {
+            limit_order_ttl_bars: Some(1),
+            show_progress: false,
+            ..Default::default()
+        };
+        let engine = Engine::new(config);
+        let bars = create_test_bars();
+        let expires_at = engine.pending_expiry_for(&bars, 0).unwrap();
+        let pending = PendingOrder {
+            order: Order::limit("TEST", Side::Buy, 1.0, 99.0, bars[0].timestamp),
+            created_at: bars[0].timestamp,
+            expires_at: Some(expires_at),
+            remaining_quantity: 1.0,
+            signal: None,
+        };
+
+        assert!(!pending.is_expired(bars[1].timestamp));
+        assert!(pending.is_expired(bars[2].timestamp));
     }
 
     #[test]
