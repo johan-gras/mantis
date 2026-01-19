@@ -147,6 +147,14 @@ Per spec gap analysis on 2026-01-16, all items resolved:
 **Issue Found & Fixed:**
 1. Benchmark regressions on GitHub runners exceeded threshold; refreshed baseline using current CI benchmark artifact while preserving environment metadata.
 
+### CI Issues (Priority: High) - RESOLVED 2026-01-19
+
+**Location:** `.github/workflows/release.yml`
+**Status:** Fixed
+
+**Issue Found & Fixed:**
+1. Release job failed due to missing trusted publisher on PyPI; gated publish on `PYPI_PUBLISH` and allowed GitHub release to proceed when publish is skipped but build/test succeed.
+
 ### CI Issues (Priority: Medium) - RESOLVED 2026-01-19
 
 **1. Rust Tests macOS Release Mode**
