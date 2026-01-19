@@ -20,6 +20,7 @@ Mantis is a high-performance Rust CLI backtest engine for quantitative trading w
 
 PRIORITY: fix github CI until it's working or modify the CI if it doesn't make sense
 
+
 ### CI/Documentation Gaps (COMPLETE)
 
 Per spec gap analysis on 2026-01-16, all items resolved:
