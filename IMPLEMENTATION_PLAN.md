@@ -96,12 +96,11 @@ Per spec gap analysis on 2026-01-16, all items resolved:
 **Issue Found & Fixed:**
 1. Update baseline job failed with 403 when pushing benchmark results; added `permissions: contents: write` to allow the auto-commit action to push.
 
-### Remaining CI Issues (Priority: Medium)
+### CI Issues (Priority: Medium) - RESOLVED 2026-01-19
 
 **1. Rust Tests macOS Release Mode**
-- [ ] Fix Rust test failure on macOS in release mode
-- Passes locally in release mode on macOS (2026-01-19), not reproducible
-- May already be resolved; needs CI confirmation
+- [x] Verified `cargo test --release --features onnx` passes locally on macOS (2026-01-19)
+- [x] No reproducible failure; leave CI unchanged unless future failures recur
 
 ### Optional Future Enhancements
 
