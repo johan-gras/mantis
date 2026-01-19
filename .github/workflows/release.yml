@@ -104,7 +104,7 @@ jobs:
       - name: Install wheel
         shell: bash
         run: |
-          pip install dist/*.whl
+          pip install --no-index --find-links dist mantis-bt
           pip install numpy pandas pytest
 
       - name: Test import

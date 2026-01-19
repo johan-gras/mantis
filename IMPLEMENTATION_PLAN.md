@@ -80,6 +80,14 @@ Per spec gap analysis on 2026-01-16, all items resolved:
 **Issue Found & Fixed:**
 1. Python tests and coverage failed because Plotly wasn't installed; added `plotly` to CI and coverage dependency installs to satisfy visualization tests.
 
+### CI Issues (Priority: High) - RESOLVED 2026-01-19
+
+**Location:** `.github/workflows/release.yml`
+**Status:** Fixed
+
+**Issue Found & Fixed:**
+1. Release test-wheel jobs failed on Linux because `pip install dist/*.whl` tried to install all platform wheels; switched to `pip install --no-index --find-links dist mantis-bt` so pip selects the compatible wheel.
+
 ### Remaining CI Issues (Priority: Medium)
 
 **1. Rust Tests macOS Release Mode**
