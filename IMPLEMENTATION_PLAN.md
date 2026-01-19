@@ -1,6 +1,6 @@
 # Mantis Implementation Plan
 
-**Last Updated:** 2026-01-16
+**Last Updated:** 2026-01-19
 **Status:** Production-ready core, ONNX fully tested
 **Verification:** All findings verified via `cargo test --features onnx`, `cargo bench --features onnx`, file system checks
 
@@ -67,13 +67,8 @@ Per spec gap analysis on 2026-01-16, all items resolved:
 
 **1. Rust Tests macOS Release Mode**
 - [ ] Fix Rust test failure on macOS in release mode
-- Passes in debug mode, fails in release mode
-- May be a timing/optimization issue
-
-**2. Benchmark Regression Check**
-- [ ] Address CI runner variability in benchmark comparisons
-- Options: increase threshold, use relative comparisons, or disable blocking check
-- Current: fails due to different runner performance vs baseline
+- Passes locally in release mode on macOS (2026-01-19), not reproducible
+- May already be resolved; needs CI confirmation
 
 ### Optional Future Enhancements
 
@@ -252,3 +247,6 @@ The following items were resolved on 2026-01-16:
 - **Python coverage improvement (2026-01-16)** → Increased Python test coverage from 68% to 81% (above 80% threshold). Added 63 new tests in `tests/python/test_coverage_gaps.py` covering: Plotly visualization code paths (mocked Jupyter environment), ASCII plot save paths, result repr/str methods, Monte Carlo distribution methods, sensitivity/cost sensitivity methods, backtest configuration variants.
 - **Doc examples fix (2026-01-16)** → Changed the competitor benchmark command block in `docs/concepts/benchmarks.md` from a Python fence to a bash fence to prevent doc example execution errors.
 - **Rust coverage improvement (2026-01-16)** → Raised Rust line coverage to 80.13% (cargo llvm-cov, --features onnx) with new CLI/error/viz tests.
+
+The following items were resolved on 2026-01-19:
+- **Benchmark regression check env mismatch** → Baseline `benchmarks/results/main.json` was generated on Darwin (arm), causing false regressions on Ubuntu CI. Added environment compatibility checks in `scripts/check_bench_regression.py` and now skip regression checks when baseline env mismatches the current runner.

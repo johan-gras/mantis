@@ -86,9 +86,47 @@ def load_baseline(baseline_path: Path) -> dict[str, float]:
         return {}
 
 
+def current_environment() -> dict[str, str]:
+    """Capture the current environment for baseline compatibility checks."""
+    import platform
+
+    os_name = platform.system()
+    return {
+        "os": f"{os_name} {platform.release()}",
+        "os_name": os_name,
+        "cpu": platform.processor() or "unknown",
+        "machine": platform.machine() or "unknown",
+        "python": platform.python_version(),
+    }
+
+
+def env_signature(env: dict[str, str]) -> tuple[Optional[str], Optional[str], Optional[str]]:
+    """Normalize environment info into comparable fields."""
+    os_name = env.get("os_name")
+    if not os_name:
+        os_value = env.get("os", "")
+        os_name = os_value.split(" ")[0] if os_value else None
+    machine = env.get("machine")
+    cpu = env.get("cpu")
+    return os_name or None, machine or None, cpu or None
+
+
+def environments_match(baseline_env: dict[str, str], current_env: dict[str, str]) -> bool:
+    """Return True when baseline and current environments are compatible."""
+    base_os, base_machine, base_cpu = env_signature(baseline_env)
+    curr_os, curr_machine, curr_cpu = env_signature(current_env)
+
+    if base_os and curr_os and base_os != curr_os:
+        return False
+    if base_machine and curr_machine and base_machine != curr_machine:
+        return False
+    if base_cpu and curr_cpu and base_cpu != curr_cpu:
+        return False
+    return True
+
+
 def save_results(results: dict[str, float], output_path: Path, include_env: bool = True):
     """Save benchmark results to JSON file."""
-    import platform
     from datetime import datetime, timezone
 
     output = {
@@ -102,11 +140,7 @@ def save_results(results: dict[str, float], output_path: Path, include_env: bool
     }
 
     if include_env:
-        output["environment"] = {
-            "cpu": platform.processor() or "unknown",
-            "os": f"{platform.system()} {platform.release()}",
-            "python": platform.python_version(),
-        }
+        output["environment"] = current_environment()
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with open(output_path, "w") as f:
@@ -197,6 +231,11 @@ def main():
         action="store_true",
         help="Fail if baseline file doesn't exist"
     )
+    parser.add_argument(
+        "--ignore-env",
+        action="store_true",
+        help="Skip baseline environment compatibility checks"
+    )
 
     args = parser.parse_args()
 
@@ -229,6 +268,27 @@ def main():
             sys.exit(0)
 
     print(f"Loaded baseline with {len(baseline)} benchmarks")
+
+    baseline_env = {}
+    if isinstance(baseline, dict) and args.baseline.exists():
+        try:
+            with open(args.baseline) as f:
+                baseline_json = json.load(f)
+            baseline_env = baseline_json.get("environment", {})
+        except (json.JSONDecodeError, FileNotFoundError):
+            baseline_env = {}
+
+    current_env = current_environment()
+
+    if baseline_env and not args.ignore_env:
+        if not environments_match(baseline_env, current_env):
+            print(
+                "Baseline environment does not match current run; "
+                "skipping regression check."
+            )
+            print(f"  baseline: {baseline_env}")
+            print(f"  current:  {current_env}")
+            sys.exit(0)
 
     # Check for regressions
     failures, warnings, improvements = check_regression(
