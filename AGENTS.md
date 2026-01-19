@@ -28,6 +28,7 @@ pytest tests/python/
 - The ONNX feature requires `--features onnx` flag for build/test/clippy
 - ONNX test models are in `data/models/` and can be regenerated with `python scripts/generate_test_onnx.py`
 - Python bindings are built with maturin
+- Use `python3` for scripts when `python` is not available (e.g., `python3 scripts/test_doc_examples.py`)
 - **cffi conflict**: If cffi is installed, `maturin develop` creates `python/mantis/_mantis/` which shadows the PyO3 module. Fix: `rm -rf python/mantis/_mantis/`
 
 ### Codebase Patterns

@@ -63,22 +63,17 @@ Per spec gap analysis on 2026-01-16, all items resolved:
 
 ### Remaining CI Issues (Priority: Medium)
 
-**1. Documentation Examples Test Failures**
-- [ ] Fix `scripts/test_doc_examples.py` failures
-- Location: `docs/**/*.md` code examples
-- The script runs but some doc examples fail execution
-
-**2. Rust Tests macOS Release Mode**
+**1. Rust Tests macOS Release Mode**
 - [ ] Fix Rust test failure on macOS in release mode
 - Passes in debug mode, fails in release mode
 - May be a timing/optimization issue
 
-**3. Benchmark Regression Check**
+**2. Benchmark Regression Check**
 - [ ] Address CI runner variability in benchmark comparisons
 - Options: increase threshold, use relative comparisons, or disable blocking check
 - Current: fails due to different runner performance vs baseline
 
-**4. Code Coverage Below Threshold**
+**3. Code Coverage Below Threshold**
 - [ ] Increase Rust coverage from 70.7% to >= 80%
 - [x] Increase Python coverage from 68% to >= 80% - **DONE: now at 81%**
 - Required by specs/launch-requirements.md
@@ -259,3 +254,4 @@ The following items were resolved on 2026-01-16:
 - **CI workflow fixes (2026-01-16)** → Fixed CI workflows to use `--features onnx` instead of `--all-features` (which caused issues with pyo3 extension-module feature). Added `--features onnx` to bench.yml for ONNX benchmarks. Fixed new clippy lints from Rust 1.92 (manual_range_contains, field_reassign_with_default, needless_range_loop, unnecessary_get_then_check).
 - **CI maturin venv fix (2026-01-16)** → Added virtual environment creation for `maturin develop` in python-test, docs-examples, and python-coverage jobs. `maturin develop` requires a venv to work correctly.
 - **Python coverage improvement (2026-01-16)** → Increased Python test coverage from 68% to 81% (above 80% threshold). Added 63 new tests in `tests/python/test_coverage_gaps.py` covering: Plotly visualization code paths (mocked Jupyter environment), ASCII plot save paths, result repr/str methods, Monte Carlo distribution methods, sensitivity/cost sensitivity methods, backtest configuration variants.
+- **Doc examples fix (2026-01-16)** → Changed the competitor benchmark command block in `docs/concepts/benchmarks.md` from a Python fence to a bash fence to prevent doc example execution errors.

@@ -105,7 +105,7 @@ We've benchmarked Mantis against popular backtesting frameworks. All tests use:
 
 ### Running Competitor Benchmarks
 
-```python
+```bash
 # scripts/competitor_bench.py provides the benchmark code
 # Requires: pip install backtrader vectorbt zipline-reloaded
 
